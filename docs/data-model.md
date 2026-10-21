@@ -108,6 +108,24 @@
 - **状态机**：发现 `open → confirmed/false_positive/closed`、`confirmed → fixed/retest/closed`、`retest → confirmed/fixed/closed`、`fixed → retest/closed`，`closed` 与 `false_positive` 终态；复测 `pending → running`、`running → passed/failed/error`，终态 `passed/failed/error`。领域校验在 `internal/domain/finding`，数据库 CHECK 只做最终兜底。
 - 与证据链的关系：`finding_evidence.snapshot_id` 指向 `evidence_snapshots`（同一任务）；快照删除会级联解除绑定，但不会删除发现。报告与前端详情通过该表展示「发现 → 证据」。
 
+### 2.12 计划表（⬜ 未创建，对应 B4/B5）
+
+以下表**尚未创建**（无迁移、无 Store），仅用于前端/后端设计对齐；落地时新增 `migrations/0008_*.sql` 并补充本文件与 `docs/project-map.md` §4/§10：
+
+| 计划表 | 用途 | 关联计划接口 |
+| --- | --- | --- |
+| `notification_channels` / `notification_deliveries` | 通知渠道与投递记录 | P-B4-11..17 |
+| `settings` | 运行时设置（与 config 优先级待定） | P-B4-18/19 |
+| `mcp_servers` / `mcp_tools` | MCP 端点与发现到的工具 | P-B5-01..07 |
+| `skills` / `skill_files` | 技能包元数据与文件 | P-B5-08..17 |
+| `agents` | Agent 定义（key/model/tools/prompt） | P-B5-18..23 |
+| `sync_sources` / `sync_projects` / `sync_runs` | 外部数据源、项目映射与运行记录 | P-B5-29..37 |
+| `evidence_read_audits` | 证据正文读取审计 | P-B5-44 |
+| 游标分页 | 不新增表，为 B1–B3 列表增加索引/查询条件 | P-B4-26 |
+| Workspace | 不新增表，使用状态目录沙箱文件 | P-B5-24..28 |
+
+> 计划表的字段/索引/约束在实现时确定；当前 API 与数据库均**没有**这些表。
+
 ## 3. 资产身份与归一化
 
 资产类型与身份键类型一致：`root_domain`、`subdomain`、`ip`、`service`、`app`、`endpoint`。CIDR 只作为公司/任务范围条目使用（`NormalizeCIDR`），不会成为资产类型。
