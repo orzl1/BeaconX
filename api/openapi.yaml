@@ -1,0 +1,113 @@
+openapi: 3.0.3
+info:
+  title: BeaconX API
+  version: 0.1.0
+  description: |
+    Bootstrap HTTP surface (milestone M0). Endpoints are versioned under /api/v1.
+    This document is the single source for generated clients; it is extended in
+    lockstep with the declarative route table in internal/httpapi.
+servers:
+  - url: http://127.0.0.1:8787
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      operationId: healthz
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /readyz:
+    get:
+      summary: Readiness probe
+      operationId: readyz
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: Not ready (dependency unavailable or migrations pending)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /api/v1/system/info:
+    get:
+      summary: Build and schema information
+      operationId: systemInfo
+      responses:
+        "200":
+          description: Service information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+  /api/v1/system/tenant:
+    get:
+      summary: Tenant resolved for this request
+      operationId: systemTenant
+      responses:
+        "200":
+          description: Tenant identifier
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tenant_id]
+                properties:
+                  tenant_id:
+                    type: integer
+                    format: int64
+components:
+  schemas:
+    Readiness:
+      type: object
+      required: [ready, checks]
+      properties:
+        ready:
+          type: boolean
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, ok]
+            properties:
+              name:
+                type: string
+              ok:
+                type: boolean
+              error:
+                type: string
+    SystemInfo:
+      type: object
+      properties:
+        service:
+          type: string
+        version:
+          type: string
+        commit:
+          type: string
+        build_time:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        uptime:
+          type: string
+        schema_version:
+          type: integer
+          format: int64
+        latest_migration:
+          type: integer
+          format: int64

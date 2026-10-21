@@ -1,0 +1,44 @@
+name: beaconx
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-beaconx}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-beaconx}
+      POSTGRES_DB: ${POSTGRES_DB:-beaconx}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-beaconx} -d ${POSTGRES_DB:-beaconx}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  beaconx:
+    build:
+      context: .
+      args:
+        VERSION: ${BEACONX_VERSION:-dev}
+        COMMIT: ${BEACONX_COMMIT:-unknown}
+        BUILD_TIME: ${BEACONX_BUILD_TIME:-unknown}
+    image: beaconx:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BEACONX_DB_DSN: postgres://${POSTGRES_USER:-beaconx}:${POSTGRES_PASSWORD:-beaconx}@postgres:5432/${POSTGRES_DB:-beaconx}?sslmode=disable
+      BEACONX_ADDR: ":8787"
+      BEACONX_HOME: /var/lib/beaconx
+      BEACONX_LOG_LEVEL: ${BEACONX_LOG_LEVEL:-info}
+      BEACONX_LOG_FORMAT: ${BEACONX_LOG_FORMAT:-json}
+    ports:
+      - "8787:8787"
+    volumes:
+      - beaconx_data:/var/lib/beaconx
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  beaconx_data:

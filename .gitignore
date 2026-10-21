@@ -1,0 +1,30 @@
+# Build output
+/bin/
+/dist/
+/beaconx
+/beaconx.exe
+
+# Local runtime state (never commit)
+/data/
+*.log
+
+# Local configuration
+/config.json
+.env
+.env.local
+
+# Research material kept in the working directory but NOT part of this repository.
+# It is intentionally excluded so the product tree has no third-party project traces.
+/reference/
+/research/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+/tmp/
+
+# Local build cache (Go)
+/.cache/
+/.gocache/
+/.gomodcache/
