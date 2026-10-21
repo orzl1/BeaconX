@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    BeaconX M3 HTTP API：系统探针、任务生命周期管理（含 AI 规划预算）、SSE 事件流。
+    BeaconX M4 HTTP API：系统探针、任务生命周期管理（含 AI 规划预算与工具调用审计）、
+    工具审批与 SSE 事件流。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -17,6 +18,8 @@ tags:
     description: 任务生命周期管理（需要令牌）
   - name: events
     description: 任务事件流（需要令牌，SSE 也可用查询参数）
+  - name: approvals
+    description: 工具调用的审批列表与决策（需要令牌）
 paths:
   /healthz:
     get:
@@ -288,6 +291,91 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/audit:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions]
+      summary: 任务工具调用审计
+      description: 返回任务下每次工具调用的策略裁决与执行结果，按 id 倒序，最多 200 条。
+      operationId: missionAudit
+      responses:
+        "200":
+          description: 审计列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/approvals:
+    get:
+      tags: [approvals]
+      summary: 审批列表
+      description: 按 id 倒序返回待人工决策或历史审批；可按状态过滤。
+      operationId: listApprovals
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: 按审批状态过滤。
+          schema:
+            type: string
+            enum: [pending, approved, rejected, timeout, cancelled]
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，默认 50；大于 200 时按 50 处理。
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+      responses:
+        "200":
+          description: 审批列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/approvals/{id}/decide:
+    parameters:
+      - $ref: "#/components/parameters/ApprovalID"
+    post:
+      tags: [approvals]
+      summary: 审批决策
+      description: 批准或拒绝一条 pending 审批；已处理或不存在返回 409。
+      operationId: decideApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecideApprovalRequest"
+      responses:
+        "200":
+          description: 决策后的审批
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -305,6 +393,15 @@ components:
       in: path
       required: true
       description: 任务标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ApprovalID:
+      name: id
+      in: path
+      required: true
+      description: 审批标识
       schema:
         type: integer
         format: int64
@@ -446,6 +543,116 @@ components:
           type: integer
           default: 0
           description: 任务步骤预算；0 或不传表示不限制。
+    Approval:
+      type: object
+      required: [tenant_id, id, mission_id, node_id, tool, status, expires_at, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        node_id:
+          type: integer
+          format: int64
+        tool:
+          type: string
+          description: 被审批的工具名。
+        args:
+          type: object
+          additionalProperties: true
+          description: 工具调用的原始参数（JSON 对象）。
+        status:
+          type: string
+          description: 审批状态；只有 pending 可以被决策。
+          enum: [pending, approved, rejected, timeout, cancelled]
+        note:
+          type: string
+        decided_by:
+          type: string
+        decided_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          description: 审批过期时间。
+        created_at:
+          type: string
+          format: date-time
+    ApprovalList:
+      type: object
+      required: [approvals]
+      properties:
+        approvals:
+          type: array
+          items:
+            $ref: "#/components/schemas/Approval"
+    DecideApprovalRequest:
+      type: object
+      required: [approve]
+      properties:
+        approve:
+          type: boolean
+          description: true 表示批准，false 表示拒绝。
+        note:
+          type: string
+          description: 决策备注，会写入审批记录。
+    AuditEvent:
+      type: object
+      required: [tenant_id, id, mission_id, tool, action, rule_name, args_digest, outcome, detail, actor, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        node_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 触发工具调用的动作节点。
+        tool:
+          type: string
+        action:
+          type: string
+          description: 策略裁决。
+          enum: [allow, ask, deny]
+        rule_name:
+          type: string
+          description: 命中的规则名；使用默认动作时为空。
+        args_digest:
+          type: string
+          description: 工具参数原始 JSON 的 SHA-256 十六进制摘要。
+        outcome:
+          type: string
+          description: 执行结果。
+          enum: [executed, tool_error, denied_by_rule, rejected_by_user, approval_unavailable]
+        detail:
+          type: string
+          description: 结果摘要或错误说明（可能被截断）。
+        actor:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AuditList:
+      type: object
+      required: [audit]
+      properties:
+        audit:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
     Error:
       type: object
       required: [error]

@@ -121,7 +121,7 @@
 
 M3 起由 `internal/app/ai` 提供 LLM 实现：Planner 读取态势快照、调用 OpenAI 兼容模型生成结构化计划与动作；Worker 把模型的观察写成 fact 节点。启用条件、规划流程、追问语义、预算与真实冒烟结果见 [AI 规划与执行](ai.md)。未配置 `llm.base_url` 与 `llm.model` 时仍使用上述空实现；配置后启动日志打印 `规划模式 mode=llm model=<模型名>`。
 
-后续接入真实工具（M4）时只需替换 `runner.Worker` 的实现；通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可，准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
+工具调用在 M4 接入：`ai.Worker` 装配工具后进入「模型 → 工具 → 模型」循环，每次工具调用都统一经 `internal/app/executor`（策略判定 → 审批 → 执行 → 审计），executor 是工具调用的唯一入口；命中 ask 时 worker 会阻塞等待人工决策或超时（默认 60s）。规则、审批与审计详见 [工具与策略](tools-policy.md)。通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可，准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
 
 ## 9. 验收与本地实测
 

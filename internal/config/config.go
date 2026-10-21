@@ -33,6 +33,7 @@ type Config struct {
 	Engine   Engine   `json:"engine"`
 	Auth     Auth     `json:"auth"`
 	LLM      LLM      `json:"llm"`
+	Policy   Policy   `json:"policy"`
 }
 
 // Engine 是任务运行时参数。
@@ -42,6 +43,12 @@ type Engine struct {
 	WorkerInterval    Duration `json:"worker_interval"`
 	LeaseTTL          Duration `json:"lease_ttl"`
 	HeartbeatInterval Duration `json:"heartbeat_interval"`
+}
+
+// Policy 是工具调用策略的默认行为。
+type Policy struct {
+	DefaultAction   string   `json:"default_action"` // allow|ask|deny
+	ApprovalTimeout Duration `json:"approval_timeout"`
 }
 
 // Auth 是管理接口鉴权配置。
@@ -148,6 +155,10 @@ func Default() Config {
 		Tenant: Tenant{DefaultID: int64(1)},
 		State:  State{Dir: "data"},
 		Log:    Log{Level: "info", Format: "json"},
+		Policy: Policy{
+			DefaultAction:   "ask",
+			ApprovalTimeout: Duration(60 * time.Second),
+		},
 		LLM: LLM{
 			MaxTokens:  2048,
 			Timeout:    Duration(60 * time.Second),
@@ -219,6 +230,8 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return parseDuration(v, &cfg.Engine.HeartbeatInterval, "BEACONX_HEARTBEAT_INTERVAL")
 		}},
 		{"BEACONX_ADMIN_TOKEN", func(v string) error { cfg.Auth.AdminToken = v; return nil }},
+		{"BEACONX_POLICY_DEFAULT_ACTION", func(v string) error { cfg.Policy.DefaultAction = v; return nil }},
+		{"BEACONX_APPROVAL_TIMEOUT", func(v string) error { return parseDuration(v, &cfg.Policy.ApprovalTimeout, "BEACONX_APPROVAL_TIMEOUT") }},
 		{"BEACONX_LLM_BASE_URL", func(v string) error { cfg.LLM.BaseURL = v; return nil }},
 		{"BEACONX_LLM_API_KEY", func(v string) error { cfg.LLM.APIKey = v; return nil }},
 		{"BEACONX_LLM_MODEL", func(v string) error { cfg.LLM.Model = v; return nil }},

@@ -53,10 +53,18 @@ type Config struct {
 	MaxRetries int
 }
 
-// Message 是一条会话消息。Role 取值 system、user 或 assistant。
+// Message 是一条会话消息。Role 取值 system、user、assistant 或 tool。
+//
+// 工具调用相关字段保持向后兼容：普通文本消息不设置 ToolCalls/ToolCallID 时，
+// 序列化结果与扩展前完全一致。
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// ToolCalls 用于 Role="assistant" 的消息：把模型上一轮发起的工具调用
+	// 原样回传给接口，接口据此把工具结果与调用关联起来。
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID 用于 Role="tool" 的消息：指明这条结果是哪一次工具调用的返回值。
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // Usage 是服务端返回的 token 统计。
@@ -196,42 +204,75 @@ func (c *Client) CompleteJSON(ctx context.Context, messages []Message) (Response
 	return Response{}, err
 }
 
+// completion 是一次成功响应的原始解析结果：文本与工具调用可能并存，也可能只有其一。
+type completion struct {
+	content      string
+	toolCalls    []ToolCall
+	usage        Usage
+	model        string
+	finishReason string
+}
+
 // complete 是 Complete / CompleteJSON 的公共实现，按需插入 response_format。
 func (c *Client) complete(ctx context.Context, messages []Message, jsonMode bool) (Response, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx = nonNilContext(ctx)
 	if len(messages) == 0 {
 		return Response{}, errors.New("messages 不能为空")
 	}
 
-	payload, err := encodeRequest(c, messages, jsonMode)
+	payload, err := encodeRequest(c, messages, jsonMode, nil, "")
 	if err != nil {
 		return Response{}, err
 	}
 
+	comp, err := c.exchange(ctx, payload)
+	if err != nil {
+		return Response{}, err
+	}
+	if strings.TrimSpace(comp.content) == "" {
+		return Response{}, errors.New("LLM 响应内容为空")
+	}
+	return Response{
+		Content:      comp.content,
+		Usage:        comp.usage,
+		Model:        comp.model,
+		FinishReason: comp.finishReason,
+	}, nil
+}
+
+// exchange 执行带重试的请求，返回原始解析结果。
+// 重试分类与取消语义见 retryable / waitBackoff；Complete 与 CompleteWithTools 共用。
+func (c *Client) exchange(ctx context.Context, payload []byte) (completion, error) {
 	attempts := c.maxRetries + 1
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			if err := waitBackoff(ctx, attempt); err != nil {
-				return Response{}, err
+				return completion{}, err
 			}
 		}
 
-		resp, err := c.do(ctx, payload)
+		comp, err := c.do(ctx, payload)
 		if err == nil {
-			return resp, nil
+			return comp, nil
 		}
 		// 调用方取消或超时优先于重试：不再消耗后备尝试与退避时间。
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Response{}, fmt.Errorf("调用 LLM 接口已取消：%w", ctxErr)
+			return completion{}, fmt.Errorf("调用 LLM 接口已取消：%w", ctxErr)
 		}
 		if attempt == attempts-1 || !retryable(err) {
-			return Response{}, err
+			return completion{}, err
 		}
 	}
 	// 理论上不可达：循环内一定会返回。
-	return Response{}, errors.New("调用 LLM 接口失败：未知错误")
+	return completion{}, errors.New("调用 LLM 接口失败：未知错误")
+}
+
+// nonNilContext 把 nil ctx 归一为 Background，避免下游 panic。
+func nonNilContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
 }
 
 // retryable 判断错误是否属于可重试类别：429、5xx 与网络错误。

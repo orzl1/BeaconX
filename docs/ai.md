@@ -83,6 +83,17 @@ M3 **没有接入任何真实工具**（M4 才接入）。因此 Worker 的“�
 - 模型调用失败时动作置为 `blocked` 并返回错误（引擎记录告警），下一轮规划会把对应步骤标为 `failed`。
 - 动作的终态只允许 `done` / `exhausted` / `blocked`（由存储层 `FinishIntent` 约束）。
 
+### 工具调用循环（M4）
+
+启用工具后（`Worker.SetTools` 装配了执行器与工具定义），Worker 不再直接要求模型输出最终观察，而是进入「模型 → 工具 → 模型」循环：
+
+1. 用工具系统提示词调用 `CompleteWithTools`（`tool_choice=auto`），最多 6 轮；
+2. 模型返回 `tool_calls` 时，逐个经 `executor.ExecuteText` 调用工具（每次调用都会过策略门与审批），把结果以 `role=tool` 消息回灌；工具错误也作为结果回灌；
+3. 模型不再调用工具时，其输出即最终文本；轮次用尽仍无结论时写入“工具调用轮次用尽，未给出最终结论”；
+4. 最终文本仍按 `{"fact":"…","detail":"…","done":true}` 解析为观察并写成 fact 节点；解析失败退化为原文。
+
+工具调用与审批的规则、审计与已知盲区见 [工具与策略](tools-policy.md)。未装配工具（M3 行为或 idle 模式）时退化为纯文本观察。
+
 ## 6. 计划模型（domain/plan）
 
 - `Decision`：`summary`、`steps`、`actions`、`done`、`reason`。

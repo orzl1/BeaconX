@@ -25,10 +25,43 @@ const (
 // chatRequest 是发往 {base}/chat/completions 的请求体。
 type chatRequest struct {
 	Model          string          `json:"model"`
-	Messages       []Message       `json:"messages"`
+	Messages       []wireMessage   `json:"messages"`
 	MaxTokens      int             `json:"max_tokens"`
 	Temperature    *float64        `json:"temperature,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Tools          []wireTool      `json:"tools,omitempty"`
+	ToolChoice     string          `json:"tool_choice,omitempty"`
+}
+
+// wireMessage 是请求侧的消息结构。
+//
+// 工具调用在请求里必须按 OpenAI 规范嵌套为
+// {"id","type":"function","function":{"name","arguments"}}；
+// 而对外暴露的 ToolCall 是扁平结构，因此请求编码单独走这一层转换。
+type wireMessage struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+// wireToolCall 是请求侧的 assistant 工具调用结构。
+type wireToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function wireFunction `json:"function"`
+}
+
+// wireFunction 是工具调用的函数名与原始参数 JSON 字符串。
+type wireFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// wireTool 是请求侧的单个工具定义；Function 复用 ToolDef 的字段标签。
+type wireTool struct {
+	Type     string  `json:"type"`
+	Function ToolDef `json:"function"`
 }
 
 // responseFormat 是 JSON 模式的结构化输出声明。
@@ -41,8 +74,9 @@ type chatResponse struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+			Role      string         `json:"role"`
+			Content   string         `json:"content"`
+			ToolCalls []wireToolCall `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -50,15 +84,27 @@ type chatResponse struct {
 }
 
 // encodeRequest 把配置与消息序列化为请求体，并检查大小上限。
-func encodeRequest(c *Client, messages []Message, jsonMode bool) ([]byte, error) {
+//
+// tools 为空时不发送 tools 字段；toolChoice 为空时不发送 tool_choice 字段，
+// 避免部分网关把空数组/空字符串当成非法参数。
+func encodeRequest(c *Client, messages []Message, jsonMode bool, tools []ToolDef, toolChoice string) ([]byte, error) {
 	req := chatRequest{
 		Model:       c.model,
-		Messages:    messages,
+		Messages:    toWireMessages(messages),
 		MaxTokens:   c.maxTokens,
 		Temperature: c.temperature,
 	}
 	if jsonMode {
 		req.ResponseFormat = &responseFormat{Type: "json_object"}
+	}
+	if len(tools) > 0 {
+		req.Tools = make([]wireTool, 0, len(tools))
+		for _, def := range tools {
+			req.Tools = append(req.Tools, wireTool{Type: "function", Function: def})
+		}
+	}
+	if choice := strings.TrimSpace(toolChoice); choice != "" {
+		req.ToolChoice = choice
 	}
 
 	payload, err := json.Marshal(req)
@@ -71,17 +117,45 @@ func encodeRequest(c *Client, messages []Message, jsonMode bool) ([]byte, error)
 	return payload, nil
 }
 
-// do 执行一次 HTTP 请求并解析结果。
+// toWireMessages 把调用方的 Message 转成请求结构。
+// 普通消息（无工具字段）编码结果与扩展前完全一致。
+func toWireMessages(messages []Message) []wireMessage {
+	out := make([]wireMessage, 0, len(messages))
+	for _, msg := range messages {
+		wire := wireMessage{
+			Role:       msg.Role,
+			Content:    msg.Content,
+			ToolCallID: msg.ToolCallID,
+		}
+		if len(msg.ToolCalls) > 0 {
+			wire.ToolCalls = make([]wireToolCall, 0, len(msg.ToolCalls))
+			for _, call := range msg.ToolCalls {
+				wire.ToolCalls = append(wire.ToolCalls, wireToolCall{
+					ID:   call.ID,
+					Type: "function",
+					Function: wireFunction{
+						Name:      call.Name,
+						Arguments: call.Arguments,
+					},
+				})
+			}
+		}
+		out = append(out, wire)
+	}
+	return out
+}
+
+// do 执行一次 HTTP 请求并解析为原始 completion。
 //
 // 返回的错误分为三类：
 //   - *APIError：拿到非 2xx 状态码（Body 已脱敏、截断）；
 //   - *transportError：连接/超时/读响应失败，可重试；
-//   - 其它：响应格式错误、大小超限、空内容等，不重试。
-func (c *Client) do(ctx context.Context, payload []byte) (Response, error) {
+//   - 其它：响应格式错误、大小超限等，不重试。
+func (c *Client) do(ctx context.Context, payload []byte) (completion, error) {
 	endpoint := c.baseURL + chatCompletionsPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return Response{}, fmt.Errorf("构造 LLM 请求失败：%w", err)
+		return completion{}, fmt.Errorf("构造 LLM 请求失败：%w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -92,22 +166,22 @@ func (c *Client) do(ctx context.Context, payload []byte) (Response, error) {
 
 	httpResp, err := c.http.Do(req)
 	if err != nil {
-		return Response{}, fmt.Errorf("请求 LLM 接口失败：%w", &transportError{err: err})
+		return completion{}, fmt.Errorf("请求 LLM 接口失败：%w", &transportError{err: err})
 	}
 	defer httpResp.Body.Close()
 
 	body, err := readResponseBody(httpResp.Body)
 	if err != nil {
-		return Response{}, err
+		return completion{}, err
 	}
 
 	if httpResp.StatusCode < http.StatusOK || httpResp.StatusCode > 299 {
-		return Response{}, &APIError{
+		return completion{}, &APIError{
 			StatusCode: httpResp.StatusCode,
 			Body:       sanitizeErrorBody(body, c.apiKey),
 		}
 	}
-	return decodeResponse(body)
+	return decodeCompletion(body)
 }
 
 // readResponseBody 读取响应体并执行大小限制。
@@ -122,26 +196,35 @@ func readResponseBody(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// decodeResponse 解析 choices[0].message.content、usage 与 finish_reason。
-func decodeResponse(body []byte) (Response, error) {
+// decodeCompletion 解析 choices[0]、usage、finish_reason 与 tool_calls。
+//
+// content 是否必须非空由上层方法决定：Complete 要求有文本；
+// CompleteWithTools 允许「只有 tool_calls、没有正文」的合法响应。
+func decodeCompletion(body []byte) (completion, error) {
 	var wire chatResponse
 	if err := json.Unmarshal(body, &wire); err != nil {
-		return Response{}, fmt.Errorf("解析 LLM 响应失败：%w", err)
+		return completion{}, fmt.Errorf("解析 LLM 响应失败：%w", err)
 	}
 	if len(wire.Choices) == 0 {
-		return Response{}, errors.New("LLM 响应中没有 choices")
+		return completion{}, errors.New("LLM 响应中没有 choices")
 	}
 
 	choice := wire.Choices[0]
-	if strings.TrimSpace(choice.Message.Content) == "" {
-		return Response{}, errors.New("LLM 响应内容为空")
+	var toolCalls []ToolCall
+	for _, call := range choice.Message.ToolCalls {
+		toolCalls = append(toolCalls, ToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
+		})
 	}
 
-	return Response{
-		Content:      choice.Message.Content,
-		Usage:        wire.Usage,
-		Model:        wire.Model,
-		FinishReason: choice.FinishReason,
+	return completion{
+		content:      choice.Message.Content,
+		toolCalls:    toolCalls,
+		usage:        wire.Usage,
+		model:        wire.Model,
+		finishReason: choice.FinishReason,
 	}, nil
 }
 

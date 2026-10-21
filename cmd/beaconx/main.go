@@ -17,9 +17,12 @@ import (
 
 	"github.com/orzl1/BeaconX/internal/app/ai"
 	"github.com/orzl1/BeaconX/internal/app/events"
+	"github.com/orzl1/BeaconX/internal/app/executor"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/app/system"
+	"github.com/orzl1/BeaconX/internal/app/tools"
 	"github.com/orzl1/BeaconX/internal/config"
+	"github.com/orzl1/BeaconX/internal/domain/policy"
 	"github.com/orzl1/BeaconX/internal/httpapi"
 	"github.com/orzl1/BeaconX/internal/infra/llm"
 	"github.com/orzl1/BeaconX/internal/infra/migrate"
@@ -89,6 +92,8 @@ func usage() {
   BEACONX_LLM_MAX_TOKENS      单次最大输出 token（默认 2048）
   BEACONX_LLM_TIMEOUT         单次请求超时（默认 60s）
   BEACONX_LLM_MAX_RETRIES     429/5xx 重试次数（默认 2）
+  BEACONX_POLICY_DEFAULT_ACTION 无规则命中时的动作 allow|ask|deny（默认 ask）
+  BEACONX_APPROVAL_TIMEOUT     审批等待超时（默认 60s）
 `)
 }
 
@@ -197,6 +202,22 @@ func serve(args []string) int {
 			CreatedAt: ev.CreatedAt,
 		})
 	}
+	// 工具与策略：内置默认规则幂等写入；执行器是所有工具调用的唯一入口。
+	if err := store.EnsurePolicyRules(ctx, cfg.Tenant.DefaultID, policy.SeedDefaults()); err != nil {
+		log.Error("写入内置策略规则失败", "error", err)
+		return 1
+	}
+	registry, err := tools.NewRegistry(tools.NewHTTPProbe(), tools.NewShellExec())
+	if err != nil {
+		log.Error("初始化工具注册表失败", "error", err)
+		return 1
+	}
+	exec := executor.New(store, registry, executor.Config{
+		TenantID:      cfg.Tenant.DefaultID,
+		DefaultAction: policy.Action(cfg.Policy.DefaultAction),
+		AskTimeout:    cfg.Policy.ApprovalTimeout.Value(),
+	}, log)
+
 	// 规划/执行实现：配置了模型端点时走真实 LLM，否则使用 M2 的空实现。
 	var (
 		planner runner.Planner = runner.IdlePlanner{}
@@ -218,7 +239,7 @@ func serve(args []string) int {
 			return 1
 		}
 		planner = ai.NewPlanner(store, client, cfg.LLM.Model, ai.Config{}, log)
-		worker = ai.NewWorker(store, client, cfg.LLM.Model, log)
+		worker = ai.NewWorker(store, client, cfg.LLM.Model, log).SetTools(exec, llmToolDefs(registry.List("worker")))
 		aiMode = "llm"
 	}
 	engine := runner.New(runner.Config{
@@ -299,6 +320,19 @@ func serve(args []string) int {
 
 	log.Info("已停止")
 	return 0
+}
+
+// llmToolDefs 把工具定义转换为模型可识别的 function 定义。
+func llmToolDefs(defs []tools.Definition) []llm.ToolDef {
+	out := make([]llm.ToolDef, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, llm.ToolDef{
+			Name:        d.Name,
+			Description: d.Description,
+			Parameters:  d.Parameters,
+		})
+	}
+	return out
 }
 
 // resolveAdminToken 返回管理接口令牌；未配置时生成临时令牌并打印到日志。

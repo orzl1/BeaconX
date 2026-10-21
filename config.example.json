@@ -40,5 +40,9 @@
     "max_tokens": 2048,
     "timeout": "60s",
     "max_retries": 2
+  },
+  "policy": {
+    "default_action": "ask",
+    "approval_timeout": "60s"
   }
 }

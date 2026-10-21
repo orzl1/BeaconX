@@ -1,8 +1,8 @@
-# 数据模型（M1–M2）
+# 数据模型（M1–M4）
 
-本文描述 BeaconX M1–M2 的数据层：资产图与作战图（0002），以及任务生命周期、事件流与动作租约（0003）。
+本文描述 BeaconX M1–M4 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）。
 
-权威来源是 `migrations/0001_init.sql`、`migrations/0002_core_graph.sql`、`migrations/0003_runtime.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0005_policy.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -27,6 +27,12 @@
 | 0002 | `operation_edges` | 作战图边，两端必须同任务 |
 | 0002 | `operation_anchors` | 节点 ↔ 资产锚点，`role` 决定是否计入覆盖度 |
 | 0003 | `mission_events` | 只追加的任务事件流，SSE 回放与状态追溯的事实来源 |
+| 0004 | `plan_steps` | 任务的长期计划步骤（跨规划轮次保留） |
+| 0004 | `step_dependencies` | 步骤之间的依赖关系，决定可派发顺序 |
+| 0004 | `llm_usage` | 每次模型调用的 token 用量台账 |
+| 0005 | `policy_rules` | 工具调用策略规则（内置 + 人工维护） |
+| 0005 | `approvals` | ask 决策产生的待人工审批项 |
+| 0005 | `audit_events` | 每次工具调用的策略与执行审计 |
 
 ### 2.1 租户根表（0001）
 
@@ -67,6 +73,19 @@
 - **动作租约列**：`operation_nodes` 增加 `priority integer NOT NULL DEFAULT 0`、`lease_until timestamptz`、`leased_by text`、`attempts integer NOT NULL DEFAULT 0`；部分索引 `idx_nodes_claim (tenant_id, mission_id, priority DESC, id) WHERE state IN ('open', 'running')` 支撑按优先级领取动作。
 - **事件表 `mission_events`**：`tenant_id`、`id`（自增）、`mission_id`、`type`、`actor`（默认 `system`）、`reason`（默认空串）、`payload JSONB`（默认 `{}`）、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键 `(tenant_id, mission_id)` → `missions (tenant_id, id) ON DELETE CASCADE`、`tenant_id` → `tenants (id) ON DELETE CASCADE`；索引 `idx_mission_events_stream (tenant_id, mission_id, id)` 支撑 SSE 按 `id` 递增回放。
 - 状态与事件的语义、SSE 游标与回放规则见 [运行时与引擎](runtime.md)。
+
+### 2.8 规划与用量（0004）
+
+- `plan_steps`：`tenant_id`、`id`（自增）、`mission_id`、`key`（`CHECK (key ~ '^[a-z0-9_-]{1,64}$')`）、`title`、`detail`、`status`（`pending` / `ready` / `running` / `done` / `skipped` / `failed`，默认 `pending`）、`priority`、`created_at`、`updated_at`；`PRIMARY KEY (tenant_id, id)`、`UNIQUE (tenant_id, mission_id, key)`；外键 `(tenant_id, mission_id)` → `missions` 级联删除；索引 `idx_plan_steps_mission (tenant_id, mission_id, status, priority DESC, id)`。
+- `step_dependencies`：`step_id`、`depends_on_step_id`；`PRIMARY KEY (tenant_id, step_id, depends_on_step_id)`，`CHECK (step_id <> depends_on_step_id)`；两个外键均级联到 `plan_steps (tenant_id, id)`。
+- `llm_usage`：`mission_id`（可空）、`role`（如 planner / planner-retry / planner-followup / worker / worker-tool）、`model`、`prompt_tokens`、`completion_tokens`、`total_tokens`、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键到 `missions` 与 `tenants`；索引 `idx_llm_usage_mission (tenant_id, mission_id, id)`。
+- `missions` 增加 `max_tokens BIGINT NOT NULL DEFAULT 0`、`spent_tokens BIGINT NOT NULL DEFAULT 0`、`max_steps integer NOT NULL DEFAULT 0`、`steps_used integer NOT NULL DEFAULT 0`；0 表示不限制。
+
+### 2.9 工具与策略（0005）
+
+- `policy_rules`：`name`、`tool`、`arg_pattern`（默认空串）、`action`（CHECK `allow` / `ask` / `deny`）、`priority`（默认 0）、`timeout_seconds`（默认 0）、`enabled`（默认 true）、`immutable`（默认 false）、`created_at`、`updated_at`；`PRIMARY KEY (tenant_id, id)`、`UNIQUE (tenant_id, name)`；索引 `idx_policy_rules_lookup (tenant_id, enabled, priority DESC, id)`。启动时用 `ON CONFLICT (tenant_id, name) DO NOTHING` 幂等播种内置规则，不覆盖用户改动。
+- `approvals`：`mission_id`、`node_id`、`tool`、`args JSONB`（原始参数）、`status`（`pending` / `approved` / `rejected` / `timeout` / `cancelled`，默认 `pending`）、`note`、`decided_by`、`decided_at`、`expires_at`（NOT NULL）、`created_at`；`PRIMARY KEY (tenant_id, id)`；外键 `(tenant_id, mission_id)` → `missions`、`(tenant_id, node_id)` → `operation_nodes`、`tenant_id` → `tenants`，均级联删除；部分索引 `idx_approvals_pending (tenant_id, created_at) WHERE status = 'pending'`。
+- `audit_events`：`mission_id`、`node_id`（可空）、`tool`、`action`、`rule_name`（默认空串）、`args_digest`（参数原始 JSON 的 SHA-256）、`outcome`、`detail`、`actor`（默认 `system`）、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键到 `missions` 与 `tenants`；索引 `idx_audit_events_mission (tenant_id, mission_id, id)`。审计不保存原始参数（参数在审批表），只保存摘要。
 
 ## 3. 资产身份与归一化
 

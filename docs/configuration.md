@@ -48,6 +48,10 @@
     "max_tokens": 2048,
     "timeout": "60s",
     "max_retries": 2
+  },
+  "policy": {
+    "default_action": "ask",
+    "approval_timeout": "60s"
   }
 }
 ```
@@ -81,6 +85,8 @@
 | `BEACONX_LLM_MAX_TOKENS` | `llm.max_tokens` | `2048` | 单次回复输出上限 |
 | `BEACONX_LLM_TIMEOUT` | `llm.timeout` | `60s` | 单次 HTTP 请求超时 |
 | `BEACONX_LLM_MAX_RETRIES` | `llm.max_retries` | `2` | 最大重试次数 |
+| `BEACONX_POLICY_DEFAULT_ACTION` | `policy.default_action` | `ask` | 无规则命中时的默认裁决 |
+| `BEACONX_APPROVAL_TIMEOUT` | `policy.approval_timeout` | `60s` | ask 的默认审批等待超时 |
 
 环境变量值为空时视为未设置，不会覆盖配置文件或默认值。
 
@@ -111,11 +117,21 @@
 `llm` 段配置 OpenAI 兼容模型端点（详见 [AI 规划与执行](ai.md)）：
 
 - **启用条件**：`base_url` 与 `model` **同时非空**才启用 AI 规划；任一为空时运行时为 idle，使用 `IdlePlanner` / `NoopWorker`。启动日志会打印 `规划模式 mode=idle` 或 `规划模式 mode=llm model=<模型名>`。
-- **校验**：启用时由模型客户端校验配置——`base_url` 必须是以 `http://` 或 `https://` 开头、可解析且带主机名的地址；`model` 不能为空。校验失败会记录“初始化模型客户端失败”并终止启动。只配置其中一项会在配置校验阶段报错；两项都不设置时才保持 idle。
+- **校验**：启用时由模型客户端校验配置——`base_url` 必须是以 `http://` 或 `https://` 开头、可解析且带主机名的地址；`model` 不能为空。校验失败会记录“初始化模型客户端失败”并终止启动。只配置其中一项不会报错，只会保持 idle。
 - **默认值**：`max_tokens=2048`、`timeout=60s`、`max_retries=2`；这些值取 `<=0` 时回退到默认值。`max_retries<=0` 不能关闭重试（会被当作 2）。
 - **重试范围**：只有 HTTP 429、5xx 与网络错误会重试；其余 4xx 不重试。JSON 模式请求被服务端以 HTTP 400 拒绝时，客户端会回退为普通请求再试一次。
 - **temperature**：可选，只支持配置文件（没有对应环境变量）；未设置时不发送该参数。
 - **密钥安全**：`api_key` 应通过环境变量 `BEACONX_LLM_API_KEY` 或本地 `.env` 提供（`.env` 已被忽略），不要写入仓库或配置模板；`api_key` 为空时不会发送 `Authorization` 头（便于本地假服务）。
+- **工具调用**：配置了 LLM 后，Worker 会装配工具与策略执行器；工具调用链、审批与审计见 [工具与策略](tools-policy.md)。
+
+## 工具策略与审批
+
+`policy` 段控制工具调用的默认裁决与审批等待（详见 [工具与策略](tools-policy.md)）：
+
+- `default_action`：当所有启用规则都未命中时使用的裁决，取值 `allow` / `ask` / `deny`，默认 `ask`（策略缺失即人工确认）。规则命中时以规则动作为准。
+- `approval_timeout`：ask 的默认等待超时，默认 `60s`；如果命中规则自带 `timeout_seconds`（内置 ask 规则为 60s），优先使用规则值。
+- 实现细节：配置加载阶段会校验 `default_action` 只能是 `allow`/`ask`/`deny`，非法值导致启动失败；`approval_timeout` 必须为正数。执行器内部对零值有兜底默认值，但正常启动路径不依赖它。
+- 工具只在启用 LLM（`llm.base_url` 与 `llm.model` 同时非空）后被真实调用；idle 模式不执行工具。
 
 ## 状态目录
 

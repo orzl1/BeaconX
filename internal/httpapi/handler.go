@@ -97,6 +97,9 @@ func Routes() []Route {
 		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/cancel", Summary: "取消任务"},
 		{Method: http.MethodDelete, Pattern: "/api/v1/missions/{id}", Summary: "删除任务"},
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/events", Summary: "任务事件流（SSE）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/audit", Summary: "任务工具调用审计"},
+		{Method: http.MethodGet, Pattern: "/api/v1/approvals", Summary: "审批列表"},
+		{Method: http.MethodPost, Pattern: "/api/v1/approvals/{id}/decide", Summary: "审批决策"},
 	}
 }
 
@@ -162,6 +165,12 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleCancelMission, nil
 	case "/api/v1/missions/{id}/events":
 		return o.handleMissionEvents, nil
+	case "/api/v1/missions/{id}/audit":
+		return o.handleMissionAudit, nil
+	case "/api/v1/approvals":
+		return o.handleListApprovals, nil
+	case "/api/v1/approvals/{id}/decide":
+		return o.handleDecideApproval, nil
 	default:
 		return nil, ErrUnboundRoute
 	}
