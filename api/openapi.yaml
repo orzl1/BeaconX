@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.2.0
+  version: 0.3.0
   description: |
-    BeaconX M2 HTTP API：系统探针、任务生命周期管理与 SSE 事件流。
+    BeaconX M3 HTTP API：系统探针、任务生命周期管理（含 AI 规划预算）、SSE 事件流。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -404,6 +404,20 @@ components:
         updated_at:
           type: string
           format: date-time
+        max_tokens:
+          type: integer
+          format: int64
+          description: 任务的 token 预算；0 表示不限制。
+        spent_tokens:
+          type: integer
+          format: int64
+          description: 已累计消耗的 token 数。
+        max_steps:
+          type: integer
+          description: 任务的步骤预算；0 表示不限制。
+        steps_used:
+          type: integer
+          description: 已新增的计划步骤数。
     MissionList:
       type: object
       required: [missions]
@@ -423,6 +437,15 @@ components:
           type: string
         description:
           type: string
+        max_tokens:
+          type: integer
+          format: int64
+          default: 0
+          description: 任务 token 预算；0 或不传表示不限制。
+        max_steps:
+          type: integer
+          default: 0
+          description: 任务步骤预算；0 或不传表示不限制。
     Error:
       type: object
       required: [error]

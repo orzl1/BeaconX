@@ -115,11 +115,13 @@
 - 客户端优先使用 `Authorization: Bearer <token>`；SSE 无法自定义请求头，也可用 `?token=<token>`。两种方式都使用常量时间比较；空令牌一律拒绝。
 - 未安装认证组件时受保护路由返回 503（fail closed），令牌错误返回 401。
 
-## 8. M2 默认实现与 M3 替换点
+## 8. 规划/执行接口：M2 空实现 → M3 LLM 实现
 
-M2 不接入 LLM：`runner.IdlePlanner` 的 `Plan` 直接返回「已完成」，`runner.NoopWorker` 把动作标记为 `done`。因此没有待办动作的任务会在一个规划周期内走完 `queued → running → finalizing → done`。
+`runner.Planner` 与 `runner.Worker` 是引擎的注入点。M2 不接入 LLM：`runner.IdlePlanner.Plan` 直接返回「已完成」，`runner.NoopWorker` 把动作标记为 `done`，因此没有待办动作的任务会在一个规划周期内走完 `queued → running → finalizing → done`。
 
-M3 只需实现 `runner.Planner`（生成假设/动作节点）与 `runner.Worker`（执行工具调用），通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可；准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
+M3 起由 `internal/app/ai` 提供 LLM 实现：Planner 读取态势快照、调用 OpenAI 兼容模型生成结构化计划与动作；Worker 把模型的观察写成 fact 节点。启用条件、规划流程、追问语义、预算与真实冒烟结果见 [AI 规划与执行](ai.md)。未配置 `llm.base_url` 与 `llm.model` 时仍使用上述空实现；配置后启动日志打印 `规划模式 mode=llm model=<模型名>`。
+
+后续接入真实工具（M4）时只需替换 `runner.Worker` 的实现；通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可，准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
 
 ## 9. 验收与本地实测
 

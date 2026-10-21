@@ -32,6 +32,7 @@ type Config struct {
 	Log      Log      `json:"log"`
 	Engine   Engine   `json:"engine"`
 	Auth     Auth     `json:"auth"`
+	LLM      LLM      `json:"llm"`
 }
 
 // Engine 是任务运行时参数。
@@ -46,6 +47,17 @@ type Engine struct {
 // Auth 是管理接口鉴权配置。
 type Auth struct {
 	AdminToken string `json:"admin_token"`
+}
+
+// LLM 是 OpenAI 兼容模型端点配置；base_url 与 model 同时非空时启用 AI 规划。
+type LLM struct {
+	BaseURL     string   `json:"base_url"`
+	APIKey      string   `json:"api_key"`
+	Model       string   `json:"model"`
+	MaxTokens   int      `json:"max_tokens"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	Timeout     Duration `json:"timeout"`
+	MaxRetries  int      `json:"max_retries"`
 }
 
 // Duration 是一个便于 JSON 序列化的 time.Duration，既接受 Go duration 字符串
@@ -136,6 +148,11 @@ func Default() Config {
 		Tenant: Tenant{DefaultID: int64(1)},
 		State:  State{Dir: "data"},
 		Log:    Log{Level: "info", Format: "json"},
+		LLM: LLM{
+			MaxTokens:  2048,
+			Timeout:    Duration(60 * time.Second),
+			MaxRetries: 2,
+		},
 		Engine: Engine{
 			MaxConcurrent:     2,
 			PlannerInterval:   Duration(2 * time.Second),
@@ -202,6 +219,12 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return parseDuration(v, &cfg.Engine.HeartbeatInterval, "BEACONX_HEARTBEAT_INTERVAL")
 		}},
 		{"BEACONX_ADMIN_TOKEN", func(v string) error { cfg.Auth.AdminToken = v; return nil }},
+		{"BEACONX_LLM_BASE_URL", func(v string) error { cfg.LLM.BaseURL = v; return nil }},
+		{"BEACONX_LLM_API_KEY", func(v string) error { cfg.LLM.APIKey = v; return nil }},
+		{"BEACONX_LLM_MODEL", func(v string) error { cfg.LLM.Model = v; return nil }},
+		{"BEACONX_LLM_MAX_TOKENS", func(v string) error { return parseInto(v, &cfg.LLM.MaxTokens, "BEACONX_LLM_MAX_TOKENS") }},
+		{"BEACONX_LLM_TIMEOUT", func(v string) error { return parseDuration(v, &cfg.LLM.Timeout, "BEACONX_LLM_TIMEOUT") }},
+		{"BEACONX_LLM_MAX_RETRIES", func(v string) error { return parseInto(v, &cfg.LLM.MaxRetries, "BEACONX_LLM_MAX_RETRIES") }},
 	} {
 		if v := strings.TrimSpace(getenv(e.key)); v != "" {
 			if err := e.set(v); err != nil {

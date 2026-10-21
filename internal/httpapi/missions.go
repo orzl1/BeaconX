@@ -22,6 +22,8 @@ type missionCreateRequest struct {
 	Name        string `json:"name"`
 	Goal        string `json:"goal"`
 	Description string `json:"description"`
+	MaxTokens   int64  `json:"max_tokens"`
+	MaxSteps    int    `json:"max_steps"`
 }
 
 func (o Options) missionReady(w http.ResponseWriter, r *http.Request) bool {
@@ -75,6 +77,12 @@ func (o Options) handleCreateMission(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeMissionError(w, r, err)
 		return
+	}
+	if req.MaxTokens > 0 || req.MaxSteps > 0 {
+		if err := o.Store.SetMissionBudget(r.Context(), o.TenantID, mission.ID, req.MaxTokens, req.MaxSteps); err != nil {
+			writeMissionError(w, r, err)
+			return
+		}
 	}
 	ev, err := o.Store.AppendMissionEvent(r.Context(), o.TenantID, mission.ID, task.EvCreated, "user", "任务创建", nil)
 	if err == nil {

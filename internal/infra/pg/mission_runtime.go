@@ -16,7 +16,8 @@ import (
 // 任务运行期数据访问：排队、状态迁移、事件流、动作租约与恢复。
 
 const missionColumns = `tenant_id, id, name, goal, description, status, queued, queued_at,
-	started_at, finished_at, deadline_at, reason, created_at, updated_at`
+	started_at, finished_at, deadline_at, reason,
+	max_tokens, spent_tokens, max_steps, steps_used, created_at, updated_at`
 
 // missionScanner 抽象 pgx.Row 与 pgx.Rows 的 Scan，供复用。
 type missionScanner interface {
@@ -26,7 +27,8 @@ type missionScanner interface {
 func scanMission(row missionScanner) (Mission, error) {
 	var m Mission
 	err := row.Scan(&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.Queued,
-		&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason, &m.CreatedAt, &m.UpdatedAt)
+		&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason,
+		&m.MaxTokens, &m.SpentTokens, &m.MaxSteps, &m.StepsUsed, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return Mission{}, err
 	}
@@ -170,7 +172,8 @@ func (s *Store) TransitionMission(
 		 RETURNING `+missionColumns,
 		tenantID, missionID, string(to), queued, terminal, reason, fromStrings).Scan(
 		&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.Queued,
-		&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason, &m.CreatedAt, &m.UpdatedAt)
+		&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason,
+		&m.MaxTokens, &m.SpentTokens, &m.MaxSteps, &m.StepsUsed, &m.CreatedAt, &m.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MissionEvent{}, false, nil
 	}

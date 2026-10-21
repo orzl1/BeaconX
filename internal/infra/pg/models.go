@@ -73,6 +73,10 @@ type Mission struct {
 	FinishedAt  *time.Time `json:"finished_at,omitempty"`
 	DeadlineAt  *time.Time `json:"deadline_at,omitempty"`
 	Reason      string     `json:"reason"`
+	MaxTokens   int64      `json:"max_tokens"`
+	SpentTokens int64      `json:"spent_tokens"`
+	MaxSteps    int        `json:"max_steps"`
+	StepsUsed   int        `json:"steps_used"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }

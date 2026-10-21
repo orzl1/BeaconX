@@ -15,11 +15,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/ai"
 	"github.com/orzl1/BeaconX/internal/app/events"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/app/system"
 	"github.com/orzl1/BeaconX/internal/config"
 	"github.com/orzl1/BeaconX/internal/httpapi"
+	"github.com/orzl1/BeaconX/internal/infra/llm"
 	"github.com/orzl1/BeaconX/internal/infra/migrate"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 	"github.com/orzl1/BeaconX/internal/logging"
@@ -81,6 +83,12 @@ func usage() {
   BEACONX_WORKER_INTERVAL    执行轮询间隔（默认 200ms）
   BEACONX_LEASE_TTL          动作租约时长（默认 30s）
   BEACONX_HEARTBEAT_INTERVAL 租约续约间隔（默认 10s）
+  BEACONX_LLM_BASE_URL        OpenAI 兼容端点（与 MODEL 同时设置才启用 AI）
+  BEACONX_LLM_API_KEY         模型 API Key
+  BEACONX_LLM_MODEL           模型名（如 deepseek-flash）
+  BEACONX_LLM_MAX_TOKENS      单次最大输出 token（默认 2048）
+  BEACONX_LLM_TIMEOUT         单次请求超时（默认 60s）
+  BEACONX_LLM_MAX_RETRIES     429/5xx 重试次数（默认 2）
 `)
 }
 
@@ -189,6 +197,30 @@ func serve(args []string) int {
 			CreatedAt: ev.CreatedAt,
 		})
 	}
+	// 规划/执行实现：配置了模型端点时走真实 LLM，否则使用 M2 的空实现。
+	var (
+		planner runner.Planner = runner.IdlePlanner{}
+		worker  runner.Worker  = runner.NoopWorker{}
+		aiMode  string         = "idle"
+	)
+	if cfg.LLM.BaseURL != "" && cfg.LLM.Model != "" {
+		client, err := llm.NewClient(llm.Config{
+			BaseURL:     cfg.LLM.BaseURL,
+			APIKey:      cfg.LLM.APIKey,
+			Model:       cfg.LLM.Model,
+			MaxTokens:   cfg.LLM.MaxTokens,
+			Temperature: cfg.LLM.Temperature,
+			Timeout:     cfg.LLM.Timeout.Value(),
+			MaxRetries:  cfg.LLM.MaxRetries,
+		})
+		if err != nil {
+			log.Error("初始化模型客户端失败", "error", err)
+			return 1
+		}
+		planner = ai.NewPlanner(store, client, cfg.LLM.Model, ai.Config{}, log)
+		worker = ai.NewWorker(store, client, cfg.LLM.Model, log)
+		aiMode = "llm"
+	}
 	engine := runner.New(runner.Config{
 		TenantID:          cfg.Tenant.DefaultID,
 		MaxConcurrent:     cfg.Engine.MaxConcurrent,
@@ -197,7 +229,8 @@ func serve(args []string) int {
 		LeaseTTL:          cfg.Engine.LeaseTTL.Value(),
 		HeartbeatInterval: cfg.Engine.HeartbeatInterval.Value(),
 		Owner:             fmt.Sprintf("beaconx-%d", os.Getpid()),
-	}, store, runner.IdlePlanner{}, runner.NoopWorker{}, log, sink)
+	}, store, planner, worker, log, sink)
+	log.Info("规划模式", "mode", aiMode, "model", cfg.LLM.Model)
 	if err := engine.Start(ctx); err != nil {
 		log.Error("启动任务运行时失败", "error", err)
 		return 1

@@ -32,5 +32,13 @@
   },
   "auth": {
     "admin_token": ""
+  },
+  "llm": {
+    "base_url": "https://api.deepseek.com",
+    "api_key": "",
+    "model": "deepseek-flash",
+    "max_tokens": 2048,
+    "timeout": "60s",
+    "max_retries": 2
   }
 }
