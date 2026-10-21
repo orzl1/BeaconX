@@ -108,6 +108,25 @@ func Routes() []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/traffic", Summary: "任务流量采集记录"},
 		{Method: http.MethodPost, Pattern: "/api/v1/traffic/{id}/evidence", Summary: "把采集记录冻结为证据"},
 		{Method: http.MethodGet, Pattern: "/api/v1/evidence/{id}/verify", Summary: "校验证据完整性"},
+		// M6.2-B1：企业、企业范围、资产与任务资产/覆盖度。
+		{Method: http.MethodGet, Pattern: "/api/v1/companies", Summary: "企业列表（?q= 名称/slug 模糊搜索）"},
+		{Method: http.MethodPost, Pattern: "/api/v1/companies", Summary: "创建企业"},
+		{Method: http.MethodGet, Pattern: "/api/v1/companies/{id}", Summary: "企业详情"},
+		{Method: http.MethodPatch, Pattern: "/api/v1/companies/{id}", Summary: "更新企业（name/slug 可选）"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/companies/{id}", Summary: "删除企业（级联删除范围）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/companies/{id}/scope", Summary: "企业资产范围列表"},
+		{Method: http.MethodPost, Pattern: "/api/v1/companies/{id}/scope", Summary: "新增企业资产范围"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/companies/{id}/scope/{scope_id}", Summary: "删除企业资产范围"},
+		{Method: http.MethodGet, Pattern: "/api/v1/assets", Summary: "资产列表（?type= 精确、?q= 标签模糊）"},
+		{Method: http.MethodPost, Pattern: "/api/v1/assets", Summary: "创建资产（可同时写入身份键）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/assets/{id}", Summary: "资产详情（含身份键）"},
+		{Method: http.MethodPatch, Pattern: "/api/v1/assets/{id}", Summary: "更新资产（label/parent_id/attrs 可选）"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/assets/{id}", Summary: "删除资产（级联身份与任务关联）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/assets/{id}/identities", Summary: "资产身份键列表"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/assets", Summary: "任务已登记资产"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/assets", Summary: "把资产登记到任务"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/missions/{id}/assets/{asset_id}", Summary: "解除任务资产关联"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/coverage", Summary: "任务资产覆盖度"},
 		{Method: http.MethodGet, Pattern: "/api/v1/system/update/check", Summary: "检查新版本"},
 		{Method: http.MethodPost, Pattern: "/api/v1/system/update/apply", Summary: "下载并安装新版本"},
 		{Method: http.MethodPost, Pattern: "/api/v1/system/update/rollback", Summary: "回滚到上一版本"},
@@ -140,6 +159,12 @@ func NewHandler(opts Options) (http.Handler, error) {
 		}
 		mux.Handle(rt.Method+" "+rt.Pattern, opts.withAuth(rt, handler))
 	}
+	// 未嵌入前端时，未匹配的路径也要返回 JSON 错误信封，否则默认的纯文本
+	// "404 page not found" 会让客户端无法统一解析。这里把兜底路由放在最后
+	// 注册，保证更具体的路径优先命中。
+	if opts.WebUI == nil {
+		mux.Handle("/", newFallbackHandler(Routes()))
+	}
 
 	var h http.Handler = mux
 	h = opts.limitBody(h)
@@ -149,6 +174,34 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h = withRequestID(h)
 	h = opts.recover(h)
 	return h, nil
+}
+
+// newFallbackHandler 构建「未匹配路径」的兜底处理器。
+//
+// 两种情形分开返回，避免把「方法写错」误报成「接口不存在」：
+//   - 路径存在但请求方法不在路由表中：405 + Allow 头；
+//   - 路径完全不存在：404 的 JSON 错误信封。
+func newFallbackHandler(routes []Route) http.Handler {
+	allowed := make(map[string][]string, len(routes))
+	// 用一个「任意方法」的辅助 mux 判断路径是否存在：把每条路由的 pattern
+	// 去掉方法注册一遍，命中即说明该路径有处理器。
+	pathMux := http.NewServeMux()
+	for _, rt := range routes {
+		if _, seen := allowed[rt.Pattern]; !seen {
+			pathMux.Handle(rt.Pattern, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		}
+		allowed[rt.Pattern] = append(allowed[rt.Pattern], rt.Method)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := pathMux.Handler(r); pattern != "" {
+			if methods, ok := allowed[pattern]; ok {
+				w.Header().Set("Allow", strings.Join(methods, ", "))
+				writeError(w, r, http.StatusMethodNotAllowed, "method_not_allowed", "该路径不支持此请求方法")
+				return
+			}
+		}
+		writeError(w, r, http.StatusNotFound, "not_found", "接口不存在")
+	})
 }
 
 func (o Options) bind(rt Route) (HandlerFunc, error) {
@@ -191,6 +244,50 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleCreateEvidence, nil
 	case "/api/v1/evidence/{id}/verify":
 		return o.handleVerifyEvidence, nil
+	case "/api/v1/companies":
+		if rt.Method == http.MethodPost {
+			return o.handleCreateCompany, nil
+		}
+		return o.handleListCompanies, nil
+	case "/api/v1/companies/{id}":
+		switch rt.Method {
+		case http.MethodPatch:
+			return o.handleUpdateCompany, nil
+		case http.MethodDelete:
+			return o.handleDeleteCompany, nil
+		}
+		return o.handleGetCompany, nil
+	case "/api/v1/companies/{id}/scope":
+		if rt.Method == http.MethodPost {
+			return o.handleAddCompanyScope, nil
+		}
+		return o.handleListCompanyScope, nil
+	case "/api/v1/companies/{id}/scope/{scope_id}":
+		return o.handleDeleteCompanyScope, nil
+	case "/api/v1/assets":
+		if rt.Method == http.MethodPost {
+			return o.handleCreateAsset, nil
+		}
+		return o.handleListAssets, nil
+	case "/api/v1/assets/{id}":
+		switch rt.Method {
+		case http.MethodPatch:
+			return o.handleUpdateAsset, nil
+		case http.MethodDelete:
+			return o.handleDeleteAsset, nil
+		}
+		return o.handleGetAsset, nil
+	case "/api/v1/assets/{id}/identities":
+		return o.handleListAssetIdentities, nil
+	case "/api/v1/missions/{id}/assets":
+		if rt.Method == http.MethodPost {
+			return o.handleAddMissionAsset, nil
+		}
+		return o.handleListMissionAssets, nil
+	case "/api/v1/missions/{id}/assets/{asset_id}":
+		return o.handleRemoveMissionAsset, nil
+	case "/api/v1/missions/{id}/coverage":
+		return o.handleMissionCoverage, nil
 	case "/api/v1/system/update/check":
 		return o.handleUpdateCheck, nil
 	case "/api/v1/system/update/apply":

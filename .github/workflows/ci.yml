@@ -29,6 +29,8 @@ jobs:
         run: go vet ./...
       - name: 品牌门禁
         run: ./scripts/check-brand.sh
+      - name: 校验项目真源文档
+        run: make docs-check
 
   test:
     name: 单元测试

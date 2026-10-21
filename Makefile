@@ -8,7 +8,7 @@ LDFLAGS     := -s -w \
   -X $(MODULE)/internal/version.Commit=$(COMMIT) \
   -X $(MODULE)/internal/version.BuildTime=$(BUILD_TIME)
 
-.PHONY: help build web run test test-race cover lint fmt tidy brand docker-build up down clean
+.PHONY: help build web run test test-race cover lint docs-check fmt tidy brand docker-build up down clean
 
 help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -33,6 +33,9 @@ test-race: ## 开启竞态检测运行单元测试
 cover: ## 运行测试并输出覆盖率
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
+
+docs-check: ## 校验唯一真源文档覆盖全部 HTTP 路由
+	go test ./internal/httpapi -run TestProjectMapDocumentsAllRoutes -count=1
 
 lint: ## 格式检查、静态检查与品牌门禁
 	@out=$$(gofmt -l $$(go list -f '{{.Dir}}' ./...)); \

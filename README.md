@@ -7,6 +7,12 @@
 
 > **当前状态：M6（前端与交付，已完成）**。M1–M5 已建成数据层、任务运行时、AI 规划、工具策略与证据链；M6 补齐 Next.js 静态控制台（`go:embed` 同源托管）、发布流水线（前端构建 + 5 平台产物 + SHA256SUMS）、自更新（检查/下载/校验/冒烟/回滚）与多阶段镜像。浏览器 e2e、URL 路由、CORS、发布签名与 Windows 自更新列入 M6.1，里程碑见 [路线图](docs/roadmap.md)。**M6 仍不是生产级产品**，请勿用于真实目标。
 
+## 项目文档（强制同步）
+
+- **[docs/project-map.md](docs/project-map.md) 是项目代码功能结构的唯一真源**：代码地图、数据模型、API 全表、状态机、运行时机制、配置、前端对接指南与缺口路线。
+- **任何改动都必须同步更新它**（对应章节 + 文末「变更记录」），并在提交前运行 `make docs-check`；规则见 [AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 前端设计请以该文档的「API 全表」「前端对接指南」「原版页面映射与缺口」三章为依据。
+
 ## 快速开始
 
 前置：Docker（含 Compose）。
@@ -104,7 +110,7 @@ make docker-build  # 构建含前端的镜像
 
 token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
 
-## HTTP 接口（M6）
+## HTTP 接口（M6 / M6.2-B1）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -126,6 +132,24 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | POST | `/api/v1/approvals/{id}/decide` | 审批决策（`{"approve":true|false,"note":"…"}`） |
 | POST | `/api/v1/traffic/{id}/evidence` | 把已完成的采集记录冻结为证据快照（201） |
 | GET | `/api/v1/evidence/{id}/verify` | 校验证据签名与正文哈希（篡改返回 409 tampered） |
+| GET | `/api/v1/companies` | 企业列表（`?q=` 名称/slug 模糊、`?limit=` 默认 50/上限 200） |
+| POST | `/api/v1/companies` | 创建企业（`{"name","slug"}`，slug 冲突 409） |
+| GET | `/api/v1/companies/{id}` | 企业详情 |
+| PATCH | `/api/v1/companies/{id}` | 更新企业（`name`/`slug` 可选，空值保持不变） |
+| DELETE | `/api/v1/companies/{id}` | 删除企业（级联删除范围，返回 204） |
+| GET | `/api/v1/companies/{id}/scope` | 企业资产范围列表 |
+| POST | `/api/v1/companies/{id}/scope` | 新增企业范围（`kind` 白名单，重复 409） |
+| DELETE | `/api/v1/companies/{id}/scope/{scope_id}` | 删除企业范围（返回 204） |
+| GET | `/api/v1/assets` | 资产列表（`?type=` 精确、`?q=` 标签模糊、`?limit=`） |
+| POST | `/api/v1/assets` | 创建资产（带 `identities` 走 upsert，省略则建裸资产，201） |
+| GET | `/api/v1/assets/{id}` | 资产详情（含身份键） |
+| PATCH | `/api/v1/assets/{id}` | 更新资产（`label`/`parent_id`/`attrs` 可选，`parent_id:null` 清空） |
+| DELETE | `/api/v1/assets/{id}` | 删除资产（级联身份与任务关联，子资产 parent 置空，204） |
+| GET | `/api/v1/assets/{id}/identities` | 资产身份键列表 |
+| GET | `/api/v1/missions/{id}/assets` | 任务已登记资产 |
+| POST | `/api/v1/missions/{id}/assets` | 把资产登记到任务（`{"asset_id","source"?}`，重复 409） |
+| DELETE | `/api/v1/missions/{id}/assets/{asset_id}` | 解除任务资产关联（返回 204） |
+| GET | `/api/v1/missions/{id}/coverage` | 任务资产覆盖度（空任务返回全零，200） |
 | GET | `/api/v1/system/update/check` | 检查 GitHub Release 新版本 |
 | POST | `/api/v1/system/update/apply` | 下载、校验、冒烟并替换二进制（需重启生效） |
 | POST | `/api/v1/system/update/rollback` | 用 `<binary>.old` 回滚上一版本（需重启生效） |
@@ -178,7 +202,7 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 - 配置：`selfupdate.enabled`（默认 true）、`selfupdate.repo`（默认 `orzl1/BeaconX`）；容器部署建议设置 `BEACONX_UPDATE_ENABLED=false`，通过重新拉取镜像升级。
 - 发布包只有 SHA256 校验和（无签名）；Windows 自更新未验证。详见 [发布与自更新](docs/release.md)。
 
-接口契约以 [api/openapi.yaml](api/openapi.yaml) 为唯一来源，路由表在 `internal/httpapi` 中声明式维护，二者需同步演进。
+接口契约以 [api/openapi.yaml](api/openapi.yaml) 为准，代码功能结构以 [docs/project-map.md](docs/project-map.md) 为唯一真源；路由表在 `internal/httpapi` 中声明式维护，三者需同步演进（`make docs-check` 会校验文档覆盖全部路由）。
 
 ## 目录结构
 
@@ -206,7 +230,7 @@ internal/infra/migrate/ 版本化迁移（校验和 + 咨询锁）
 migrations/             嵌入式 SQL 迁移
 api/                    OpenAPI 契约
 scripts/                CI 辅助脚本（品牌门禁等）
-docs/                   术语、配置、路线图、数据模型、运行时、AI、工具策略、证据、Web、发布
+docs/                   项目真源（project-map）、术语、配置、路线图、数据模型、运行时、AI、工具策略、证据、Web、发布
 ```
 
 ## 工程约定

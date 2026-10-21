@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -55,13 +56,18 @@ func decodeJSON(raw []byte) (map[string]any, error) {
 
 // ---------- 公司 ----------
 
-// CreateCompany 创建公司；同租户内 slug 唯一。
+// CreateCompany 创建公司；同租户内 slug 唯一，重复时返回 ErrConflict。
 func (s *Store) CreateCompany(ctx context.Context, tenantID int64, name, slug string) (Company, error) {
 	if err := checkTenant(tenantID); err != nil {
 		return Company{}, err
 	}
+	name = strings.TrimSpace(name)
+	slug = strings.TrimSpace(slug)
 	if name == "" || slug == "" {
 		return Company{}, fmt.Errorf("%w: 公司名称与 slug 不能为空", ErrInvalidInput)
+	}
+	if len(name) > 200 || len(slug) > 200 {
+		return Company{}, fmt.Errorf("%w: 公司名称与 slug 长度不能超过 200 字节", ErrInvalidInput)
 	}
 	const q = `
 		INSERT INTO companies (tenant_id, name, slug)
@@ -71,6 +77,9 @@ func (s *Store) CreateCompany(ctx context.Context, tenantID int64, name, slug st
 	var attrs []byte
 	err := s.db.pool.QueryRow(ctx, q, tenantID, name, slug).
 		Scan(&c.TenantID, &c.ID, &c.Name, &c.Slug, &attrs, &c.CreatedAt, &c.UpdatedAt)
+	if isUniqueViolation(err) {
+		return Company{}, fmt.Errorf("%w: slug %q 已被其他企业使用", ErrConflict, slug)
+	}
 	if err != nil {
 		return Company{}, fmt.Errorf("创建公司失败: %w", err)
 	}
@@ -360,7 +369,8 @@ func (s *Store) ListMissionAssets(ctx context.Context, tenantID, missionID int64
 	}
 	defer rows.Close()
 
-	var out []Asset
+	// 初始化非 nil 切片：HTTP 层需要输出 [] 而不是 null（无资产的任务是正常状态）。
+	out := make([]Asset, 0, 8)
 	for rows.Next() {
 		var a Asset
 		var attrs []byte

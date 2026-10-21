@@ -1,10 +1,11 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.6.0
+  version: 0.7.0
   description: |
     BeaconX M6 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
-    流量采集与证据校验、自更新与 SSE 事件流。
+    流量采集与证据校验、自更新与 SSE 事件流；M6.2 补齐企业、企业资产范围、
+    资产身份、任务资产关联与覆盖率查询。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -24,6 +25,10 @@ tags:
     description: 流量采集记录、证据快照与完整性校验（需要令牌）
   - name: update
     description: 自更新检查、安装与回滚（需要令牌）
+  - name: companies
+    description: 企业与「企业级资产范围」（需要令牌）
+  - name: assets
+    description: 资产、身份键与任务资产关联/覆盖率（需要令牌）
 paths:
   /healthz:
     get:
@@ -510,6 +515,417 @@ paths:
           $ref: "#/components/responses/UpdateConflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/companies:
+    get:
+      tags: [companies]
+      summary: 企业列表
+      description: |
+        按 id 升序返回当前租户的企业。`q` 对 name 与 slug 做模糊匹配（大小写不敏感，
+        `%` 与 `_` 按字面量处理）；`limit` 缺省 50、上限 200。
+      operationId: listCompanies
+      parameters:
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CompanySearchQuery"
+      responses:
+        "200":
+          description: 企业列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [companies]
+      summary: 创建企业
+      description: name 与 slug 均为必填；同租户内 slug 重复返回 409。
+      operationId: createCompany
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyCreateRequest"
+      responses:
+        "201":
+          description: 企业已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/companies/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CompanyID"
+    get:
+      tags: [companies]
+      summary: 企业详情
+      operationId: getCompany
+      responses:
+        "200":
+          description: 企业详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    patch:
+      tags: [companies]
+      summary: 更新企业
+      description: 只更新传入且非空的字段；空对象按无变更（幂等）处理。slug 与其他企业重复返回 409。
+      operationId: updateCompany
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyUpdateRequest"
+      responses:
+        "200":
+          description: 更新后的企业
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Company"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [companies]
+      summary: 删除企业
+      description: 企业级资产范围随外键级联删除；返回 204。
+      operationId: deleteCompany
+      responses:
+        "204":
+          description: 已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/companies/{id}/scope:
+    parameters:
+      - $ref: "#/components/parameters/CompanyID"
+    get:
+      tags: [companies]
+      summary: 企业资产范围列表
+      operationId: listCompanyScope
+      responses:
+        "200":
+          description: 范围条目列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyScopeList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [companies]
+      summary: 新增企业资产范围
+      description: |
+        kind 必须是 root_domain/subdomain/ip/cidr/url/keyword/icp 之一；source 缺省
+        manual，只允许 manual/import。同一企业下 (kind, value) 重复返回 409。
+      operationId: addCompanyScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompanyScopeCreateRequest"
+      responses:
+        "201":
+          description: 范围条目已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompanyScope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/companies/{id}/scope/{scope_id}:
+    parameters:
+      - $ref: "#/components/parameters/CompanyID"
+      - $ref: "#/components/parameters/ScopeID"
+    delete:
+      tags: [companies]
+      summary: 删除企业资产范围
+      description: 条目必须属于路径中的企业，否则返回 404；成功返回 204。
+      operationId: deleteCompanyScope
+      responses:
+        "204":
+          description: 已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/assets:
+    get:
+      tags: [assets]
+      summary: 资产列表
+      description: |
+        `type` 精确过滤（root_domain/subdomain/ip/service/app/endpoint）；
+        `q` 对 label 做模糊匹配（`%`/`_` 按字面量处理）；`limit` 缺省 50、上限 200。
+        列表不返回身份键，需要身份键请查资产详情或 `/identities`。
+      operationId: listAssets
+      parameters:
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/AssetTypeQuery"
+        - $ref: "#/components/parameters/AssetSearchQuery"
+      responses:
+        "200":
+          description: 资产列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [assets]
+      summary: 创建资产
+      description: |
+        带 `identities` 时按身份键 upsert：身份键命中已有资产则复用该资产并更新
+        label/attrs（幂等），否则新建；不带 `identities` 时创建一条暂无身份键的裸资产。
+        身份键会由领域层归一化（大小写、默认端口、结尾点、IPv6 压缩等），非法值返回 400。
+      operationId: createAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetCreateRequest"
+      responses:
+        "201":
+          description: 资产已创建或已按身份键复用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/assets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AssetID"
+    get:
+      tags: [assets]
+      summary: 资产详情
+      description: 返回资产本身及其全部身份键。
+      operationId: getAsset
+      responses:
+        "200":
+          description: 资产详情（含 identities）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    patch:
+      tags: [assets]
+      summary: 更新资产
+      description: |
+        label 与 attrs 传了才更新（attrs 整体替换）；parent_id 三种语义：
+        字段缺省=不变，`null`=清空父资产，数字=设置为该父资产。
+        父资产不存在、或把自身设为父资产返回 400。
+      operationId: updateAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetUpdateRequest"
+      responses:
+        "200":
+          description: 更新后的资产（含 identities）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [assets]
+      summary: 删除资产
+      description: 身份键与任务资产关联随外键级联删除；子资产的 parent_id 会被置空；返回 204。
+      operationId: deleteAsset
+      responses:
+        "204":
+          description: 已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/assets/{id}/identities:
+    parameters:
+      - $ref: "#/components/parameters/AssetID"
+    get:
+      tags: [assets]
+      summary: 资产身份键列表
+      operationId: listAssetIdentities
+      responses:
+        "200":
+          description: 身份键列表（按 kind、key 升序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetIdentityList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/assets:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [assets, missions]
+      summary: 任务已登记资产
+      description: 返回 mission_asset_links 关联的资产（不含身份键）；任务不存在返回 404。
+      operationId: listMissionAssets
+      responses:
+        "200":
+          description: 任务资产列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [assets, missions]
+      summary: 把资产登记到任务
+      description: |
+        source 缺省 manual，允许 manual/discovered/scope；同一资产重复登记返回 409；
+        任务不存在返回 404；asset_id 引用的资产不存在返回 400。
+      operationId: addMissionAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissionAssetLinkRequest"
+      responses:
+        "201":
+          description: 关联已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionAssetLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/assets/{asset_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+      - $ref: "#/components/parameters/AssetIDPath"
+    delete:
+      tags: [assets, missions]
+      summary: 解除任务资产关联
+      description: 关联不存在返回 404；成功返回 204。
+      operationId: removeMissionAsset
+      responses:
+        "204":
+          description: 已解除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/coverage:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [assets, missions]
+      summary: 任务资产覆盖度
+      description: |
+        分母 = 任务登记/范围解析的资产 ∪ role='target' 锚定资产；分子 = fact 节点上
+        role='tested' 锚定的资产。任务没有资产时返回全零（`by_type` 为空数组），不报错。
+      operationId: getMissionCoverage
+      responses:
+        "200":
+          description: 覆盖度
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Coverage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -558,6 +974,72 @@ components:
         type: integer
         format: int64
         minimum: 1
+    CompanyID:
+      name: id
+      in: path
+      required: true
+      description: 企业标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    ScopeID:
+      name: scope_id
+      in: path
+      required: true
+      description: 企业资产范围条目标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    AssetID:
+      name: id
+      in: path
+      required: true
+      description: 资产标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    AssetIDPath:
+      name: asset_id
+      in: path
+      required: true
+      description: 资产标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: 返回条数上限，缺省 50，最大 200；非数字或非正数按缺省处理。
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+    CompanySearchQuery:
+      name: q
+      in: query
+      required: false
+      description: 企业名称/slug 模糊搜索关键字（大小写不敏感）。
+      schema:
+        type: string
+    AssetTypeQuery:
+      name: type
+      in: query
+      required: false
+      description: 资产类型精确过滤；非法取值返回 400。
+      schema:
+        $ref: "#/components/schemas/AssetType"
+    AssetSearchQuery:
+      name: q
+      in: query
+      required: false
+      description: 资产标签模糊搜索关键字（大小写不敏感）。
+      schema:
+        type: string
   responses:
     BadRequest:
       description: 请求参数或请求体非法
@@ -572,7 +1054,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     NotFound:
-      description: 任务不存在
+      description: 资源不存在（任务、企业、资产或关联）
       content:
         application/json:
           schema:
@@ -1040,3 +1522,279 @@ components:
         latest_migration:
           type: integer
           format: int64
+    AssetType:
+      type: string
+      description: 资产类型。
+      enum: [root_domain, subdomain, ip, service, app, endpoint]
+    Company:
+      type: object
+      required: [tenant_id, id, name, slug, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+          description: 所属租户。
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: 企业名称。
+        slug:
+          type: string
+          description: 同租户内唯一的企业短标识。
+        attrs:
+          type: object
+          additionalProperties: true
+          description: 扩展属性，默认空对象。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CompanyList:
+      type: object
+      required: [companies]
+      properties:
+        companies:
+          type: array
+          items:
+            $ref: "#/components/schemas/Company"
+    CompanyCreateRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          description: 企业名称，不能为空（首尾空白会被去除）。
+        slug:
+          type: string
+          description: 企业短标识，同租户内唯一，冲突返回 409。
+    CompanyUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: 新名称；空串表示不修改。
+        slug:
+          type: string
+          description: 新短标识；空串表示不修改，冲突返回 409。
+    CompanyScope:
+      type: object
+      required: [tenant_id, id, company_id, kind, value, source, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        company_id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          description: 范围类型。
+          enum: [root_domain, subdomain, ip, cidr, url, keyword, icp]
+        value:
+          type: string
+          description: 范围值（按 kind 解释：域名、IP、CIDR、URL 或关键词）。
+        source:
+          type: string
+          description: 来源；企业范围只允许 manual（人工）/import（导入）。
+          enum: [manual, import]
+        created_at:
+          type: string
+          format: date-time
+    CompanyScopeList:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: array
+          items:
+            $ref: "#/components/schemas/CompanyScope"
+    CompanyScopeCreateRequest:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          type: string
+          description: 范围类型白名单同 CompanyScope.kind。
+          enum: [root_domain, subdomain, ip, cidr, url, keyword, icp]
+        value:
+          type: string
+          description: 范围值，不能为空（首尾空白会被去除）。
+        source:
+          type: string
+          description: 来源，缺省 manual。
+          enum: [manual, import]
+    AssetIdentity:
+      type: object
+      required: [tenant_id, asset_id, kind, key, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        asset_id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/AssetType"
+        key:
+          type: string
+          description: 归一化后的身份键（例如小写域名、压缩 IPv6、已去默认端口的 URL）。
+        created_at:
+          type: string
+          format: date-time
+    AssetIdentityList:
+      type: object
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetIdentity"
+    Asset:
+      type: object
+      required: [tenant_id, id, type, label, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        type:
+          $ref: "#/components/schemas/AssetType"
+        label:
+          type: string
+          description: 资产的可读标签（域名、IP、URL、应用名等）。
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 父资产标识；无父资产时省略。
+        attrs:
+          type: object
+          additionalProperties: true
+          description: 扩展属性，默认空对象。
+        identities:
+          type: array
+          description: 身份键；列表接口不返回，详情/创建/更新接口返回。
+          items:
+            $ref: "#/components/schemas/AssetIdentity"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AssetList:
+      type: object
+      required: [assets]
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+    AssetCreateRequest:
+      type: object
+      required: [type, label]
+      properties:
+        type:
+          $ref: "#/components/schemas/AssetType"
+        label:
+          type: string
+          description: 资产标签，不能为空。
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 父资产标识；必须存在且属于当前租户。
+        attrs:
+          type: object
+          additionalProperties: true
+        identities:
+          type: array
+          description: 身份键；提供时走 upsert 语义，省略时创建裸资产。
+          items:
+            type: object
+            required: [kind, key]
+            properties:
+              kind:
+                $ref: "#/components/schemas/AssetType"
+              key:
+                type: string
+                description: 原始身份值，服务端会归一化后入库。
+    AssetUpdateRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          description: 新标签；不能为空串。
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 缺省=不变；null=清空父资产；数字=设置为该父资产。
+        attrs:
+          type: object
+          additionalProperties: true
+          description: 传了则整体替换属性对象。
+    MissionAssetLink:
+      type: object
+      required: [mission_id, asset_id, source]
+      properties:
+        mission_id:
+          type: integer
+          format: int64
+        asset_id:
+          type: integer
+          format: int64
+        source:
+          type: string
+          description: 资产进入任务的路径。
+          enum: [scope, discovered, manual]
+    MissionAssetLinkRequest:
+      type: object
+      required: [asset_id]
+      properties:
+        asset_id:
+          type: integer
+          format: int64
+          description: 要登记到任务的资产标识；资产不存在返回 400。
+        source:
+          type: string
+          description: 关联来源，缺省 manual。
+          enum: [scope, discovered, manual]
+    Coverage:
+      type: object
+      required: [total, tested, percent, by_type]
+      properties:
+        total:
+          type: integer
+          description: 覆盖度分母：登记/范围内资产的去重总数。
+        tested:
+          type: integer
+          description: 覆盖度分子：被 fact 节点以 role=tested 锚定过的资产数。
+        percent:
+          type: number
+          format: double
+          description: tested/total 的百分比；total=0 时为 0。
+        by_type:
+          type: array
+          items:
+            type: object
+            required: [type, total, tested, percent]
+            properties:
+              type:
+                $ref: "#/components/schemas/AssetType"
+              total:
+                type: integer
+              tested:
+                type: integer
+              percent:
+                type: number
+                format: double
