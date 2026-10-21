@@ -10,49 +10,49 @@ LDFLAGS     := -s -w \
 
 .PHONY: help build run test test-race cover lint fmt tidy brand docker-build up down clean
 
-help: ## Show available targets
+help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
 
-build: ## Build the binary into bin/
+build: ## 构建二进制到 bin/
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/beaconx
 
-run: ## Run locally (requires PostgreSQL; see docker compose)
+run: ## 本地运行（需要 PostgreSQL；见 docker compose）
 	go run ./cmd/beaconx serve
 
-test: ## Run unit tests
+test: ## 运行单元测试
 	go test ./...
 
-test-race: ## Run unit tests with the race detector
+test-race: ## 开启竞态检测运行单元测试
 	go test -race ./...
 
-cover: ## Run tests and print coverage
+cover: ## 运行测试并输出覆盖率
 	go test -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 
-lint: ## Format check, vet and brand check
+lint: ## 格式检查、静态检查与品牌门禁
 	@out=$$(gofmt -l $$(go list -f '{{.Dir}}' ./...)); \
 	  if [ -n "$$out" ]; then echo "gofmt required:"; echo "$$out"; exit 1; fi
 	go vet ./...
 	./scripts/check-brand.sh
 
-fmt: ## Format the Go sources
+fmt: ## 格式化 Go 源码
 	gofmt -w $$(go list -f '{{.Dir}}' ./...)
 
-tidy: ## Tidy go.mod / go.sum
+tidy: ## 整理 go.mod / go.sum
 	go mod tidy
 
-brand: ## Check the tree for third-party project traces
+brand: ## 检查仓库中是否存在第三方项目痕迹
 	./scripts/check-brand.sh
 
-docker-build: ## Build the container image
+docker-build: ## 构建容器镜像
 	docker build -t beaconx:dev .
 
-up: ## Start the full stack with docker compose
+up: ## 用 docker compose 启动整套服务
 	docker compose up -d --build
 
-down: ## Stop the full stack
+down: ## 停止整套服务
 	docker compose down
 
-clean: ## Remove build artefacts
+clean: ## 删除构建产物
 	rm -rf bin dist coverage.out

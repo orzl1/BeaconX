@@ -41,36 +41,46 @@ func run(args []string) int {
 		return healthcheck(args[1:])
 	case "version", "--version", "-v":
 		v := version.Current()
-		fmt.Printf("beaconx %s (commit %s, built %s)\n", v.Version, v.Commit, v.BuildTime)
+		fmt.Printf("beaconx %s（commit %s，构建于 %s）\n", v.Version, v.Commit, v.BuildTime)
 		return 0
 	case "help", "-h", "--help":
 		usage()
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", args[0])
+		fmt.Fprintf(os.Stderr, "未知命令 %q\n\n", args[0])
 		usage()
 		return 2
 	}
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `beaconx — autonomous security testing platform
+	fmt.Fprint(os.Stderr, `beaconx — 自动化安全测试平台
 
-Usage:
-  beaconx [serve] [flags]     start the server
-  beaconx migrate [flags]     apply pending database migrations and exit
-  beaconx healthcheck [flags] probe a running instance
-  beaconx version             print build metadata
-  beaconx help                show this help
+用法：
+  beaconx [serve] [flags]     启动服务端
+  beaconx migrate [flags]     执行待应用的数据库迁移并退出
+  beaconx healthcheck [flags] 探测运行中的实例
+  beaconx version             打印构建元数据
+  beaconx help                显示本帮助
 
-Environment:
-  BEACONX_CONFIG       config file path (default: ./config.json)
-  BEACONX_ADDR         listen address (default: :8787)
-  BEACONX_DB_DSN       PostgreSQL DSN
-  BEACONX_HOME         state directory (default: ./data)
-  BEACONX_LOG_LEVEL    debug|info|warn|error
-  BEACONX_LOG_FORMAT   json|text
+环境变量：
+  BEACONX_CONFIG      配置文件路径（默认：./config.json）
+  BEACONX_ADDR        监听地址（默认：:6969）
+  BEACONX_DB_DSN      PostgreSQL DSN
+  BEACONX_HOME        状态目录（默认：./data）
+  BEACONX_LOG_LEVEL   debug|info|warn|error
+  BEACONX_LOG_FORMAT  json|text
 `)
+}
+
+// newFlagSet 创建带中文用法说明的 FlagSet。
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "%s 用法：\n", name)
+		fs.PrintDefaults()
+	}
+	return fs
 }
 
 func configPathFrom(cfgPath string) string {
@@ -96,15 +106,18 @@ func loadConfig(cfgPath string) (config.Config, *slog.Logger, error) {
 }
 
 func serve(args []string) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "config file path")
+	fs := newFlagSet("serve")
+	cfgPath := fs.String("config", "", "配置文件路径")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 
 	cfg, logger, err := loadConfig(*cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "configure: %v\n", err)
+		fmt.Fprintf(os.Stderr, "加载配置失败：%v\n", err)
 		return 1
 	}
 	log := logger.With("service", "beaconx", "version", version.Version)
@@ -114,27 +127,27 @@ func serve(args []string) int {
 
 	state := platformstate.New(cfg.State.Dir)
 	if err := state.Ensure(); err != nil {
-		log.Error("prepare state directory", "error", err)
+		log.Error("准备状态目录", "error", err)
 		return 1
 	}
 	if err := state.EnsureTenant(tenant.ID(cfg.Tenant.DefaultID)); err != nil {
-		log.Error("prepare tenant directory", "error", err)
+		log.Error("准备租户目录", "error", err)
 		return 1
 	}
 
 	db, err := openDB(ctx, cfg, log)
 	if err != nil {
-		log.Error("connect database", "error", err)
+		log.Error("连接数据库", "error", err)
 		return 1
 	}
 	defer db.Close()
 
 	latest, res, err := applyMigrations(ctx, db, log)
 	if err != nil {
-		log.Error("apply migrations", "error", err)
+		log.Error("执行数据库迁移", "error", err)
 		return 1
 	}
-	log.Info("migrations ready", "applied", res.Applied, "schema_version", res.Current, "latest", latest)
+	log.Info("数据库迁移就绪", "applied", res.Applied, "schema_version", res.Current, "latest", latest)
 
 	sys := &system.Service{
 		DB:              db,
@@ -159,7 +172,7 @@ func serve(args []string) int {
 		},
 	})
 	if err != nil {
-		log.Error("build http handler", "error", err)
+		log.Error("构建 HTTP 处理器", "error", err)
 		return 1
 	}
 
@@ -172,40 +185,43 @@ func serve(args []string) int {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("http listening", "addr", cfg.Server.Addr)
+		log.Info("HTTP 服务已监听", "addr", cfg.Server.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("http server failed", "error", err)
+			log.Error("HTTP 服务器异常退出", "error", err)
 			return 1
 		}
 	case <-ctx.Done():
 		stop()
-		log.Info("shutdown requested")
+		log.Info("收到关闭请求")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout.Value())
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Error("graceful shutdown failed", "error", err)
+			log.Error("优雅关闭失败", "error", err)
 			return 1
 		}
 	}
 
-	log.Info("stopped")
+	log.Info("已停止")
 	return 0
 }
 
 func migrateCmd(args []string) int {
-	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "config file path")
+	fs := newFlagSet("migrate")
+	cfgPath := fs.String("config", "", "配置文件路径")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	cfg, logger, err := loadConfig(*cfgPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "configure: %v\n", err)
+		fmt.Fprintf(os.Stderr, "加载配置失败：%v\n", err)
 		return 1
 	}
 	log := logger.With("service", "beaconx")
@@ -214,17 +230,17 @@ func migrateCmd(args []string) int {
 
 	db, err := openDB(ctx, cfg, log)
 	if err != nil {
-		log.Error("connect database", "error", err)
+		log.Error("连接数据库", "error", err)
 		return 1
 	}
 	defer db.Close()
 
 	latest, res, err := applyMigrations(ctx, db, log)
 	if err != nil {
-		log.Error("apply migrations", "error", err)
+		log.Error("执行数据库迁移", "error", err)
 		return 1
 	}
-	log.Info("migrations complete", "applied", res.Applied, "schema_version", res.Current, "latest", latest)
+	log.Info("数据库迁移完成", "applied", res.Applied, "schema_version", res.Current, "latest", latest)
 	return 0
 }
 
@@ -240,8 +256,8 @@ func applyMigrations(ctx context.Context, db *pg.DB, log *slog.Logger) (int64, m
 	return migrate.Latest(ms), res, nil
 }
 
-// openDB retries briefly so a compose stack can start the database and the app
-// at the same time without a crash loop.
+// openDB 会短暂重试，使 compose 栈可以同时启动数据库与应用，
+// 而不会陷入崩溃循环。
 func openDB(ctx context.Context, cfg config.Config, log *slog.Logger) (*pg.DB, error) {
 	opts := pg.Options{
 		DSN:            cfg.Database.DSN,
@@ -250,7 +266,7 @@ func openDB(ctx context.Context, cfg config.Config, log *slog.Logger) (*pg.DB, e
 		ConnectTimeout: cfg.Database.ConnectTimeout.Value(),
 	}
 	if opts.DSN == "" {
-		return nil, errors.New("database.dsn is required (set BEACONX_DB_DSN or database.dsn)")
+		return nil, errors.New("database.dsn 为必填项（可通过 BEACONX_DB_DSN 或 database.dsn 设置）")
 	}
 	var lastErr error
 	for attempt := 1; attempt <= 15; attempt++ {
@@ -259,31 +275,34 @@ func openDB(ctx context.Context, cfg config.Config, log *slog.Logger) (*pg.DB, e
 			return db, nil
 		}
 		lastErr = err
-		log.Warn("database not ready", "attempt", attempt, "error", err)
+		log.Warn("数据库尚未就绪", "attempt", attempt, "error", err)
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(time.Second):
 		}
 	}
-	return nil, fmt.Errorf("database unavailable after retries: %w", lastErr)
+	return nil, fmt.Errorf("重试后数据库仍不可用：%w", lastErr)
 }
 
 func healthcheck(args []string) int {
-	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	addr := fs.String("addr", "http://127.0.0.1:8787/healthz", "health endpoint URL")
+	fs := newFlagSet("healthcheck")
+	addr := fs.String("addr", "http://127.0.0.1:6969/healthz", "健康检查端点 URL")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(*addr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "健康检查失败：%v\n", err)
 		return 1
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		fmt.Fprintf(os.Stderr, "healthcheck failed: status %d\n", resp.StatusCode)
+		fmt.Fprintf(os.Stderr, "健康检查失败：状态码 %d\n", resp.StatusCode)
 		return 1
 	}
 	fmt.Println("ok")

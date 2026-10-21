@@ -1,4 +1,4 @@
-// Package logging builds the process-wide structured logger.
+// Package logging 构建进程级的结构化日志器。
 package logging
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/orzl1/BeaconX/internal/config"
 )
 
-// New returns a slog logger configured from cfg.
+// New 根据 cfg 返回一个 slog 日志器。
 func New(cfg config.Log) (*slog.Logger, error) {
 	level, err := parseLevel(cfg.Level)
 	if err != nil {
@@ -39,6 +39,6 @@ func parseLevel(s string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return 0, fmt.Errorf("unknown log level %q", s)
+		return 0, fmt.Errorf("未知的日志级别 %q", s)
 	}
 }

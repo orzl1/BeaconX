@@ -1,4 +1,4 @@
-// Package system exposes read-only process and database status.
+// Package system 暴露只读的进程与数据库状态。
 package system
 
 import (
@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// Database is the subset of the database used by readiness checks.
+// Database 是就绪检查所使用的数据库子集。
 type Database interface {
 	Ping(ctx context.Context) error
 	AppliedMigration(ctx context.Context) (int64, error)
 }
 
-// Service reports information about this process.
+// Service 报告本进程的信息。
 type Service struct {
 	DB              Database
 	LatestMigration int64
@@ -23,14 +23,14 @@ type Service struct {
 	BuildTime       string
 }
 
-// BuildInfo mirrors build metadata without importing the version package.
+// BuildInfo 镜像构建元数据，从而无需导入 version 包。
 type BuildInfo struct {
 	Version   string `json:"version"`
 	Commit    string `json:"commit"`
 	BuildTime string `json:"build_time"`
 }
 
-// Info is the response payload for GET /api/v1/system/info.
+// Info 是 GET /api/v1/system/info 的响应载荷。
 type Info struct {
 	Service         string    `json:"service"`
 	Version         string    `json:"version"`
@@ -42,20 +42,20 @@ type Info struct {
 	LatestMigration int64     `json:"latest_migration"`
 }
 
-// Check is one readiness probe result.
+// Check 是单个就绪探针的结果。
 type Check struct {
 	Name  string `json:"name"`
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
 
-// Readiness is the response payload for GET /readyz.
+// Readiness 是 GET /readyz 的响应载荷。
 type Readiness struct {
 	Ready  bool    `json:"ready"`
 	Checks []Check `json:"checks"`
 }
 
-// NewInfo builds the info payload.
+// NewInfo 构建 info 载荷。
 func (s *Service) NewInfo(ctx context.Context) Info {
 	applied, err := s.schemaVersion(ctx)
 	if err != nil {
@@ -73,12 +73,12 @@ func (s *Service) NewInfo(ctx context.Context) Info {
 	}
 }
 
-// Readiness checks the dependencies required to serve traffic.
+// Readiness 检查对外提供服务所依赖的组件。
 func (s *Service) Readiness(ctx context.Context) Readiness {
 	out := Readiness{Checks: make([]Check, 0, 2)}
 
 	if s.DB == nil {
-		out.Checks = append(out.Checks, Check{Name: "database", OK: false, Error: "not configured"})
+		out.Checks = append(out.Checks, Check{Name: "database", OK: false, Error: "未配置"})
 		return out
 	}
 
@@ -98,7 +98,7 @@ func (s *Service) Readiness(ctx context.Context) Readiness {
 		out.Checks = append(out.Checks, Check{
 			Name:  "schema",
 			OK:    false,
-			Error: "pending migrations",
+			Error: "存在待应用的迁移",
 		})
 	default:
 		out.Checks = append(out.Checks, Check{Name: "schema", OK: true})

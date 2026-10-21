@@ -20,7 +20,7 @@ func testHandler(t *testing.T, opts Options) http.Handler {
 	}
 	h, err := NewHandler(opts)
 	if err != nil {
-		t.Fatalf("NewHandler: %v", err)
+		t.Fatalf("NewHandler：%v", err)
 	}
 	return h
 }
@@ -30,18 +30,18 @@ func TestRoutesUniqueAndBound(t *testing.T) {
 	for _, rt := range Routes() {
 		key := rt.Method + " " + rt.Pattern
 		if seen[key] {
-			t.Fatalf("duplicate route %s", key)
+			t.Fatalf("重复的路由 %s", key)
 		}
 		seen[key] = true
 		if rt.Summary == "" {
-			t.Errorf("route %s has no summary", key)
+			t.Errorf("路由 %s 缺少摘要", key)
 		}
 		if _, err := (Options{}).bind(rt); err != nil {
-			t.Errorf("route %s is not bound: %v", key, err)
+			t.Errorf("路由 %s 未绑定处理器：%v", key, err)
 		}
 	}
 	if _, err := (Options{}).bind(Route{Method: http.MethodGet, Pattern: "/nope"}); err == nil {
-		t.Fatal("unbound route must be rejected")
+		t.Fatal("未绑定的路由必须被拒绝")
 	}
 }
 
@@ -50,14 +50,14 @@ func TestHealthz(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("状态码 = %d", rec.Code)
 	}
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
 	if body["status"] != "ok" {
-		t.Fatalf("body = %v", body)
+		t.Fatalf("响应体 = %v", body)
 	}
 }
 
@@ -77,7 +77,7 @@ func TestRequestIDIsGeneratedWhenMissing(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if rec.Header().Get("X-Request-ID") == "" {
-		t.Fatal("X-Request-ID must be generated")
+		t.Fatal("缺失时必须生成 X-Request-ID")
 	}
 }
 
@@ -86,7 +86,7 @@ func TestTenantContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system/tenant", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("状态码 = %d", rec.Code)
 	}
 	var body map[string]int64
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -111,7 +111,7 @@ func TestTenantFallsBackToDefault(t *testing.T) {
 }
 
 func TestReadyzStatusMapping(t *testing.T) {
-	t.Run("ready", func(t *testing.T) {
+	t.Run("就绪", func(t *testing.T) {
 		h := testHandler(t, Options{
 			Ready: func(context.Context) (any, bool) {
 				return map[string]any{"ready": true}, true
@@ -120,10 +120,10 @@ func TestReadyzStatusMapping(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d", rec.Code)
+			t.Fatalf("状态码 = %d", rec.Code)
 		}
 	})
-	t.Run("not ready", func(t *testing.T) {
+	t.Run("未就绪", func(t *testing.T) {
 		h := testHandler(t, Options{
 			Ready: func(context.Context) (any, bool) {
 				return map[string]any{"ready": false, "checks": []any{}}, false
@@ -132,7 +132,7 @@ func TestReadyzStatusMapping(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 		if rec.Code != http.StatusServiceUnavailable {
-			t.Fatalf("status = %d", rec.Code)
+			t.Fatalf("状态码 = %d", rec.Code)
 		}
 	})
 }
@@ -144,10 +144,10 @@ func TestInfoPayload(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("状态码 = %d", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "beaconx") {
-		t.Fatalf("body = %s", rec.Body.String())
+		t.Fatalf("响应体 = %s", rec.Body.String())
 	}
 }
 
@@ -159,25 +159,25 @@ func TestProtectedRouteFailsClosedWithoutAuthenticator(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/protected", nil))
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
+		t.Fatalf("状态码 = %d，期望 503", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "auth_unavailable") {
-		t.Fatalf("body = %s", rec.Body.String())
+		t.Fatalf("响应体 = %s", rec.Body.String())
 	}
 }
 
 func TestRecoverReturnsJSON(t *testing.T) {
 	opts := Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	h := opts.recover(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		panic("boom")
+		panic("模拟 panic")
 	}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("状态码 = %d", rec.Code)
 	}
 	if !strings.Contains(rec.Body.String(), "internal_error") {
-		t.Fatalf("body = %s", rec.Body.String())
+		t.Fatalf("响应体 = %s", rec.Body.String())
 	}
 }
 
@@ -186,6 +186,6 @@ func TestUnknownRouteIs404(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("状态码 = %d", rec.Code)
 	}
 }

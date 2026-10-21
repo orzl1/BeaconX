@@ -17,19 +17,19 @@ func TestLoadOrdersAndHashes(t *testing.T) {
 	}
 	ms, err := Load(fsys)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("Load：%v", err)
 	}
 	if len(ms) != 2 {
 		t.Fatalf("len = %d", len(ms))
 	}
 	if ms[0].Version != 1 || ms[1].Version != 2 {
-		t.Fatalf("not ordered: %+v", ms)
+		t.Fatalf("未按版本排序：%+v", ms)
 	}
 	if len(ms[0].Checksum) != 64 {
-		t.Fatalf("checksum = %q", ms[0].Checksum)
+		t.Fatalf("校验和 = %q", ms[0].Checksum)
 	}
 	if Latest(ms) != 2 {
-		t.Fatalf("latest = %d", Latest(ms))
+		t.Fatalf("最新版本 = %d", Latest(ms))
 	}
 }
 
@@ -43,39 +43,39 @@ func TestLoadChecksumChangesWithContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a[0].Checksum == b[0].Checksum {
-		t.Fatal("checksum must depend on content")
+		t.Fatal("校验和必须取决于文件内容")
 	}
 }
 
 func TestLoadRejectsBadNames(t *testing.T) {
 	cases := map[string]fs.FS{
-		"no version": fstest.MapFS{"init.sql": {Data: []byte("--")}},
-		"duplicate":  fstest.MapFS{"0001_a.sql": {Data: []byte("--")}, "0001_b.sql": {Data: []byte("--")}},
-		"non sql":    fstest.MapFS{"README.md": {Data: []byte("x")}},
-		"empty set":  fstest.MapFS{},
+		"缺少版本号": fstest.MapFS{"init.sql": {Data: []byte("--")}},
+		"版本重复":  fstest.MapFS{"0001_a.sql": {Data: []byte("--")}, "0001_b.sql": {Data: []byte("--")}},
+		"非 SQL": fstest.MapFS{"README.md": {Data: []byte("x")}},
+		"空集合":   fstest.MapFS{},
 	}
 	for name, fsys := range cases {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(fsys); err == nil {
-				t.Fatal("expected error")
+				t.Fatal("应当返回错误")
 			}
 		})
 	}
 }
 
 func TestEmbeddedMigrationsAreValid(t *testing.T) {
-	// The embedded set must always parse; this guards against a malformed file
-	// reaching production at build time.
+	// 内嵌的迁移集合必须始终可以解析；这可以防止格式错误的文件在构建时
+	// 进入生产环境。
 	ms, err := Load(migrations.FS)
 	if err != nil {
-		t.Fatalf("embedded migrations invalid: %v", err)
+		t.Fatalf("内嵌迁移无效：%v", err)
 	}
 	if Latest(ms) < 1 {
-		t.Fatalf("expected at least one migration, got %d", Latest(ms))
+		t.Fatalf("期望至少有一个迁移，实际为 %d", Latest(ms))
 	}
 	for _, m := range ms {
 		if strings.TrimSpace(m.SQL) == "" {
-			t.Fatalf("migration %s is empty", m.Name)
+			t.Fatalf("迁移 %s 为空", m.Name)
 		}
 	}
 }
@@ -90,6 +90,6 @@ func TestShortChecksumNeverPanics(t *testing.T) {
 
 func TestApplyRequiresPool(t *testing.T) {
 	if _, err := Apply(context.Background(), nil, fstest.MapFS{"0001_a.sql": {Data: []byte("--")}}); err == nil {
-		t.Fatal("expected error for nil pool")
+		t.Fatal("连接池为 nil 时应当返回错误")
 	}
 }

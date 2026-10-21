@@ -1,17 +1,17 @@
-# Build output
+# 构建产物
 /bin/
 /dist/
 
-# Runtime state
+# 运行时状态
 /data/
 *.log
 
-# Local configuration
+# 本地配置
 /config.json
 .env
 .env.local
 
-# Editor / OS noise
+# 编辑器 / 操作系统杂项
 .DS_Store
 .idea/
 .vscode/

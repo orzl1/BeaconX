@@ -1,4 +1,4 @@
-// Package pg owns the PostgreSQL connection pool.
+// Package pg 负责 PostgreSQL 连接池。
 package pg
 
 import (
@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Options configures the pool.
+// Options 配置连接池。
 type Options struct {
 	DSN            string
 	MaxConns       int32
@@ -20,19 +20,19 @@ type Options struct {
 	ConnectTimeout time.Duration
 }
 
-// DB is a thin wrapper around pgxpool.Pool.
+// DB 是 pgxpool.Pool 的轻量封装。
 type DB struct {
 	pool *pgxpool.Pool
 }
 
-// Open creates a pool and verifies connectivity.
+// Open 创建连接池并验证连通性。
 func Open(ctx context.Context, opts Options) (*DB, error) {
 	if opts.DSN == "" {
-		return nil, errors.New("database.dsn is required")
+		return nil, errors.New("database.dsn 为必填项")
 	}
 	cfg, err := pgxpool.ParseConfig(opts.DSN)
 	if err != nil {
-		return nil, fmt.Errorf("parse database dsn: %w", err)
+		return nil, fmt.Errorf("解析 database dsn 失败：%w", err)
 	}
 	if opts.MaxConns > 0 {
 		cfg.MaxConns = opts.MaxConns
@@ -46,7 +46,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("create database pool: %w", err)
+		return nil, fmt.Errorf("创建数据库连接池失败：%w", err)
 	}
 	db := &DB{pool: pool}
 
@@ -54,7 +54,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ping 数据库失败：%w", err)
 	}
 	return db, nil
 }
@@ -66,16 +66,16 @@ func connectTimeout(d time.Duration) time.Duration {
 	return 8 * time.Second
 }
 
-// Pool exposes the underlying pool for packages that need transactions.
+// Pool 暴露底层连接池，供需要事务的包使用。
 func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 
-// Ping checks that the database answers.
+// Ping 检查数据库是否应答。
 func (d *DB) Ping(ctx context.Context) error {
 	return d.pool.Ping(ctx)
 }
 
-// AppliedMigration returns the highest applied schema version, or 0 when the
-// migration bookkeeping table does not exist yet.
+// AppliedMigration 返回已应用的最高 schema 版本；当迁移记录表尚不存在时
+// 返回 0。
 func (d *DB) AppliedMigration(ctx context.Context) (int64, error) {
 	var version int64
 	err := d.pool.QueryRow(ctx,
@@ -84,7 +84,7 @@ func (d *DB) AppliedMigration(ctx context.Context) (int64, error) {
 		if isUndefinedTable(err) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("read schema version: %w", err)
+		return 0, fmt.Errorf("读取 schema 版本失败：%w", err)
 	}
 	return version, nil
 }
@@ -97,7 +97,7 @@ func isUndefinedTable(err error) bool {
 	return errors.Is(err, pgx.ErrNoRows)
 }
 
-// Close releases the pool.
+// Close 释放连接池。
 func (d *DB) Close() {
 	if d.pool != nil {
 		d.pool.Close()

@@ -15,7 +15,7 @@
 ```json
 {
   "server": {
-    "addr": ":8787",
+    "addr": ":6969",
     "read_header_timeout": "10s",
     "idle_timeout": "60s",
     "request_timeout": "30s",
@@ -39,7 +39,7 @@
 | 变量 | 对应配置 | 默认值 | 备注 |
 | --- | --- | --- | --- |
 | `BEACONX_CONFIG` | — | `config.json` | 配置文件路径 |
-| `BEACONX_ADDR` | `server.addr` | `:8787` | 监听地址 |
+| `BEACONX_ADDR` | `server.addr` | `:6969` | 监听地址 |
 | `BEACONX_REQUEST_TIMEOUT` | `server.request_timeout` | `30s` | 请求上下文超时 |
 | `BEACONX_SHUTDOWN_TIMEOUT` | `server.shutdown_timeout` | `15s` | 优雅退出等待上限 |
 | `BEACONX_DB_DSN` | `database.dsn` | 空（必填） | PostgreSQL 连接串 |

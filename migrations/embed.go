@@ -1,13 +1,12 @@
-// Package migrations embeds the SQL migration set into the binary.
+// Package migrations 将 SQL 迁移集嵌入二进制。
 //
-// Files are applied in lexical order by version prefix and recorded in
-// schema_migrations with a checksum, so an edited historical migration is
-// detected as drift instead of being silently applied.
+// 文件按版本前缀的字典序应用，并连同校验和记录到 schema_migrations；
+// 因此被修改过的历史迁移会被识别为漂移，而不是被静默应用。
 package migrations
 
 import "embed"
 
-// FS holds every *.sql migration in this directory.
+// FS 保存本目录下的所有 *.sql 迁移文件。
 //
 //go:embed *.sql
 var FS embed.FS

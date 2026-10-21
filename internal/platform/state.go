@@ -1,6 +1,6 @@
-// Package state manages the on-disk home directory.
+// Package state 管理磁盘上的家目录。
 //
-// Layout (tenant-scoped from day one):
+// 目录布局（从第一天起即按租户隔离）：
 //
 //	<root>/
 //	  tenants/<id>/sessions/
@@ -18,34 +18,33 @@ import (
 	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
-// State is a resolved home directory.
+// State 是解析后的家目录。
 type State struct {
 	Root string
 }
 
-// New returns a State rooted at root.
+// New 返回以 root 为根目录的 State。
 func New(root string) *State {
 	return &State{Root: root}
 }
 
-// TenantDir returns the per-tenant directory.
+// TenantDir 返回单个租户的目录。
 func (s *State) TenantDir(id tenant.ID) string {
 	return filepath.Join(s.Root, "tenants", fmt.Sprintf("%d", int64(id)))
 }
 
-// Ensure creates the directory tree with restrictive permissions.
+// Ensure 以受限权限创建目录树。
 //
-// On platforms where permission bits are not honoured the call still succeeds;
-// Windows ACLs are documented as a deployment step.
+// 在不遵守权限位的平台上，该调用仍会成功；Windows ACL 将作为部署步骤
+// 另行说明。
 func (s *State) Ensure() error {
 	dirs := []string{
 		s.Root,
 		filepath.Join(s.Root, "skills"),
 		filepath.Join(s.Root, "cache"),
 	}
-	// Every tenant that has data on disk gets its subtree. v1 is single-tenant,
-	// but the directory shape is fixed now so enabling multi-tenancy later does
-	// not require moving files.
+	// 凡是在磁盘上有数据的租户都会获得自己的子树。v1 是单租户，
+	// 但目录形态现在就固定下来，这样以后启用多租户时无需搬迁文件。
 	for _, id := range []tenant.ID{tenant.DefaultID} {
 		base := s.TenantDir(id)
 		dirs = append(dirs,
@@ -57,13 +56,13 @@ func (s *State) Ensure() error {
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create state dir %s: %w", dir, err)
+			return fmt.Errorf("创建状态目录 %s 失败：%w", dir, err)
 		}
 	}
 	return nil
 }
 
-// EnsureTenant creates the subtree for one tenant on demand.
+// EnsureTenant 按需创建一个租户的子树。
 func (s *State) EnsureTenant(id tenant.ID) error {
 	base := s.TenantDir(id)
 	for _, dir := range []string{
@@ -73,7 +72,7 @@ func (s *State) EnsureTenant(id tenant.ID) error {
 		filepath.Join(base, "traffic"),
 	} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create tenant dir %s: %w", dir, err)
+			return fmt.Errorf("创建租户目录 %s 失败：%w", dir, err)
 		}
 	}
 	return nil

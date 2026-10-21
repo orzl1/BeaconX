@@ -29,12 +29,12 @@ services:
         condition: service_healthy
     environment:
       BEACONX_DB_DSN: postgres://${POSTGRES_USER:-beaconx}:${POSTGRES_PASSWORD:-beaconx}@postgres:5432/${POSTGRES_DB:-beaconx}?sslmode=disable
-      BEACONX_ADDR: ":8787"
+      BEACONX_ADDR: ":6969"
       BEACONX_HOME: /var/lib/beaconx
       BEACONX_LOG_LEVEL: ${BEACONX_LOG_LEVEL:-info}
       BEACONX_LOG_FORMAT: ${BEACONX_LOG_FORMAT:-json}
     ports:
-      - "8787:8787"
+      - "6969:6969"
     volumes:
       - beaconx_data:/var/lib/beaconx
     restart: unless-stopped

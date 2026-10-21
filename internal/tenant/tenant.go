@@ -1,36 +1,35 @@
-// Package tenant carries the tenant scope through request and job contexts.
+// Package tenant 将租户范围贯穿请求与任务上下文。
 //
-// BeaconX v1 runs as a single-tenant deployment, but the tenant identifier is
-// part of every request context, every store call and every on-disk path from
-// day one. Enabling real isolation later is then a matter of resolving the
-// tenant from the authenticated principal instead of the configured default.
+// BeaconX v1 以单租户部署运行，但从第一天起，租户标识就是每个请求上下文、
+// 每次存储调用与每条磁盘路径的一部分。之后启用真正的隔离，只需从已认证
+// 主体解析租户，而不再使用配置中的默认值。
 package tenant
 
 import "context"
 
-// ID is a tenant identifier.
+// ID 是租户标识。
 type ID int64
 
-// DefaultID is used when no explicit tenant is configured.
+// DefaultID 在未显式配置租户时使用。
 const DefaultID ID = 1
 
 type ctxKey struct{}
 
-// With returns a child context carrying the tenant identifier.
+// With 返回携带租户标识的子上下文。
 func With(ctx context.Context, id ID) context.Context {
 	return context.WithValue(ctx, ctxKey{}, id)
 }
 
-// From extracts the tenant identifier from a context.
+// From 从上下文中提取租户标识。
 func From(ctx context.Context) (ID, bool) {
 	id, ok := ctx.Value(ctxKey{}).(ID)
 	return id, ok
 }
 
-// MustFrom extracts the tenant identifier or falls back to DefaultID.
+// MustFrom 提取租户标识，缺失时回退到 DefaultID。
 //
-// Callers that cannot proceed without a tenant must not rely on this; it exists
-// only so leaf helpers stay ergonomic while middleware guarantees presence.
+// 无法在没有租户的情况下继续的调用方不应依赖它；它只是为了在中间件保证
+// 租户存在的前提下让叶子辅助函数保持易用。
 func MustFrom(ctx context.Context) ID {
 	if id, ok := From(ctx); ok {
 		return id

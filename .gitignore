@@ -1,30 +1,30 @@
-# Build output
+# 构建产物
 /bin/
 /dist/
 /beaconx
 /beaconx.exe
 
-# Local runtime state (never commit)
+# 本地运行时状态（不要提交）
 /data/
 *.log
 
-# Local configuration
+# 本地配置
 /config.json
 .env
 .env.local
 
-# Research material kept in the working directory but NOT part of this repository.
-# It is intentionally excluded so the product tree has no third-party project traces.
+# 研究工作资料保留在工作目录中，但不属于本仓库。
+# 有意排除，确保产品代码树中不留下第三方项目痕迹。
 /reference/
 /research/
 
-# Editor / OS noise
+# 编辑器 / 操作系统杂项
 .DS_Store
 .idea/
 .vscode/
 /tmp/
 
-# Local build cache (Go)
+# 本地构建缓存（Go）
 /.cache/
 /.gocache/
 /.gomodcache/

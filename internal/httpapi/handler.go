@@ -1,7 +1,7 @@
-// Package httpapi wires the HTTP surface: routes, middleware and handlers.
+// Package httpapi 组装 HTTP 层：路由、中间件与处理器。
 //
-// The route table is declarative and exported so it can later back generated
-// API documentation and contract tests instead of drifting silently.
+// 路由表是声明式且导出的，之后可以支撑自动生成的 API 文档与契约测试，
+// 而不会悄悄发生漂移。
 package httpapi
 
 import (
@@ -19,26 +19,26 @@ import (
 	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
-// Authenticator validates a request. Implementations arrive with the auth
-// milestone; M0 only needs the interface so protected routes fail closed.
+// Authenticator 校验请求。具体实现随 auth 里程碑引入；M0 只需要这一接口，
+// 以便受保护路由在缺少认证时默认拒绝（fail closed）。
 type Authenticator interface {
 	Authenticate(r *http.Request) error
 }
 
-// TenantResolver chooses the tenant for a request. v1 uses a static resolver;
-// later implementations derive it from the authenticated principal.
+// TenantResolver 为请求选择租户。v1 使用静态解析器；后续实现将依据
+// 已认证主体推导租户。
 type TenantResolver interface {
 	Resolve(r *http.Request) tenant.ID
 }
 
-// StaticTenant resolves every request to one tenant.
+// StaticTenant 将所有请求解析到同一个租户。
 type StaticTenant tenant.ID
 
-// Resolve implements TenantResolver.
+// Resolve 实现 TenantResolver。
 func (s StaticTenant) Resolve(*http.Request) tenant.ID { return tenant.ID(s) }
 
-// Route is one HTTP endpoint. Handlers are bound in NewHandler from the same
-// table, so the exported surface and the served surface cannot drift.
+// Route 是一个 HTTP 端点。处理器在 NewHandler 中依据同一张表绑定，
+// 因此导出面与实际服务的接口面不会漂移。
 type Route struct {
 	Method  string `json:"method"`
 	Pattern string `json:"pattern"`
@@ -46,10 +46,10 @@ type Route struct {
 	Public  bool   `json:"public"`
 }
 
-// HandlerFunc is the signature used by the route binder.
+// HandlerFunc 是路由绑定器使用的签名。
 type HandlerFunc func(w http.ResponseWriter, r *http.Request)
 
-// Options configures the HTTP handler.
+// Options 配置 HTTP 处理器。
 type Options struct {
 	Logger         *slog.Logger
 	RequestTimeout time.Duration
@@ -64,29 +64,29 @@ type ctxKey int
 
 const ctxKeyRequestID ctxKey = iota
 
-// RequestID returns the request identifier stored in ctx.
+// RequestID 返回 ctx 中保存的请求标识。
 func RequestID(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyRequestID).(string)
 	return v
 }
 
-// Routes is the declarative route table for M0.
+// Routes 是 M0 的声明式路由表。
 //
-// New endpoints must be added here first; the binder refuses to start when a
-// route has no handler, which keeps the table and the server in sync.
+// 新增端点必须先加在这里；当某条路由没有对应处理器时绑定器会拒绝启动，
+// 从而保持路由表与服务端一致。
 func Routes() []Route {
 	return []Route{
-		{Method: http.MethodGet, Pattern: "/healthz", Summary: "Liveness probe", Public: true},
-		{Method: http.MethodGet, Pattern: "/readyz", Summary: "Readiness probe", Public: true},
-		{Method: http.MethodGet, Pattern: "/api/v1/system/info", Summary: "Build and schema info", Public: true},
-		{Method: http.MethodGet, Pattern: "/api/v1/system/tenant", Summary: "Resolved tenant", Public: true},
+		{Method: http.MethodGet, Pattern: "/healthz", Summary: "存活探针", Public: true},
+		{Method: http.MethodGet, Pattern: "/readyz", Summary: "就绪探针", Public: true},
+		{Method: http.MethodGet, Pattern: "/api/v1/system/info", Summary: "构建与数据库 schema 信息", Public: true},
+		{Method: http.MethodGet, Pattern: "/api/v1/system/tenant", Summary: "解析后的租户", Public: true},
 	}
 }
 
-// ErrUnboundRoute is returned when the table contains a route without a handler.
-var ErrUnboundRoute = errors.New("route has no handler")
+// ErrUnboundRoute 表示路由表中存在没有处理器的路由。
+var ErrUnboundRoute = errors.New("路由没有对应的处理器")
 
-// NewHandler builds the full HTTP handler.
+// NewHandler 构建完整的 HTTP 处理器。
 func NewHandler(opts Options) (http.Handler, error) {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
@@ -151,7 +151,7 @@ func (o Options) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 func (o Options) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if o.Info == nil {
-		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "service info is not available")
+		writeError(w, r, http.StatusServiceUnavailable, "not_ready", "服务信息不可用")
 		return
 	}
 	writeJSON(w, http.StatusOK, o.Info(r.Context()))
@@ -165,11 +165,11 @@ func (o Options) withAuth(rt Route, next HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !rt.Public {
 			if o.Authenticator == nil {
-				writeError(w, r, http.StatusServiceUnavailable, "auth_unavailable", "authentication is not configured")
+				writeError(w, r, http.StatusServiceUnavailable, "auth_unavailable", "未配置认证")
 				return
 			}
 			if err := o.Authenticator.Authenticate(r); err != nil {
-				writeError(w, r, http.StatusUnauthorized, "unauthorized", "authentication required")
+				writeError(w, r, http.StatusUnauthorized, "unauthorized", "需要认证")
 				return
 			}
 		}
@@ -223,14 +223,14 @@ func (o Options) recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				o.Logger.Error("panic recovered",
+				o.Logger.Error("已恢复 panic",
 					"request_id", RequestID(r.Context()),
 					"method", r.Method,
 					"path", r.URL.Path,
 					"panic", rec,
 					"stack", string(debug.Stack()),
 				)
-				writeError(w, r, http.StatusInternalServerError, "internal_error", "internal server error")
+				writeError(w, r, http.StatusInternalServerError, "internal_error", "服务器内部错误")
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -242,7 +242,7 @@ func (o Options) accessLog(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		o.Logger.Info("http request",
+		o.Logger.Info("HTTP 请求",
 			"request_id", RequestID(r.Context()),
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -270,7 +270,7 @@ func (o Options) timeout(next http.Handler) http.Handler {
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r.WithContext(ctx))
 		if ctx.Err() == context.DeadlineExceeded && !rec.wroteHeader {
-			writeError(w, r, http.StatusGatewayTimeout, "timeout", "request timed out")
+			writeError(w, r, http.StatusGatewayTimeout, "timeout", "请求超时")
 		}
 	})
 }
@@ -309,7 +309,7 @@ func (r *recorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
-// Flush keeps streaming handlers working through the logging wrappers.
+// Flush 保证流式处理器在日志包装层中仍能正常工作。
 func (r *recorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

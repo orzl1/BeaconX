@@ -1,14 +1,13 @@
-// Package config loads runtime configuration.
+// Package config 加载运行时配置。
 //
-// Precedence (highest first):
+// 优先级（从高到低）：
 //
-//  1. environment variables (BEACONX_*)
-//  2. the JSON file pointed to by BEACONX_CONFIG (default: ./config.json)
-//  3. built-in defaults
+//  1. 环境变量（BEACONX_*）
+//  2. BEACONX_CONFIG 指向的 JSON 文件（默认：./config.json）
+//  3. 内置默认值
 //
-// Business configuration lives in the database and is edited through the UI;
-// this file only carries what is needed to boot: listener, database, tenant
-// default, state directory and logging.
+// 业务配置存放在数据库中，并通过 UI 编辑；本文件只承载启动所必需的内容：
+// 监听地址、数据库、默认租户、状态目录与日志。
 package config
 
 import (
@@ -21,10 +20,10 @@ import (
 	"time"
 )
 
-// DefaultPath is the config file consulted when BEACONX_CONFIG is unset.
+// DefaultPath 是未设置 BEACONX_CONFIG 时读取的配置文件。
 const DefaultPath = "config.json"
 
-// Config is the full bootstrap configuration.
+// Config 是完整的启动配置。
 type Config struct {
 	Server   Server   `json:"server"`
 	Database Database `json:"database"`
@@ -33,14 +32,14 @@ type Config struct {
 	Log      Log      `json:"log"`
 }
 
-// Duration is a JSON-friendly time.Duration that accepts either a Go duration
-// string ("30s") or an integer number of nanoseconds.
+// Duration 是一个便于 JSON 序列化的 time.Duration，既接受 Go duration 字符串
+// （"30s"），也接受以纳秒为单位的整数。
 type Duration time.Duration
 
-// Value returns the standard library duration.
+// Value 返回标准库的 time.Duration。
 func (d Duration) Value() time.Duration { return time.Duration(d) }
 
-// UnmarshalJSON implements json.Unmarshaler.
+// UnmarshalJSON 实现 json.Unmarshaler。
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
 		var s string
@@ -62,12 +61,12 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler.
+// MarshalJSON 实现 json.Marshaler。
 func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
 }
 
-// Server controls the HTTP listener and request lifecycle.
+// Server 控制 HTTP 监听器与请求生命周期。
 type Server struct {
 	Addr              string   `json:"addr"`
 	ReadHeaderTimeout Duration `json:"read_header_timeout"`
@@ -77,7 +76,7 @@ type Server struct {
 	MaxBodyBytes      int64    `json:"max_body_bytes"`
 }
 
-// Database is the PostgreSQL connection configuration.
+// Database 是 PostgreSQL 连接配置。
 type Database struct {
 	DSN            string   `json:"dsn"`
 	MaxConns       int32    `json:"max_conns"`
@@ -85,27 +84,27 @@ type Database struct {
 	ConnectTimeout Duration `json:"connect_timeout"`
 }
 
-// Tenant selects the default tenant for a single-tenant deployment.
+// Tenant 选择单租户部署下的默认租户。
 type Tenant struct {
 	DefaultID int64 `json:"default_id"`
 }
 
-// State is the home directory for sessions, evidence, traffic and keys.
+// State 是会话、证据、流量与密钥所在的根目录。
 type State struct {
 	Dir string `json:"dir"`
 }
 
-// Log controls structured logging.
+// Log 控制结构化日志。
 type Log struct {
-	Level  string `json:"level"`  // debug | info | warn | error
-	Format string `json:"format"` // json | text
+	Level  string `json:"level"`  // 取值：debug | info | warn | error
+	Format string `json:"format"` // 取值：json | text
 }
 
-// Default returns the built-in defaults.
+// Default 返回内置默认值。
 func Default() Config {
 	return Config{
 		Server: Server{
-			Addr:              ":8787",
+			Addr:              ":6969",
 			ReadHeaderTimeout: Duration(10 * time.Second),
 			IdleTimeout:       Duration(60 * time.Second),
 			RequestTimeout:    Duration(30 * time.Second),
@@ -124,13 +123,13 @@ func Default() Config {
 	}
 }
 
-// Load reads configuration using the process environment.
+// Load 使用进程环境读取配置。
 func Load() (Config, error) {
 	return LoadFrom(envOr("BEACONX_CONFIG", DefaultPath), os.Getenv)
 }
 
-// LoadFrom reads configuration from an explicit path and an environment
-// accessor. A missing file is not an error: defaults plus environment apply.
+// LoadFrom 从显式路径与环境变量访问器读取配置。文件缺失不算错误：
+// 此时会应用默认值与环境变量。
 func LoadFrom(path string, getenv func(string) string) (Config, error) {
 	cfg := Default()
 
@@ -139,12 +138,12 @@ func LoadFrom(path string, getenv func(string) string) (Config, error) {
 		switch {
 		case err == nil:
 			if err := json.Unmarshal(raw, &cfg); err != nil {
-				return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+				return Config{}, fmt.Errorf("解析配置 %s 失败：%w", path, err)
 			}
 		case errors.Is(err, os.ErrNotExist):
-			// Defaults + environment are a valid configuration.
+			// 默认值加环境变量本身就是一份有效配置。
 		default:
-			return Config{}, fmt.Errorf("read config %s: %w", path, err)
+			return Config{}, fmt.Errorf("读取配置 %s 失败：%w", path, err)
 		}
 	}
 
@@ -185,7 +184,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 func parseInto[T ~int32 | ~int64](v string, dst *T, name string) error {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return fmt.Errorf("%s：%w", name, err)
 	}
 	*dst = T(n)
 	return nil
@@ -194,47 +193,47 @@ func parseInto[T ~int32 | ~int64](v string, dst *T, name string) error {
 func parseDuration(v string, dst *Duration, name string) error {
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return fmt.Errorf("%s: %w", name, err)
+		return fmt.Errorf("%s：%w", name, err)
 	}
 	*dst = Duration(d)
 	return nil
 }
 
-// Validate rejects configurations that cannot boot.
+// Validate 拒绝无法启动的配置。
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.Server.Addr) == "" {
-		return errors.New("server.addr must not be empty")
+		return errors.New("server.addr 不能为空")
 	}
 	if c.Tenant.DefaultID <= 0 {
-		return errors.New("tenant.default_id must be positive")
+		return errors.New("tenant.default_id 必须为正数")
 	}
 	if strings.TrimSpace(c.State.Dir) == "" {
-		return errors.New("state.dir must not be empty")
+		return errors.New("state.dir 不能为空")
 	}
 	switch strings.ToLower(c.Log.Level) {
 	case "debug", "info", "warn", "error":
 	default:
-		return fmt.Errorf("log.level %q is not one of debug|info|warn|error", c.Log.Level)
+		return fmt.Errorf("log.level %q 不是 debug|info|warn|error 之一", c.Log.Level)
 	}
 	switch strings.ToLower(c.Log.Format) {
 	case "json", "text":
 	default:
-		return fmt.Errorf("log.format %q is not one of json|text", c.Log.Format)
+		return fmt.Errorf("log.format %q 不是 json|text 之一", c.Log.Format)
 	}
 	if c.Database.MaxConns < 1 {
-		return errors.New("database.max_conns must be >= 1")
+		return errors.New("database.max_conns 必须大于等于 1")
 	}
 	if c.Database.MinConns < 0 || c.Database.MinConns > c.Database.MaxConns {
-		return errors.New("database.min_conns must be between 0 and database.max_conns")
+		return errors.New("database.min_conns 必须介于 0 与 database.max_conns 之间")
 	}
 	if c.Server.RequestTimeout <= 0 {
-		return errors.New("server.request_timeout must be positive")
+		return errors.New("server.request_timeout 必须为正数")
 	}
 	if c.Server.ShutdownTimeout <= 0 {
-		return errors.New("server.shutdown_timeout must be positive")
+		return errors.New("server.shutdown_timeout 必须为正数")
 	}
 	if c.Server.MaxBodyBytes <= 0 {
-		return errors.New("server.max_body_bytes must be positive")
+		return errors.New("server.max_body_bytes 必须为正数")
 	}
 	return nil
 }

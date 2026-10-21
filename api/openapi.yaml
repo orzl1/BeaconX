@@ -3,19 +3,19 @@ info:
   title: BeaconX API
   version: 0.1.0
   description: |
-    Bootstrap HTTP surface (milestone M0). Endpoints are versioned under /api/v1.
-    This document is the single source for generated clients; it is extended in
-    lockstep with the declarative route table in internal/httpapi.
+    M0 里程碑的 HTTP 接口骨架。接口统一在 /api/v1 下做版本管理。
+    本文档是生成客户端的唯一来源，与 internal/httpapi 中的声明式路由表
+    同步演进。
 servers:
-  - url: http://127.0.0.1:8787
+  - url: http://127.0.0.1:6969
 paths:
   /healthz:
     get:
-      summary: Liveness probe
+      summary: 存活探针
       operationId: healthz
       responses:
         "200":
-          description: Process is alive
+          description: 进程存活
           content:
             application/json:
               schema:
@@ -27,39 +27,39 @@ paths:
                     example: ok
   /readyz:
     get:
-      summary: Readiness probe
+      summary: 就绪探针
       operationId: readyz
       responses:
         "200":
-          description: Ready to serve traffic
+          description: 已就绪，可以对外提供服务
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Readiness"
         "503":
-          description: Not ready (dependency unavailable or migrations pending)
+          description: 未就绪（依赖不可用或迁移尚未应用）
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Readiness"
   /api/v1/system/info:
     get:
-      summary: Build and schema information
+      summary: 构建与 schema 信息
       operationId: systemInfo
       responses:
         "200":
-          description: Service information
+          description: 服务信息
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SystemInfo"
   /api/v1/system/tenant:
     get:
-      summary: Tenant resolved for this request
+      summary: 本次请求解析到的租户
       operationId: systemTenant
       responses:
         "200":
-          description: Tenant identifier
+          description: 租户标识
           content:
             application/json:
               schema:

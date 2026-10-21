@@ -1,11 +1,11 @@
--- 0001_init: tenant root.
+-- 0001_init：租户根表。
 --
--- Every business table added by later migrations carries:
+-- 后续迁移新增的每张业务表都带有：
 --   tenant_id BIGINT NOT NULL DEFAULT 1
--- and every primary/unique key starts with tenant_id. v1 is single-tenant, but
--- the shape is fixed now so isolation can be enabled without a data rewrite.
+-- 且每个主键/唯一键都以 tenant_id 打头。v1 为单租户，但结构现在就固定下来，
+-- 以便开启隔离时无需重写数据。
 --
--- schema_migrations itself is created by the migration runner, not here.
+-- schema_migrations 由迁移执行器创建，不在本文件中。
 
 CREATE TABLE IF NOT EXISTS tenants (
     id          BIGINT PRIMARY KEY,
