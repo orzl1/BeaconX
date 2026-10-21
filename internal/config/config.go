@@ -30,6 +30,22 @@ type Config struct {
 	Tenant   Tenant   `json:"tenant"`
 	State    State    `json:"state"`
 	Log      Log      `json:"log"`
+	Engine   Engine   `json:"engine"`
+	Auth     Auth     `json:"auth"`
+}
+
+// Engine 是任务运行时参数。
+type Engine struct {
+	MaxConcurrent     int      `json:"max_concurrent"`
+	PlannerInterval   Duration `json:"planner_interval"`
+	WorkerInterval    Duration `json:"worker_interval"`
+	LeaseTTL          Duration `json:"lease_ttl"`
+	HeartbeatInterval Duration `json:"heartbeat_interval"`
+}
+
+// Auth 是管理接口鉴权配置。
+type Auth struct {
+	AdminToken string `json:"admin_token"`
 }
 
 // Duration 是一个便于 JSON 序列化的 time.Duration，既接受 Go duration 字符串
@@ -120,6 +136,13 @@ func Default() Config {
 		Tenant: Tenant{DefaultID: int64(1)},
 		State:  State{Dir: "data"},
 		Log:    Log{Level: "info", Format: "json"},
+		Engine: Engine{
+			MaxConcurrent:     2,
+			PlannerInterval:   Duration(2 * time.Second),
+			WorkerInterval:    Duration(200 * time.Millisecond),
+			LeaseTTL:          Duration(30 * time.Second),
+			HeartbeatInterval: Duration(10 * time.Second),
+		},
 	}
 }
 
@@ -171,6 +194,14 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		{"BEACONX_LOG_FORMAT", func(v string) error { cfg.Log.Format = v; return nil }},
 		{"BEACONX_REQUEST_TIMEOUT", func(v string) error { return parseDuration(v, &cfg.Server.RequestTimeout, "BEACONX_REQUEST_TIMEOUT") }},
 		{"BEACONX_SHUTDOWN_TIMEOUT", func(v string) error { return parseDuration(v, &cfg.Server.ShutdownTimeout, "BEACONX_SHUTDOWN_TIMEOUT") }},
+		{"BEACONX_MAX_CONCURRENT", func(v string) error { return parseInto(v, &cfg.Engine.MaxConcurrent, "BEACONX_MAX_CONCURRENT") }},
+		{"BEACONX_PLANNER_INTERVAL", func(v string) error { return parseDuration(v, &cfg.Engine.PlannerInterval, "BEACONX_PLANNER_INTERVAL") }},
+		{"BEACONX_WORKER_INTERVAL", func(v string) error { return parseDuration(v, &cfg.Engine.WorkerInterval, "BEACONX_WORKER_INTERVAL") }},
+		{"BEACONX_LEASE_TTL", func(v string) error { return parseDuration(v, &cfg.Engine.LeaseTTL, "BEACONX_LEASE_TTL") }},
+		{"BEACONX_HEARTBEAT_INTERVAL", func(v string) error {
+			return parseDuration(v, &cfg.Engine.HeartbeatInterval, "BEACONX_HEARTBEAT_INTERVAL")
+		}},
+		{"BEACONX_ADMIN_TOKEN", func(v string) error { cfg.Auth.AdminToken = v; return nil }},
 	} {
 		if v := strings.TrimSpace(getenv(e.key)); v != "" {
 			if err := e.set(v); err != nil {
@@ -181,7 +212,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 	return nil
 }
 
-func parseInto[T ~int32 | ~int64](v string, dst *T, name string) error {
+func parseInto[T ~int | ~int32 | ~int64](v string, dst *T, name string) error {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return fmt.Errorf("%s：%w", name, err)

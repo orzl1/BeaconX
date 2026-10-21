@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/events"
+	"github.com/orzl1/BeaconX/internal/app/runner"
+	"github.com/orzl1/BeaconX/internal/infra/pg"
 	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
@@ -58,6 +61,12 @@ type Options struct {
 	Authenticator  Authenticator
 	Info           func(ctx context.Context) any
 	Ready          func(ctx context.Context) (any, bool)
+
+	// M2 任务运行时依赖；缺省时相关接口返回 503。
+	Store    *pg.Store
+	Engine   *runner.Engine
+	Broker   *events.Broker
+	TenantID int64
 }
 
 type ctxKey int
@@ -70,7 +79,7 @@ func RequestID(ctx context.Context) string {
 	return v
 }
 
-// Routes 是 M0 的声明式路由表。
+// Routes 是声明式路由表。
 //
 // 新增端点必须先加在这里；当某条路由没有对应处理器时绑定器会拒绝启动，
 // 从而保持路由表与服务端一致。
@@ -80,6 +89,14 @@ func Routes() []Route {
 		{Method: http.MethodGet, Pattern: "/readyz", Summary: "就绪探针", Public: true},
 		{Method: http.MethodGet, Pattern: "/api/v1/system/info", Summary: "构建与数据库 schema 信息", Public: true},
 		{Method: http.MethodGet, Pattern: "/api/v1/system/tenant", Summary: "解析后的租户", Public: true},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions", Summary: "创建任务"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions", Summary: "任务列表"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}", Summary: "任务详情"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/pause", Summary: "暂停任务"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/resume", Summary: "恢复任务"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/cancel", Summary: "取消任务"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/missions/{id}", Summary: "删除任务"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/events", Summary: "任务事件流（SSE）"},
 	}
 }
 
@@ -127,6 +144,24 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleInfo, nil
 	case "/api/v1/system/tenant":
 		return o.handleTenant, nil
+	case "/api/v1/missions":
+		if rt.Method == http.MethodPost {
+			return o.handleCreateMission, nil
+		}
+		return o.handleListMissions, nil
+	case "/api/v1/missions/{id}":
+		if rt.Method == http.MethodDelete {
+			return o.handleDeleteMission, nil
+		}
+		return o.handleGetMission, nil
+	case "/api/v1/missions/{id}/pause":
+		return o.handlePauseMission, nil
+	case "/api/v1/missions/{id}/resume":
+		return o.handleResumeMission, nil
+	case "/api/v1/missions/{id}/cancel":
+		return o.handleCancelMission, nil
+	case "/api/v1/missions/{id}/events":
+		return o.handleMissionEvents, nil
 	default:
 		return nil, ErrUnboundRoute
 	}

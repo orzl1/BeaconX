@@ -1,18 +1,29 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.1.0
+  version: 0.2.0
   description: |
-    M0 里程碑的 HTTP 接口骨架。接口统一在 /api/v1 下做版本管理。
-    本文档是生成客户端的唯一来源，与 internal/httpapi 中的声明式路由表
-    同步演进。
+    BeaconX M2 HTTP API：系统探针、任务生命周期管理与 SSE 事件流。
+    接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
+    与 internal/httpapi 中的声明式路由表同步演进。
 servers:
   - url: http://127.0.0.1:6969
+security:
+  - bearerAuth: []
+tags:
+  - name: system
+    description: 系统探针与元信息（公开端点）
+  - name: missions
+    description: 任务生命周期管理（需要令牌）
+  - name: events
+    description: 任务事件流（需要令牌，SSE 也可用查询参数）
 paths:
   /healthz:
     get:
+      tags: [system]
       summary: 存活探针
       operationId: healthz
+      security: []
       responses:
         "200":
           description: 进程存活
@@ -27,8 +38,10 @@ paths:
                     example: ok
   /readyz:
     get:
+      tags: [system]
       summary: 就绪探针
       operationId: readyz
+      security: []
       responses:
         "200":
           description: 已就绪，可以对外提供服务
@@ -44,8 +57,10 @@ paths:
                 $ref: "#/components/schemas/Readiness"
   /api/v1/system/info:
     get:
+      tags: [system]
       summary: 构建与 schema 信息
       operationId: systemInfo
+      security: []
       responses:
         "200":
           description: 服务信息
@@ -55,8 +70,10 @@ paths:
                 $ref: "#/components/schemas/SystemInfo"
   /api/v1/system/tenant:
     get:
+      tags: [system]
       summary: 本次请求解析到的租户
       operationId: systemTenant
+      security: []
       responses:
         "200":
           description: 租户标识
@@ -69,8 +86,360 @@ paths:
                   tenant_id:
                     type: integer
                     format: int64
+  /api/v1/missions:
+    post:
+      tags: [missions]
+      summary: 创建任务
+      description: 创建后任务进入 queued，由准入调度按 FIFO 启动。
+      operationId: createMission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissionCreateRequest"
+      responses:
+        "201":
+          description: 任务已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    get:
+      tags: [missions]
+      summary: 任务列表
+      operationId: listMissions
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: 按任务状态过滤；省略时返回全部状态。
+          schema:
+            $ref: "#/components/schemas/MissionStatus"
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，默认 50，最大 200（超出按 200 截断）。
+          schema:
+            type: integer
+            default: 50
+            minimum: 1
+      responses:
+        "200":
+          description: 任务列表（按 id 倒序）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/v1/missions/{id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions]
+      summary: 任务详情
+      operationId: getMission
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [missions]
+      summary: 删除任务
+      description: 级联删除任务的事件、节点、边、锚点、范围与资产链接，返回 204。
+      operationId: deleteMission
+      responses:
+        "204":
+          description: 已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/missions/{id}/pause:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    post:
+      tags: [missions]
+      summary: 暂停任务
+      description: 仅运行中的任务可暂停；暂停后释放动作租约，可用 resume 恢复。
+      operationId: pauseMission
+      responses:
+        "200":
+          description: 暂停后的任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/missions/{id}/resume:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    post:
+      tags: [missions]
+      summary: 恢复任务
+      description: 只有已暂停的任务可恢复；恢复后回到 queued，等待重新准入。
+      operationId: resumeMission
+      responses:
+        "200":
+          description: 恢复后的任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/missions/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    post:
+      tags: [missions]
+      summary: 取消任务
+      description: 排队中、运行中、已暂停或收尾中的任务均可取消；结束后进入 cancelled 终态。
+      operationId: cancelMission
+      responses:
+        "200":
+          description: 取消后的任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/missions/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [events]
+      summary: 任务事件流（SSE）
+      description: |
+        以 Server-Sent Events 推送任务事件。处理顺序为先订阅内存总线、再回放
+        mission_events，最后转发实时事件；回放按事件 id 升序，实时事件按 id 去重。
+
+        游标优先取 Last-Event-ID 请求头，其次取 ?since= 查询参数；空值、非法值
+        与负数按 0 处理。单次回放上限 500 条，心跳为注释行 `: ping`（默认 20s）。
+
+        帧格式：
+        `id: <事件 id>` / `event: <事件类型>` / `data: <JSON>`，以空行结束。
+
+        令牌可用 Authorization: Bearer，也可用 ?token= 查询参数携带（EventSource 无法自定义请求头）。
+      operationId: missionEvents
+      security:
+        - bearerAuth: []
+        - tokenQuery: []
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: 客户端已有的事件 id 游标；浏览器 EventSource 断线重连时自动携带。
+          schema:
+            type: string
+        - name: since
+          in: query
+          required: false
+          description: 事件 id 游标；仅在缺少 Last-Event-ID 时使用。
+          schema:
+            type: integer
+            format: int64
+            default: 0
+      responses:
+        "200":
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 帧序列（id / event / data 行，空行分隔；心跳为注释行）。
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 管理接口令牌；来自 auth.admin_token 或环境变量 BEACONX_ADMIN_TOKEN。
+    tokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: 与 Bearer 令牌相同；用于 EventSource 等无法自定义请求头的场景。
+  parameters:
+    MissionID:
+      name: id
+      in: path
+      required: true
+      description: 任务标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+  responses:
+    BadRequest:
+      description: 请求参数或请求体非法
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 缺少令牌或令牌错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 任务不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: 任务当前状态不允许该操作
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: 任务运行时或事件流未就绪
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
+    MissionStatus:
+      type: string
+      description: 任务状态；终态为 done / failed / cancelled。
+      enum:
+        - queued
+        - running
+        - paused
+        - finalizing
+        - done
+        - failed
+        - cancelled
+    Mission:
+      type: object
+      required: [tenant_id, id, name, goal, description, status, queued, reason, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        goal:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/MissionStatus"
+        queued:
+          type: boolean
+          description: 是否在排队等待准入。
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        deadline_at:
+          type: string
+          format: date-time
+          nullable: true
+        reason:
+          type: string
+          description: 最近一次状态迁移的原因。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    MissionList:
+      type: object
+      required: [missions]
+      properties:
+        missions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Mission"
+    MissionCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: 任务名称，不能为空。
+        goal:
+          type: string
+        description:
+          type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: 机器可读错误码，例如 bad_request / not_found / conflict / unauthorized / runtime_unavailable / sse_unavailable / replay_failed / internal_error。
+            message:
+              type: string
+              description: 人类可读错误信息。
+            request_id:
+              type: string
+              description: 请求标识，便于与服务端日志关联。
     Readiness:
       type: object
       required: [ready, checks]

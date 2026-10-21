@@ -82,6 +82,39 @@ func TestInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestEngineAndAuthDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.Engine.MaxConcurrent != 2 {
+		t.Fatalf("engine.max_concurrent 默认值 = %d", cfg.Engine.MaxConcurrent)
+	}
+	if cfg.Engine.PlannerInterval.Value() != 2*time.Second ||
+		cfg.Engine.WorkerInterval.Value() != 200*time.Millisecond ||
+		cfg.Engine.LeaseTTL.Value() != 30*time.Second ||
+		cfg.Engine.HeartbeatInterval.Value() != 10*time.Second {
+		t.Fatalf("引擎时间默认值不符合预期: %+v", cfg.Engine)
+	}
+	if cfg.Auth.AdminToken != "" {
+		t.Fatalf("auth.admin_token 默认应为空")
+	}
+}
+
+func TestEngineEnvOverride(t *testing.T) {
+	env := map[string]string{
+		"BEACONX_MAX_CONCURRENT":   "4",
+		"BEACONX_PLANNER_INTERVAL": "5s",
+		"BEACONX_LEASE_TTL":        "45s",
+		"BEACONX_ADMIN_TOKEN":      "secret-token",
+	}
+	cfg, err := LoadFrom("", func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if cfg.Engine.MaxConcurrent != 4 || cfg.Engine.PlannerInterval.Value() != 5*time.Second ||
+		cfg.Engine.LeaseTTL.Value() != 45*time.Second || cfg.Auth.AdminToken != "secret-token" {
+		t.Fatalf("环境变量覆盖失败: %+v / %+v", cfg.Engine, cfg.Auth)
+	}
+}
+
 func TestValidation(t *testing.T) {
 	cases := map[string]func(*Config){
 		"监听地址":     func(c *Config) { c.Server.Addr = "" },

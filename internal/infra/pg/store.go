@@ -112,12 +112,14 @@ func (s *Store) CreateMission(ctx context.Context, tenantID int64, in MissionInp
 		return Mission{}, fmt.Errorf("%w: 任务名称不能为空", ErrInvalidInput)
 	}
 	const q = `
-		INSERT INTO missions (tenant_id, name, goal, description)
-		VALUES ($1, $2, $3, $4)
-		RETURNING tenant_id, id, name, goal, description, status, created_at, updated_at`
+		INSERT INTO missions (tenant_id, name, goal, description, status, queued, queued_at)
+		VALUES ($1, $2, $3, $4, 'queued', true, now())
+		RETURNING tenant_id, id, name, goal, description, status, queued, queued_at,
+		          started_at, finished_at, deadline_at, reason, created_at, updated_at`
 	var m Mission
 	err := s.db.pool.QueryRow(ctx, q, tenantID, in.Name, in.Goal, in.Description).
-		Scan(&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.CreatedAt, &m.UpdatedAt)
+		Scan(&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.Queued,
+			&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return Mission{}, fmt.Errorf("创建任务失败: %w", err)
 	}
@@ -130,11 +132,13 @@ func (s *Store) GetMission(ctx context.Context, tenantID, missionID int64) (Miss
 		return Mission{}, err
 	}
 	const q = `
-		SELECT tenant_id, id, name, goal, description, status, created_at, updated_at
+		SELECT tenant_id, id, name, goal, description, status, queued, queued_at,
+		       started_at, finished_at, deadline_at, reason, created_at, updated_at
 		FROM missions WHERE tenant_id = $1 AND id = $2`
 	var m Mission
 	err := s.db.pool.QueryRow(ctx, q, tenantID, missionID).
-		Scan(&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.CreatedAt, &m.UpdatedAt)
+		Scan(&m.TenantID, &m.ID, &m.Name, &m.Goal, &m.Description, &m.Status, &m.Queued,
+			&m.QueuedAt, &m.StartedAt, &m.FinishedAt, &m.DeadlineAt, &m.Reason, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return Mission{}, fmt.Errorf("读取任务失败: %w", err)
 	}

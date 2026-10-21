@@ -1,8 +1,8 @@
-# 数据模型（M1）
+# 数据模型（M1–M2）
 
-本文描述 BeaconX M1（数据与图）的数据层：表结构、资产身份、作战图语义与覆盖度定义。
+本文描述 BeaconX M1–M2 的数据层：资产图与作战图（0002），以及任务生命周期、事件流与动作租约（0003）。
 
-权威来源是 `migrations/0001_init.sql`、`migrations/0002_core_graph.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql`、`migrations/0002_core_graph.sql`、`migrations/0003_runtime.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -26,6 +26,7 @@
 | 0002 | `operation_nodes` | 作战图节点 |
 | 0002 | `operation_edges` | 作战图边，两端必须同任务 |
 | 0002 | `operation_anchors` | 节点 ↔ 资产锚点，`role` 决定是否计入覆盖度 |
+| 0003 | `mission_events` | 只追加的任务事件流，SSE 回放与状态追溯的事实来源 |
 
 ### 2.1 租户根表（0001）
 
@@ -44,19 +45,28 @@
 
 ### 2.4 任务与范围
 
-- `missions`：`name`、`goal`、`description`、`status`（`draft` / `active` / `paused` / `done` / `failed` / `cancelled`，默认 `draft`）。
+- `missions`：`name`、`goal`、`description`、`status`（M2 起为 `queued` / `running` / `paused` / `finalizing` / `done` / `failed` / `cancelled`，默认 `queued`）、`queued`、`queued_at`、`started_at`、`finished_at`、`deadline_at`、`reason`；时间与状态语义见 2.7。
 - `mission_scope`：`kind`（`root_domain` / `subdomain` / `ip` / `cidr` / `url` / `keyword`，注意没有 `icp`）、`value`、`allowed_actions TEXT[]`、`note`；`UNIQUE (tenant_id, mission_id, kind, value)`；复合外键 `(tenant_id, mission_id)` → `missions (tenant_id, id)`；索引 `idx_mission_scope_mission (tenant_id, mission_id)`。
 - `mission_asset_links`：`mission_id`、`asset_id`、`source`（`scope` / `discovered` / `manual`）；`PRIMARY KEY (tenant_id, mission_id, asset_id)`；同时外键到 `missions` 与 `assets`；索引 `idx_mission_assets_asset (tenant_id, asset_id)`。
 
 ### 2.5 作战图（每任务私有）
 
-- `operation_nodes`：`kind`、`state`、`title`、`body`、`payload JSONB`；`PRIMARY KEY (tenant_id, id)`，`UNIQUE (tenant_id, mission_id, id)`（专供边的复合外键引用）；索引 `idx_nodes_mission_kind_state (tenant_id, mission_id, kind, state)`、`idx_nodes_mission_created (tenant_id, mission_id, created_at)`。
+- `operation_nodes`：`kind`、`state`、`title`、`body`、`payload JSONB`；M2 增加 `priority`、`lease_until`、`leased_by`、`attempts`（见 2.7）；`PRIMARY KEY (tenant_id, id)`，`UNIQUE (tenant_id, mission_id, id)`（专供边的复合外键引用）；索引 `idx_nodes_mission_kind_state (tenant_id, mission_id, kind, state)`、`idx_nodes_mission_created (tenant_id, mission_id, created_at)`。
 - `operation_edges`：`src_id`、`dst_id`、`rel`；`UNIQUE (tenant_id, mission_id, src_id, dst_id, rel)`；`CHECK (src_id <> dst_id)`；两个复合外键 `(tenant_id, mission_id, src_id/dst_id)` → `operation_nodes (tenant_id, mission_id, id) ON DELETE CASCADE`，由数据库保证边两端属于同一任务；索引 `idx_edges_mission (tenant_id, mission_id)`。
 - `operation_anchors`：`node_id`、`asset_id`、`role`；`PRIMARY KEY (tenant_id, node_id, asset_id, role)`；复合外键到 `operation_nodes (tenant_id, id)` 与 `assets (tenant_id, id)`；索引 `idx_anchors_asset_role (tenant_id, asset_id, role)`。
 
 ### 2.6 索引与触发器
 
 所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes` 五张表上；枚举值一律由 `CHECK` 约束在写入时校验。
+
+### 2.7 运行时变更（0003）
+
+- **状态词表收敛**：`missions.status` 的 `CHECK` 改为 `queued` / `running` / `paused` / `finalizing` / `done` / `failed` / `cancelled`，默认值改为 `queued`；迁移时把存量 `draft` 改为 `queued`、`active` 改为 `running`，M2 起不再产生 `draft` / `active`。
+- **任务时间与原因**：`queued boolean NOT NULL DEFAULT false`、`queued_at`、`started_at`、`finished_at`、`deadline_at`、`reason text NOT NULL DEFAULT ''`。任务置为排队时写 `queued=true` 与 `queued_at=now()`；首次进入 `running` 时写 `started_at`；进入终态时写 `finished_at`；`reason` 保存最近一次迁移原因（例如「用户暂停」「进程重启恢复」「任务完成」）。
+- **任务索引**：`idx_missions_queue (tenant_id, queued_at) WHERE queued`（FIFO 准入的查询路径）、`idx_missions_status (tenant_id, status, updated_at DESC)`。
+- **动作租约列**：`operation_nodes` 增加 `priority integer NOT NULL DEFAULT 0`、`lease_until timestamptz`、`leased_by text`、`attempts integer NOT NULL DEFAULT 0`；部分索引 `idx_nodes_claim (tenant_id, mission_id, priority DESC, id) WHERE state IN ('open', 'running')` 支撑按优先级领取动作。
+- **事件表 `mission_events`**：`tenant_id`、`id`（自增）、`mission_id`、`type`、`actor`（默认 `system`）、`reason`（默认空串）、`payload JSONB`（默认 `{}`）、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键 `(tenant_id, mission_id)` → `missions (tenant_id, id) ON DELETE CASCADE`、`tenant_id` → `tenants (id) ON DELETE CASCADE`；索引 `idx_mission_events_stream (tenant_id, mission_id, id)` 支撑 SSE 按 `id` 递增回放。
+- 状态与事件的语义、SSE 游标与回放规则见 [运行时与引擎](runtime.md)。
 
 ## 3. 资产身份与归一化
 

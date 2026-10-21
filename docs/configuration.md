@@ -30,9 +30,21 @@
   },
   "tenant": { "default_id": 1 },
   "state": { "dir": "data" },
-  "log": { "level": "info", "format": "json" }
+  "log": { "level": "info", "format": "json" },
+  "engine": {
+    "max_concurrent": 2,
+    "planner_interval": "2s",
+    "worker_interval": "200ms",
+    "lease_ttl": "30s",
+    "heartbeat_interval": "10s"
+  },
+  "auth": {
+    "admin_token": ""
+  }
 }
 ```
+
+时间类字段既接受 Go duration 字符串（如 `"30s"`、`"200ms"`），也接受以纳秒为单位的整数。
 
 ## 环境变量
 
@@ -49,8 +61,36 @@
 | `BEACONX_HOME` | `state.dir` | `data` | 状态目录 |
 | `BEACONX_LOG_LEVEL` | `log.level` | `info` | debug/info/warn/error |
 | `BEACONX_LOG_FORMAT` | `log.format` | `json` | json/text |
+| `BEACONX_MAX_CONCURRENT` | `engine.max_concurrent` | `2` | 同时运行的任务数上限 |
+| `BEACONX_PLANNER_INTERVAL` | `engine.planner_interval` | `2s` | 每任务规划轮询间隔 |
+| `BEACONX_WORKER_INTERVAL` | `engine.worker_interval` | `200ms` | 每任务领取动作的轮询间隔 |
+| `BEACONX_LEASE_TTL` | `engine.lease_ttl` | `30s` | 动作租约时长 |
+| `BEACONX_HEARTBEAT_INTERVAL` | `engine.heartbeat_interval` | `10s` | 动作租约续约间隔 |
+| `BEACONX_ADMIN_TOKEN` | `auth.admin_token` | 空（启动生成临时令牌） | 管理接口令牌 |
+
+环境变量值为空时视为未设置，不会覆盖配置文件或默认值。
 
 启动时会校验配置；非法值直接退出并给出一条可读错误，不做静默降级。
+
+## 任务运行时
+
+`engine` 段控制任务运行时（详见 [运行时与引擎](runtime.md)）：
+
+- `max_concurrent`：同时运行的任务数上限，准入调度每 1s 按 FIFO 补位，默认 `2`。
+- `planner_interval`：每个任务的规划轮询间隔，默认 `2s`。
+- `worker_interval`：每个任务领取动作的轮询间隔，默认 `200ms`。
+- `lease_ttl`：动作租约时长，默认 `30s`；领取动作时写入 `lease_until`，超时未续约的动作会被回收。
+- `heartbeat_interval`：执行期租约续约间隔，默认 `10s`。
+
+`engine` 中的非正数取值会被配置校验拒绝并导致启动失败（引擎内部对直接构造的零值有兜底默认值，但正常启动路径不依赖它）。SSE 心跳（20s）与单次回放上限（500 条）目前是代码内默认值，不通过配置暴露。
+
+## 管理鉴权
+
+`auth.admin_token`（或环境变量 `BEACONX_ADMIN_TOKEN`）是任务接口的静态令牌：
+
+- 配置了令牌时直接使用；未配置（或为空）时，进程启动会生成 24 字节随机数（48 位十六进制字符）作为临时令牌，并以 WARN 级别打印到日志（字段名 `token`），只对当前进程有效。
+- 客户端优先使用 `Authorization: Bearer <token>`；SSE 端点也可用 `?token=<token>`。两种方式都使用常量时间比较，空令牌一律拒绝。
+- 除 `/healthz`、`/readyz`、`/api/v1/system/*` 外，任务接口都需要该令牌；认证组件未装配时受保护路由返回 503（fail closed）。
 
 ## 状态目录
 

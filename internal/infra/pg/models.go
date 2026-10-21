@@ -61,14 +61,32 @@ type AssetFilter struct {
 
 // Mission 是一次授权测试任务。
 type Mission struct {
-	TenantID    int64     `json:"tenant_id"`
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Goal        string    `json:"goal"`
-	Description string    `json:"description"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	TenantID    int64      `json:"tenant_id"`
+	ID          int64      `json:"id"`
+	Name        string     `json:"name"`
+	Goal        string     `json:"goal"`
+	Description string     `json:"description"`
+	Status      string     `json:"status"`
+	Queued      bool       `json:"queued"`
+	QueuedAt    *time.Time `json:"queued_at,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	DeadlineAt  *time.Time `json:"deadline_at,omitempty"`
+	Reason      string     `json:"reason"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// MissionEvent 是 mission_events 中的一条只追加事件。
+type MissionEvent struct {
+	TenantID  int64          `json:"tenant_id"`
+	ID        int64          `json:"id"`
+	MissionID int64          `json:"mission_id"`
+	Type      string         `json:"type"`
+	Actor     string         `json:"actor"`
+	Reason    string         `json:"reason"`
+	Payload   map[string]any `json:"payload"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 // MissionInput 是创建任务的输入。

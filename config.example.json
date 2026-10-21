@@ -22,5 +22,15 @@
   "log": {
     "level": "info",
     "format": "json"
+  },
+  "engine": {
+    "max_concurrent": 2,
+    "planner_interval": "2s",
+    "worker_interval": "200ms",
+    "lease_ttl": "30s",
+    "heartbeat_interval": "10s"
+  },
+  "auth": {
+    "admin_token": ""
   }
 }

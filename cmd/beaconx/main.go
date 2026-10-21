@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/events"
+	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/app/system"
 	"github.com/orzl1/BeaconX/internal/config"
 	"github.com/orzl1/BeaconX/internal/httpapi"
@@ -70,6 +75,12 @@ func usage() {
   BEACONX_HOME        状态目录（默认：./data）
   BEACONX_LOG_LEVEL   debug|info|warn|error
   BEACONX_LOG_FORMAT  json|text
+  BEACONX_ADMIN_TOKEN 管理接口令牌（为空时启动生成临时令牌）
+  BEACONX_MAX_CONCURRENT     最大并发任务数（默认 2）
+  BEACONX_PLANNER_INTERVAL   规划轮询间隔（默认 2s）
+  BEACONX_WORKER_INTERVAL    执行轮询间隔（默认 200ms）
+  BEACONX_LEASE_TTL          动作租约时长（默认 30s）
+  BEACONX_HEARTBEAT_INTERVAL 租约续约间隔（默认 10s）
 `)
 }
 
@@ -160,11 +171,54 @@ func serve(args []string) int {
 		StartedAt: time.Now(),
 	}
 
+	// 任务运行时：内存事件总线 + 引擎（M2 默认使用空闲规划器与空执行器）。
+	broker := events.NewBroker(512)
+	store := pg.NewStore(db)
+	sink := func(ev pg.MissionEvent) {
+		var payload json.RawMessage
+		if ev.Payload != nil {
+			if raw, err := json.Marshal(ev.Payload); err == nil {
+				payload = raw
+			}
+		}
+		broker.Publish(events.Event{
+			ID:        ev.ID,
+			MissionID: ev.MissionID,
+			Type:      ev.Type,
+			Payload:   payload,
+			CreatedAt: ev.CreatedAt,
+		})
+	}
+	engine := runner.New(runner.Config{
+		TenantID:          cfg.Tenant.DefaultID,
+		MaxConcurrent:     cfg.Engine.MaxConcurrent,
+		PlannerInterval:   cfg.Engine.PlannerInterval.Value(),
+		WorkerInterval:    cfg.Engine.WorkerInterval.Value(),
+		LeaseTTL:          cfg.Engine.LeaseTTL.Value(),
+		HeartbeatInterval: cfg.Engine.HeartbeatInterval.Value(),
+		Owner:             fmt.Sprintf("beaconx-%d", os.Getpid()),
+	}, store, runner.IdlePlanner{}, runner.NoopWorker{}, log, sink)
+	if err := engine.Start(ctx); err != nil {
+		log.Error("启动任务运行时失败", "error", err)
+		return 1
+	}
+
+	adminToken, err := resolveAdminToken(cfg.Auth.AdminToken, log)
+	if err != nil {
+		log.Error("准备管理令牌失败", "error", err)
+		return 1
+	}
+
 	handler, err := httpapi.NewHandler(httpapi.Options{
 		Logger:         log,
 		RequestTimeout: cfg.Server.RequestTimeout.Value(),
 		MaxBodyBytes:   cfg.Server.MaxBodyBytes,
 		TenantResolver: httpapi.StaticTenant(tenant.ID(cfg.Tenant.DefaultID)),
+		Authenticator:  httpapi.NewTokenAuthenticator(adminToken),
+		Store:          store,
+		Engine:         engine,
+		Broker:         broker,
+		TenantID:       cfg.Tenant.DefaultID,
 		Info:           func(ctx context.Context) any { return sys.NewInfo(ctx) },
 		Ready: func(ctx context.Context) (any, bool) {
 			r := sys.Readiness(ctx)
@@ -204,10 +258,28 @@ func serve(args []string) int {
 			log.Error("优雅关闭失败", "error", err)
 			return 1
 		}
+		if err := engine.Stop(shutdownCtx); err != nil {
+			log.Warn("停止任务运行时超时", "error", err)
+		}
+		broker.Close()
 	}
 
 	log.Info("已停止")
 	return 0
+}
+
+// resolveAdminToken 返回管理接口令牌；未配置时生成临时令牌并打印到日志。
+func resolveAdminToken(configured string, log *slog.Logger) (string, error) {
+	if configured != "" {
+		return configured, nil
+	}
+	var buf [24]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("生成临时管理令牌失败: %w", err)
+	}
+	token := hex.EncodeToString(buf[:])
+	log.Warn("未配置 BEACONX_ADMIN_TOKEN，已生成临时管理令牌", "token", token)
+	return token, nil
 }
 
 func migrateCmd(args []string) int {

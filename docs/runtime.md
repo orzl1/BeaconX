@@ -1,0 +1,136 @@
+# 运行时与引擎（M2）
+
+本文描述 BeaconX M2 的任务运行时：状态机、准入调度、规划/执行循环、动作租约、暂停恢复与崩溃恢复，以及事件流与鉴权。
+
+权威来源是 `internal/domain/task`（状态机）、`internal/app/runner`（引擎）、`migrations/0003_runtime.sql`（数据表）、`internal/httpapi`（任务接口与 SSE）与 `internal/app/events`（内存总线）；本文只做解释，若与代码不一致，以代码为准并回来修正本文。
+
+## 1. 任务生命周期
+
+### 状态
+
+| 状态 | 中文 | 含义 |
+| --- | --- | --- |
+| `queued` | 排队中 | 已创建、等待准入；未占用执行资源 |
+| `running` | 运行中 | 已准入，任务执行器存活并领取动作 |
+| `paused` | 已暂停 | 人为暂停；执行器已停止，可恢复 |
+| `finalizing` | 收尾中 | 不再领取新动作，等待收尾动作与总结 |
+| `done` | 已完成 | 终态：正常结束 |
+| `failed` | 已失败 | 终态：失败终止 |
+| `cancelled` | 已取消 | 终态：取消或删除；具体原因保留在事件的 `reason` |
+
+只有 `done` / `failed` / `cancelled` 是终态；终态任务不再接受任何事件（`ErrTerminal`）。
+
+### 事件
+
+状态机只消费事件类型，`reason` 与时间戳供审计、日志与展示使用：`created`（创建）、`admitted`（准入）、`paused`（暂停）、`resumed`（恢复）、`finalizing`（进入收尾）、`completed`（完成）、`failed`（失败）、`cancelled`（取消）、`deleted`（删除，与取消同落 `cancelled`）、`recovered`（进程重启对账，回排队）。`started` 为与审计表对齐而保留，当前迁移表不消费它，发送会返回 `ErrIllegalTransition`。
+
+### 合法迁移
+
+| 当前状态 | 事件 | 下一状态 | 副作用 |
+| --- | --- | --- | --- |
+| （空） | `created` | `queued` | — |
+| `queued` | `admitted` | `running` | 启动执行器 |
+| `queued` | `cancelled` / `deleted` | `cancelled` | — |
+| `queued` | `recovered` | `queued` | — |
+| `running` | `paused` | `paused` | 停止执行器 |
+| `running` | `finalizing` | `finalizing` | 停止执行器 |
+| `running` | `failed` | `failed` | 停止执行器 |
+| `running` | `cancelled` / `deleted` | `cancelled` | 停止执行器 |
+| `running` | `recovered` | `queued` | 停止执行器 |
+| `paused` | `resumed` | `queued` | — |
+| `paused` | `cancelled` / `deleted` | `cancelled` | — |
+| `finalizing` | `completed` | `done` | — |
+| `finalizing` | `failed` | `failed` | — |
+| `finalizing` | `cancelled` / `deleted` | `cancelled` | — |
+
+其余组合一律返回 `ErrIllegalTransition`（未知状态 `ErrInvalidStatus`、未知事件 `ErrInvalidEvent`）。状态迁移由 `pg.Store.TransitionMission` 以 CAS 方式执行，并在**同一事务**内追加对应事件；写入前会用状态机校验「起始状态 + 事件 → 目标状态」是否成立，因此数据库更新与领域规则不会各写一套。
+
+## 2. 引擎结构
+
+引擎（`runner.Engine`）由 `main` 在启动时创建，负责恢复对账、准入调度与单个任务的执行循环。
+
+- **准入调度**：调度协程每 1s 触发一次，可用槽位 = `MaxConcurrent - 当前运行任务数`；从 `missions` 中按 `queued_at NULLS FIRST, id`（即 FIFO）取最多「槽位数」个排队任务，逐个 CAS `queued → running` 并发出 `admitted` 事件，然后为每个任务启动一个执行协程。并发上限默认 2，可配置（`engine.max_concurrent`）。
+- **每任务执行循环**：规划与执行在同一循环内交替；
+  - 规划按 `engine.planner_interval`（默认 2s）到点触发：调用 `Planner.Plan`；若返回「已完成」且任务没有 `open` / `running` 的动作（`CountOpenIntents`），进入收尾：`running → finalizing → done`，并发出 `finalizing`、`completed` 事件；
+  - 执行按 `engine.worker_interval`（默认 200ms）轮询：用租约领取一条动作（`ClaimNextIntent`），在工作协程中执行（心跳协程按 `engine.heartbeat_interval` 续约），结束后 `FinishIntent` 写回动作终态；执行报错则把动作置为 `blocked`。
+- 引擎参数默认值：`MaxConcurrent=2`、`PlannerInterval=2s`、`WorkerInterval=200ms`、`LeaseTTL=30s`、`HeartbeatInterval=10s`；`Owner` 默认 `runner-1`，进程内默认使用 `beaconx-<pid>` 作为租约持有者。
+
+### 启动与停止
+
+`main` 在迁移成功后创建事件总线（缓冲 512）、Store 与引擎；引擎启动时先执行恢复对账、再启动调度循环，随后构建 HTTP 处理器并开始监听。关闭时按「HTTP 优雅关闭 → 引擎停止（取消调度与全部任务协程并等待退出）→ 事件总线关闭」的顺序收尾。进程退出不会让任务永久停在 `running`：下次启动的恢复流程会把它退回 `queued` 并重新准入。
+
+## 3. 动作租约
+
+动作即 `operation_nodes` 中 `kind='action'` 的节点；M2 为它增加了 `priority`、`lease_until`、`leased_by`、`attempts` 四列：
+
+- **领取**：`ClaimNextIntent` 在一条 SQL 中把满足条件的动作置为 `running`，写入 `lease_until = now() + ttl`、`leased_by = owner`，并把 `attempts` 加一；选择条件为 `state='open'` 或「`running` 且租约已过期/缺失」，按 `priority DESC, id` 取最早一条，使用 `FOR UPDATE SKIP LOCKED` 允许多 worker 并发领取而不互相阻塞。
+- **续约**：执行期间心跳调用 `HeartbeatIntent`，仅在仍持有租约（`state='running'` 且 `leased_by` 匹配）时延长 `lease_until`；续约失败说明租约已被回收，执行协程随之退出。
+- **完成**：`FinishIntent` 只接受 `done` / `exhausted` / `blocked` 三个终态，且仅当持有者匹配时生效，成功后清空租约列。
+- **释放**：暂停、取消、删除任务时调用 `ReleaseMissionLeases`，把该任务下所有 `running` 动作放回 `open` 并递增 `attempts`，避免恢复或重启后要等租约自然过期。
+- **回收**：启动时 `ResetExpiredLeases` 把过期或缺失租约的 `running` 动作放回 `open`（同样递增 `attempts`）。
+
+## 4. 暂停、恢复、取消与删除
+
+- **暂停**：仅允许 `running → paused`；先迁移状态并发 `paused` 事件（`actor=user`），再取消执行协程并等待其退出（上限 10s），最后释放动作租约。
+- **恢复**：`paused → queued` 并发 `resumed` 事件；任务重新回到队列，由准入调度决定何时再次开跑（不直接进入 `running`）。
+- **取消**：允许从 `queued` / `running` / `paused` / `finalizing` 迁移到 `cancelled`，发 `cancelled` 事件，停止执行协程并释放租约。
+- **删除**：先尽力取消（若仍可取消），停止执行协程，再删除 `missions` 行；节点、边、锚点、事件、范围与资产链接随外键级联删除，接口返回 204，之后查询返回 404。
+- 状态不允许该操作时引擎返回 `ErrNotRunning`，HTTP 层映射为 409 `conflict`；任务不存在映射为 404 `not_found`。
+
+| 场景 | HTTP 结果 |
+| --- | --- |
+| 暂停 / 恢复 / 取消成功 | 200 + 任务详情 |
+| 任务当前状态不允许该操作 | 409 `conflict` |
+| 任务不存在 | 404 `not_found` |
+| 删除成功 | 204（无响应体） |
+| 缺少或错误的令牌 | 401 `unauthorized` |
+
+## 5. 崩溃恢复
+
+引擎启动时依次执行两步对账，目标是不留下永久的 `running`：
+
+1. `ResetExpiredLeases`：回收所有过期或缺失租约的 `running` 动作，放回 `open`。
+2. `ResetRunningMissions`：把数据库中遗留的 `running` / `finalizing` 任务退回 `queued`（`queued=true`、`queued_at=now()`、`reason='进程重启恢复'`），并为每个任务追加一条 `recovered` 事件（`actor=system`）。
+
+恢复完成后由调度器按正常流程重新准入；重复执行恢复是幂等的（`queued + recovered` 不产生额外副作用）。v1 假设单进程运行，未实现多副本之间的租约协调。
+
+## 6. SSE 事件流
+
+`mission_events` 是只追加的事件表（`id` 自增、`type`、`actor`、`reason`、`payload JSONB`、`created_at`），既是 SSE 回放来源，也是状态追溯与审计的事实来源。接口为 `GET /api/v1/missions/{id}/events`：
+
+- **先订阅后回放**：处理器先订阅内存事件总线，再查询数据库回放 `id > afterID` 的事件，因此回放期间产生的新事件不会丢失；回放按 id 升序输出，实时事件按 `lastSentID` 去重。
+- **游标**：优先 `Last-Event-ID` 请求头（浏览器 `EventSource` 断线重连会自动携带），其次 `?since=`；空值、非法值与负数一律按 0 处理。
+- **帧格式**：`id: <id>`、`event: <type>`、`data: <payload JSON>`，空行结束；回放上限 500 条；心跳为注释行 `: ping`（默认 20s），每条事件后立即 Flush。
+- **事件内容**：帧里的 `data` 是 `events.Event` 的 JSON（`id` / `mission_id` / `type` / `payload` / `created_at`）；`actor`、`reason` 等审计字段保存在 `mission_events` 中，不回放进 SSE 帧。
+- **慢消费者**：内存总线按任务分发，发布非阻塞；订阅者缓冲（进程内 512）被写满时该订阅者被丢弃并关闭通道，SSE 连接随之结束，客户端重连后凭游标回放补洞。
+- **错误**：回放失败且尚未写出任何帧时返回 500 JSON（`replay_failed`）；任务不存在 404；任务运行时或事件总线未装配时 503（`sse_unavailable`/`runtime_unavailable`）。
+
+事件优先级与错误码：`400 bad_request`（任务标识/请求体非法）、`401 unauthorized`（缺少或错误令牌）、`404 not_found`、`409 conflict`（当前状态不允许该操作）、`500 internal_error` / `replay_failed`、`503 auth_unavailable` / `runtime_unavailable` / `sse_unavailable`。
+
+## 7. 管理鉴权
+
+任务接口默认全部需要认证（`/healthz`、`/readyz`、`/api/v1/system/*` 为公开端点）：
+
+- 令牌来自 `auth.admin_token` 或环境变量 `BEACONX_ADMIN_TOKEN`；未配置时启动会生成 24 字节随机数（48 位十六进制字符）作为临时令牌，并以 WARN 级别打印到日志（字段名 `token`），仅本次进程有效。
+- 客户端优先使用 `Authorization: Bearer <token>`；SSE 无法自定义请求头，也可用 `?token=<token>`。两种方式都使用常量时间比较；空令牌一律拒绝。
+- 未安装认证组件时受保护路由返回 503（fail closed），令牌错误返回 401。
+
+## 8. M2 默认实现与 M3 替换点
+
+M2 不接入 LLM：`runner.IdlePlanner` 的 `Plan` 直接返回「已完成」，`runner.NoopWorker` 把动作标记为 `done`。因此没有待办动作的任务会在一个规划周期内走完 `queued → running → finalizing → done`。
+
+M3 只需实现 `runner.Planner`（生成假设/动作节点）与 `runner.Worker`（执行工具调用），通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可；准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
+
+## 9. 验收与本地实测
+
+M2 验收标准：kill -9 后无永久 `running`；暂停/恢复/删除可用；断线补洞无丢失。
+
+- **测试**：`go test ./...` 共 10 个包全绿（config、domain/asset、domain/graph、domain/task、httpapi、infra/migrate、infra/pg、platform、app/events、app/runner）。引擎集成测试 5 个通过（完成流程、暂停/恢复/取消、崩溃恢复、删除、并发上限），需要真实 PostgreSQL（`BEACONX_TEST_PG_DSN`）。
+- **HTTP 冒烟**：创建任务返回 201；1 秒内 `status=done`，`created → admitted → finalizing → completed` 四条事件可回放；对已完成任务 `POST .../pause` 返回 409；`DELETE` 返回 204，再查询返回 404；未带令牌返回 401。
+
+复现命令（需要本机 PostgreSQL）：
+
+```bash
+export GOCACHE=$PWD/.cache/gocache GOMODCACHE=$PWD/.cache/gomodcache GOTMPDIR=$PWD/.cache/tmp GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct GOSUMDB=off
+BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=disable' go test -count=1 ./...
+```
