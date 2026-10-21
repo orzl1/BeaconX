@@ -28,7 +28,7 @@ const workerToolSystem = `你是授权安全测试平台 BeaconX 的执行器。
 // Worker 用 LLM 执行单条动作，并把观察写成 fact 节点，实现 runner.Worker。
 type Worker struct {
 	store         *pg.Store
-	client        *llm.Client
+	client        LLM
 	model         string
 	log           *slog.Logger
 	toolRunner    ToolRunner
@@ -37,7 +37,7 @@ type Worker struct {
 }
 
 // NewWorker 创建执行器。
-func NewWorker(store *pg.Store, client *llm.Client, model string, log *slog.Logger) *Worker {
+func NewWorker(store *pg.Store, client LLM, model string, log *slog.Logger) *Worker {
 	if log == nil {
 		log = slog.Default()
 	}

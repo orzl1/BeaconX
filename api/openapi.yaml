@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.4.0
+  version: 0.5.0
   description: |
-    BeaconX M4 HTTP API：系统探针、任务生命周期管理（含 AI 规划预算与工具调用审计）、
-    工具审批与 SSE 事件流。
+    BeaconX M5 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
+    流量采集与证据校验、SSE 事件流。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -20,6 +20,8 @@ tags:
     description: 任务事件流（需要令牌，SSE 也可用查询参数）
   - name: approvals
     description: 工具调用的审批列表与决策（需要令牌）
+  - name: evidence
+    description: 流量采集记录、证据快照与完整性校验（需要令牌）
 paths:
   /healthz:
     get:
@@ -376,6 +378,77 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/traffic:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions]
+      summary: 任务流量采集记录
+      description: 按 id 倒序返回工具调用的两阶段采集记录，最多 200 条。
+      operationId: listTraffic
+      responses:
+        "200":
+          description: 采集记录列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/traffic/{id}/evidence:
+    parameters:
+      - $ref: "#/components/parameters/TrafficID"
+    post:
+      tags: [evidence]
+      summary: 把采集记录冻结为证据
+      description: 只有 phase=result 的采集记录可以冻结；成功返回 201 与含签名的证据快照，未完成的采集返回 409。
+      operationId: createEvidence
+      responses:
+        "201":
+          description: 证据快照已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceSnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/evidence/{id}/verify:
+    parameters:
+      - $ref: "#/components/parameters/EvidenceID"
+    get:
+      tags: [evidence]
+      summary: 校验证据完整性
+      description: 重算快照签名并校验请求/响应正文的哈希；任一处被篡改返回 409 tampered。
+      operationId: verifyEvidence
+      responses:
+        "200":
+          description: 校验结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Tampered"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -406,6 +479,24 @@ components:
         type: integer
         format: int64
         minimum: 1
+    TrafficID:
+      name: id
+      in: path
+      required: true
+      description: 采集记录标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    EvidenceID:
+      name: id
+      in: path
+      required: true
+      description: 证据快照标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
   responses:
     BadRequest:
       description: 请求参数或请求体非法
@@ -427,6 +518,12 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: 任务当前状态不允许该操作
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Tampered:
+      description: 证据校验失败，内容或签名可能已被篡改
       content:
         application/json:
           schema:
@@ -653,6 +750,110 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuditEvent"
+    TrafficExchange:
+      type: object
+      required: [tenant_id, id, mission_id, tool, phase, request_hash, request_size, response_hash, response_size, error, redaction, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        node_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 触发工具调用的动作节点。
+        tool:
+          type: string
+        phase:
+          type: string
+          description: 采集阶段；intent 表示请求已登记，result 表示响应已写入。
+          enum: [intent, result]
+        request_hash:
+          type: string
+          description: 请求正文（脱敏后）的 SHA-256。
+        request_size:
+          type: integer
+          format: int64
+        response_hash:
+          type: string
+          description: 响应正文（脱敏后）的 SHA-256；未完成时为空。
+        response_size:
+          type: integer
+          format: int64
+        status_code:
+          type: integer
+          nullable: true
+          description: 工具返回的 HTTP 状态码（http_probe）；其他工具为空。
+        error:
+          type: string
+        redaction:
+          type: string
+          description: 采用的脱敏策略标记，例如 json-keys。
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    TrafficList:
+      type: object
+      required: [traffic]
+      properties:
+        traffic:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrafficExchange"
+    EvidenceSnapshot:
+      type: object
+      required: [tenant_id, id, mission_id, tool, request_hash, request_size, response_hash, response_size, signature, redaction, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        tool:
+          type: string
+        request_hash:
+          type: string
+        request_size:
+          type: integer
+          format: int64
+        response_hash:
+          type: string
+        response_size:
+          type: integer
+          format: int64
+        signature:
+          type: string
+          description: 对规范化元数据（含快照 ID）的 HMAC-SHA256。
+        redaction:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    VerifyResult:
+      type: object
+      required: [verified, evidence_id, signature]
+      properties:
+        verified:
+          type: boolean
+        evidence_id:
+          type: integer
+          format: int64
+        signature:
+          type: string
     Error:
       type: object
       required: [error]

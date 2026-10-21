@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/app/tools"
 	"github.com/orzl1/BeaconX/internal/domain/policy"
 	"github.com/orzl1/BeaconX/internal/domain/task"
@@ -23,6 +24,8 @@ type Config struct {
 	DefaultAction policy.Action
 	AskTimeout    time.Duration
 	PollInterval  time.Duration
+	// Evidence 非空时启用两阶段流量采集（请求脱敏后加密落盘，响应同理）。
+	Evidence *evidence.Store
 }
 
 func (c Config) withDefaults() Config {
@@ -116,7 +119,16 @@ func (e *Executor) Execute(ctx context.Context, missionID, nodeID int64, toolNam
 		return tools.Result{}, fmt.Errorf("未知策略动作 %q", decision.Action)
 	}
 
+	// 两阶段采集：先把脱敏后的请求落盘并登记 intent，再执行工具。
+	trafficID := int64(0)
+	if e.cfg.Evidence != nil {
+		trafficID = e.beginCapture(ctx, missionID, nodeID, toolName, args)
+	}
+
 	res, err := tool.Execute(ctx, args)
+	if e.cfg.Evidence != nil && trafficID > 0 {
+		e.finishCapture(ctx, trafficID, res, err)
+	}
 	outcome, detail := "executed", ""
 	if err != nil {
 		outcome, detail = "tool_error", err.Error()
@@ -174,6 +186,55 @@ func (e *Executor) audit(ctx context.Context, missionID, nodeID int64, toolName 
 	if err := e.store.InsertAudit(ctx, e.cfg.TenantID, missionID, &nodePtr, toolName, d.Action, d.RuleName,
 		args, outcome, detail); err != nil {
 		e.log.Warn("写入审计失败", "mission_id", missionID, "tool", toolName, "error", err)
+	}
+}
+
+// beginCapture 写入 intent 阶段，返回采集 ID；失败只记日志，不影响工具执行。
+func (e *Executor) beginCapture(ctx context.Context, missionID, nodeID int64, toolName string, args json.RawMessage) int64 {
+	raw := []byte(args)
+	if redacted, err := evidence.RedactJSON(raw); err == nil {
+		raw = redacted
+	}
+	ref, err := e.cfg.Evidence.PutBlob(ctx, raw)
+	if err != nil {
+		e.log.Warn("采集请求落盘失败", "tool", toolName, "error", err)
+		return 0
+	}
+	nodePtr := nodeID
+	id, err := e.store.BeginTraffic(ctx, e.cfg.TenantID, missionID, &nodePtr, toolName, ref, "json-keys")
+	if err != nil {
+		e.log.Warn("写入采集 intent 失败", "tool", toolName, "error", err)
+		return 0
+	}
+	return id
+}
+
+// finishCapture 写入 result 阶段（响应脱敏后落盘）。
+func (e *Executor) finishCapture(ctx context.Context, trafficID int64, res tools.Result, execErr error) {
+	data := []byte(res.Output)
+	if execErr != nil && len(data) == 0 {
+		data = []byte("工具失败：" + execErr.Error())
+	}
+	if redacted, err := evidence.RedactJSON(data); err == nil {
+		data = redacted
+	}
+	ref, err := e.cfg.Evidence.PutBlob(ctx, data)
+	if err != nil {
+		e.log.Warn("采集响应落盘失败", "traffic_id", trafficID, "error", err)
+		return
+	}
+	status := 0
+	if v, ok := res.Meta["status"]; ok {
+		if n, ok := v.(int); ok {
+			status = n
+		}
+	}
+	errText := ""
+	if execErr != nil {
+		errText = execErr.Error()
+	}
+	if err := e.store.FinishTraffic(ctx, e.cfg.TenantID, trafficID, ref, status, errText); err != nil {
+		e.log.Warn("写入采集 result 失败", "traffic_id", trafficID, "error", err)
 	}
 }
 

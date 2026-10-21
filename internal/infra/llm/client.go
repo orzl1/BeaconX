@@ -85,10 +85,15 @@ type Response struct {
 // APIError 表示服务端返回了非 2xx 状态码。
 //
 // Body 是截断并脱敏后的响应体，保证不包含 API Key，
-// 便于直接展示或写日志；StatusCode 用于调用方分类处理。
+// 便于直接展示或写日志；StatusCode 用于调用方分类处理；
+// Kind 见同包的 ClassifyError / APIError.Kind。
 type APIError struct {
 	StatusCode int
 	Body       string
+
+	// kind 在构造时按状态码与 Body 关键词预分类；为零值时由 Kind() 现场推断，
+	// 因此手工构造的 &APIError{StatusCode: ..., Body: ...} 同样可正确分类。
+	kind ErrorKind
 }
 
 // Error 实现 error。

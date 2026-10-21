@@ -47,11 +47,22 @@
     "model": "deepseek-flash",
     "max_tokens": 2048,
     "timeout": "60s",
-    "max_retries": 2
+    "max_retries": 2,
+    "fallbacks": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "",
+        "model": "gpt-4o-mini"
+      }
+    ]
   },
   "policy": {
     "default_action": "ask",
     "approval_timeout": "60s"
+  },
+  "evidence": {
+    "dir": "",
+    "key_hex": ""
   }
 }
 ```
@@ -87,6 +98,8 @@
 | `BEACONX_LLM_MAX_RETRIES` | `llm.max_retries` | `2` | 最大重试次数 |
 | `BEACONX_POLICY_DEFAULT_ACTION` | `policy.default_action` | `ask` | 无规则命中时的默认裁决 |
 | `BEACONX_APPROVAL_TIMEOUT` | `policy.approval_timeout` | `60s` | ask 的默认审批等待超时 |
+| `BEACONX_EVIDENCE_DIR` | `evidence.dir` | 空 | 证据根目录；为空时用 `<state.dir>/tenants/<tenant_id>/evidence` |
+| `BEACONX_EVIDENCE_KEY` | `evidence.key_hex` | 空 | 64 位十六进制证据主密钥；为空时使用/生成 `<state.dir>/evidence.key` |
 
 环境变量值为空时视为未设置，不会覆盖配置文件或默认值。
 
@@ -121,7 +134,8 @@
 - **默认值**：`max_tokens=2048`、`timeout=60s`、`max_retries=2`；这些值取 `<=0` 时回退到默认值。`max_retries<=0` 不能关闭重试（会被当作 2）。
 - **重试范围**：只有 HTTP 429、5xx 与网络错误会重试；其余 4xx 不重试。JSON 模式请求被服务端以 HTTP 400 拒绝时，客户端会回退为普通请求再试一次。
 - **temperature**：可选，只支持配置文件（没有对应环境变量）；未设置时不发送该参数。
-- **密钥安全**：`api_key` 应通过环境变量 `BEACONX_LLM_API_KEY` 或本地 `.env` 提供（`.env` 已被忽略），不要写入仓库或配置模板；`api_key` 为空时不会发送 `Authorization` 头（便于本地假服务）。
+- **故障转移**：`llm.fallbacks` 是 JSON 数组（只支持配置文件，没有对应环境变量），主 profile 之后按顺序尝试；每个元素必须同时有 `base_url` 与 `model`，否则启动校验失败。只有 auth（401/403）、quota（402）、rate_limit（429）、transient（5xx/网络/超时）会切换到下一个 profile；context_overflow 与 fatal 立即失败。每次切换写一条 WARN 日志「模型切换」。
+- **密钥安全**：`api_key` 应通过环境变量 `BEACONX_LLM_API_KEY` 或本地 `.env` 提供（`.env` 已被忽略），不要写入仓库或配置模板；`api_key` 为空时不会发送 `Authorization` 头（便于本地假服务）。fallback 的 `api_key` 同样只应写在本地配置或环境变量中。
 - **工具调用**：配置了 LLM 后，Worker 会装配工具与策略执行器；工具调用链、审批与审计见 [工具与策略](tools-policy.md)。
 
 ## 工具策略与审批
@@ -132,6 +146,14 @@
 - `approval_timeout`：ask 的默认等待超时，默认 `60s`；如果命中规则自带 `timeout_seconds`（内置 ask 规则为 60s），优先使用规则值。
 - 实现细节：配置加载阶段会校验 `default_action` 只能是 `allow`/`ask`/`deny`，非法值导致启动失败；`approval_timeout` 必须为正数。执行器内部对零值有兜底默认值，但正常启动路径不依赖它。
 - 工具只在启用 LLM（`llm.base_url` 与 `llm.model` 同时非空）后被真实调用；idle 模式不执行工具。
+
+## 证据存储
+
+`evidence` 段控制加密证据库（详见 [证据链](evidence.md)）：
+
+- `dir`：证据根目录，默认 `<state.dir>/tenants/<tenant_id>/evidence`；目录以 0700、blob 文件以 0600 创建。
+- `key_hex`：64 位十六进制（32 字节）主密钥；为空时读取或生成 `<state.dir>/evidence.key`（0600）。格式非法会在启动校验阶段失败；密钥不会打印到日志。
+- **密钥轮换暂不支持**（M5.1）：更换密钥会让存量 blob 无法解密、快照验签失败（表现为 tampered）。
 
 ## 状态目录
 

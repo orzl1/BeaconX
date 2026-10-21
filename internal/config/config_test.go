@@ -127,6 +127,13 @@ func TestValidation(t *testing.T) {
 		"请求超时":     func(c *Config) { c.Server.RequestTimeout = 0 },
 		"关闭超时":     func(c *Config) { c.Server.ShutdownTimeout = 0 },
 		"请求体上限":    func(c *Config) { c.Server.MaxBodyBytes = 0 },
+		"最大并发":     func(c *Config) { c.Engine.MaxConcurrent = 0 },
+		"租约时长":     func(c *Config) { c.Engine.LeaseTTL = 0 },
+		"策略动作":     func(c *Config) { c.Policy.DefaultAction = "maybe" },
+		"审批超时":     func(c *Config) { c.Policy.ApprovalTimeout = 0 },
+		"证据密钥":     func(c *Config) { c.Evidence.KeyHex = "abcd" },
+		"模型部分配置":   func(c *Config) { c.LLM.BaseURL = "https://api.example.com" },
+		"模型超时":     func(c *Config) { c.LLM.BaseURL = "https://x"; c.LLM.Model = "m"; c.LLM.Timeout = 0 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

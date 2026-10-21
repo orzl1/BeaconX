@@ -5,7 +5,7 @@
 
 自主安全测试平台。目标是在**可控授权范围**内，用多 Agent 完成从目标分解、侦察、验证到证据留存的完整流程；人负责审批与复核，而不是逐条输入命令。
 
-> **当前状态：M4（工具与策略，已完成）**。M1–M3 已建成数据层、任务运行时与 AI 规划；M4 补齐工具注册表（`http_probe` / `shell_exec`）、执行期策略门、人工审批与工具调用审计，Worker 进入「模型 → 工具 → 模型」循环。下一阶段为 M5（证据与模型路由），MCP、技能、模型兜底审批与规则 CRUD 列为 M4.1 延期项，里程碑见 [路线图](docs/roadmap.md)。**M4 仍不是可用产品**：工具能力与策略覆盖仍有限，请勿用于真实目标。
+> **当前状态：M5（证据链与模型路由，已完成）**。M1–M4 已建成数据层、任务运行时、AI 规划与工具策略；M5 补齐两阶段流量采集、AES-256-GCM 加密的内容寻址证据库、HMAC 快照签名与篡改校验，以及模型故障转移路由与结构化错误；token 预算超限会暂停任务而非硬失败。下一阶段为 M6（前端与交付），MITM、复测、密钥轮换与纯文本脱敏列为 M5.1 延期项，里程碑见 [路线图](docs/roadmap.md)。**M5 仍不是可用产品**：采集的是工具参数与输出而非真实网络报文，请勿用于真实目标。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@ docker compose down -v       # 连数据一起删除
 前置：Go 1.24+、一个可用的 PostgreSQL 16。
 
 ```bash
-cp .env.example .env          # 按需修改 BEACONX_DB_DSN、BEACONX_ADMIN_TOKEN、LLM 与策略配置
+cp .env.example .env          # 按需修改 BEACONX_DB_DSN、BEACONX_ADMIN_TOKEN、LLM、策略与证据配置
 set -a && . ./.env && set +a
 
 make build
@@ -82,12 +82,16 @@ make docker-build  # 构建镜像
 | `BEACONX_LLM_MAX_RETRIES` | `2` | 最大重试次数（仅 429 / 5xx / 网络错误） |
 | `BEACONX_POLICY_DEFAULT_ACTION` | `ask` | 无规则命中时的默认裁决（allow / ask / deny） |
 | `BEACONX_APPROVAL_TIMEOUT` | `60s` | ask 的默认审批等待超时 |
+| `BEACONX_EVIDENCE_DIR` | 空 | 证据根目录；为空时用 `<状态目录>/tenants/<tenant_id>/evidence` |
+| `BEACONX_EVIDENCE_KEY` | 空 | 64 位十六进制证据主密钥；为空时使用/生成 `<状态目录>/evidence.key` |
 
-`llm.temperature` 是第 7 项 LLM 配置，只能写在配置文件里（可选；缺省不发送，使用服务端默认值）。
+`llm.temperature` 与 `llm.fallbacks` 只能写在配置文件里，没有对应环境变量：`llm.fallbacks` 是故障转移 JSON 数组（元素含 `base_url` / `api_key` / `model`，密钥只应放在本地配置或环境变量中）。
 
 `llm.base_url` 与 `llm.model` **同时非空**才会启用 AI 规划；否则运行时为 idle（`IdlePlanner` / `NoopWorker`），日志打印 `规划模式 mode=idle`。启用后日志为 `规划模式 mode=llm model=<模型名>`，详见 [AI 规划与执行](docs/ai.md)。工具与策略只在 AI 启用后被真实调用。
 
-## HTTP 接口（M4）
+token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
+
+## HTTP 接口（M5）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -104,8 +108,11 @@ make docker-build  # 构建镜像
 | DELETE | `/api/v1/missions/{id}` | 删除任务（级联删除数据，返回 204） |
 | GET | `/api/v1/missions/{id}/events` | 任务事件流（SSE，支持 Last-Event-ID / `?since=`） |
 | GET | `/api/v1/missions/{id}/audit` | 任务工具调用审计（按 id 倒序，最多 200 条） |
+| GET | `/api/v1/missions/{id}/traffic` | 任务流量采集记录（按 id 倒序，最多 200 条） |
 | GET | `/api/v1/approvals` | 审批列表（`?status=`、`?limit=`，默认 50） |
 | POST | `/api/v1/approvals/{id}/decide` | 审批决策（`{"approve":true|false,"note":"…"}`） |
+| POST | `/api/v1/traffic/{id}/evidence` | 把已完成的采集记录冻结为证据快照（201） |
+| GET | `/api/v1/evidence/{id}/verify` | 校验证据签名与正文哈希（篡改返回 409 tampered） |
 
 除 `/healthz`、`/readyz`、`/api/v1/system/*` 外，所有接口都需要 `Authorization: Bearer <BEACONX_ADMIN_TOKEN>`；浏览器 EventSource 无法自定义请求头，SSE 端点也可用 `?token=<token>` 携带令牌。未配置令牌时，进程启动会生成临时令牌并打印到日志（仅当前进程有效）。
 
@@ -129,6 +136,19 @@ curl -s -X POST http://localhost:6969/api/v1/approvals/1/decide \
   -d '{"approve":true,"note":"已确认目标与范围"}'
 ```
 
+工具真正执行时会先做两阶段流量采集（intent → result，参数与输出脱敏后加密落盘），可把完成的采集冻结为证据并校验：
+
+```bash
+curl -s "http://localhost:6969/api/v1/missions/1/traffic" \
+  -H "Authorization: Bearer $BEACONX_ADMIN_TOKEN"
+curl -s -X POST "http://localhost:6969/api/v1/traffic/1/evidence" \
+  -H "Authorization: Bearer $BEACONX_ADMIN_TOKEN"
+curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
+  -H "Authorization: Bearer $BEACONX_ADMIN_TOKEN"
+```
+
+证据格式、签名与篡改校验见 [证据链](docs/evidence.md)。
+
 接口契约以 [api/openapi.yaml](api/openapi.yaml) 为唯一来源，路由表在 `internal/httpapi` 中声明式维护，二者需同步演进。
 
 ## 目录结构
@@ -139,21 +159,22 @@ internal/config/        配置加载（文件 + 环境变量 + 默认值）
 internal/logging/       结构化日志
 internal/platform/      状态目录（按租户分区）
 internal/tenant/        租户上下文
-internal/httpapi/       声明式路由 + 中间件 + 处理器（含 SSE、审批与审计）
+internal/httpapi/       声明式路由 + 中间件 + 处理器（含 SSE、审批、审计与证据）
 internal/app/ai/        LLM 规划器与执行器（含工具循环）
 internal/app/events/    进程内事件总线（SSE 分发、慢消费者丢弃）
-internal/app/executor/  工具调用唯一入口（策略判定、审批等待、审计）
-internal/app/runner/    任务运行时（准入调度、规划/执行、租约、恢复）
+internal/app/evidence/  证据存储（加密 blob、快照签名、篡改校验、脱敏）
+internal/app/executor/  工具调用唯一入口（策略判定、审批等待、采集、审计）
+internal/app/runner/    任务运行时（准入调度、规划/执行、租约、预算暂停、恢复）
 internal/app/system/    进程与依赖状态
 internal/app/tools/     工具注册表与内置工具（http_probe / shell_exec）
 internal/domain/        领域模型（资产身份、作战图、任务状态机、计划决策、策略规则）
-internal/infra/llm/     OpenAI 兼容 Chat Completions 客户端（含工具调用协议）
-internal/infra/pg/      PostgreSQL 连接池 + 资产/任务/计划/策略 Store
+internal/infra/llm/     OpenAI 兼容客户端（工具协议、错误分类、故障转移路由）
+internal/infra/pg/      PostgreSQL 连接池 + 资产/任务/计划/策略/证据 Store
 internal/infra/migrate/ 版本化迁移（校验和 + 咨询锁）
 migrations/             嵌入式 SQL 迁移
 api/                    OpenAPI 契约
 scripts/                CI 辅助脚本（品牌门禁等）
-docs/                   术语、配置、路线图、数据模型、运行时、AI 规划、工具与策略
+docs/                   术语、配置、路线图、数据模型、运行时、AI 规划、工具与策略、证据链
 ```
 
 ## 工程约定
@@ -163,18 +184,20 @@ docs/                   术语、配置、路线图、数据模型、运行时�
 - **可移植**：纯 Go、`CGO_ENABLED=0`；CI 对 Linux/macOS/Windows 交叉编译，Windows 为后续版本预留。
 - **默认失败关闭**：需要认证的路由在认证组件未装配时返回 503，而不是放行。
 - **AI 默认关闭**：未配置 LLM 端点时使用空规划器/执行器；配置后才启用 LLM 规划，密钥只从环境变量或本地 `.env` 读取。
-- **工具调用唯一入口**：所有工具调用必须经 `internal/app/executor`（策略 → 审批 → 执行 → 审计），不允许 Agent 直接调用工具。
+- **工具调用唯一入口**：所有工具调用必须经 `internal/app/executor`（策略 → 审批 → 采集 → 执行 → 审计），不允许 Agent 直接调用工具。
+- **证据不可篡改**：正文加密落盘并按内容哈希寻址，快照带 HMAC 签名；校验失败一律返回 409 tampered，不覆盖疑似被篡改的数据。
 - **品牌门禁**：`scripts/check-brand.sh` 在 CI 中阻止第三方项目标识进入代码、依赖与二进制。
 
 ## 文档
 
-- [路线图](docs/roadmap.md) — M0–M6 里程碑、M4.1 延期项与验收标准
-- [运行时与引擎](docs/runtime.md) — 状态机、调度、租约、恢复、SSE 与鉴权
-- [AI 规划与执行](docs/ai.md) — LLM 客户端、计划模型、规划/执行流程、预算与工具循环
+- [路线图](docs/roadmap.md) — M0–M6 里程碑、M4.1/M5.1 延期项与验收标准
+- [运行时与引擎](docs/runtime.md) — 状态机、调度、租约、预算暂停、恢复、SSE 与鉴权
+- [AI 规划与执行](docs/ai.md) — LLM 客户端、计划模型、规划/执行流程、预算、路由与工具循环
 - [工具与策略](docs/tools-policy.md) — 工具注册表、策略规则、审批、审计与安全盲区
-- [数据模型](docs/data-model.md) — M1–M4 表结构、资产身份、作战图、覆盖度与事件流
+- [证据链](docs/evidence.md) — 两阶段采集、加密正文、快照签名、篡改校验与脱敏
+- [数据模型](docs/data-model.md) — M1–M5 表结构、资产身份、作战图、覆盖度、事件流与证据表
 - [术语表](docs/glossary.md) — 产品与代码统一用词
-- [配置说明](docs/configuration.md) — 配置项、运行时参数、LLM、策略、状态目录与迁移机制
+- [配置说明](docs/configuration.md) — 配置项、运行时参数、LLM、策略、证据、状态目录与迁移机制
 
 ## 许可
 

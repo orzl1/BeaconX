@@ -11,6 +11,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,13 @@ type Config struct {
 	Auth     Auth     `json:"auth"`
 	LLM      LLM      `json:"llm"`
 	Policy   Policy   `json:"policy"`
+	Evidence Evidence `json:"evidence"`
+}
+
+// Evidence 是证据存储配置。
+type Evidence struct {
+	Dir    string `json:"dir"`
+	KeyHex string `json:"key_hex"`
 }
 
 // Engine 是任务运行时参数。
@@ -56,15 +64,24 @@ type Auth struct {
 	AdminToken string `json:"admin_token"`
 }
 
+// LLMProfile 是路由中的一个模型端点。
+type LLMProfile struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
 // LLM 是 OpenAI 兼容模型端点配置；base_url 与 model 同时非空时启用 AI 规划。
 type LLM struct {
-	BaseURL     string   `json:"base_url"`
-	APIKey      string   `json:"api_key"`
-	Model       string   `json:"model"`
-	MaxTokens   int      `json:"max_tokens"`
-	Temperature *float64 `json:"temperature,omitempty"`
-	Timeout     Duration `json:"timeout"`
-	MaxRetries  int      `json:"max_retries"`
+	// Fallbacks 是故障转移候选（按顺序尝试）。
+	Fallbacks   []LLMProfile `json:"fallbacks,omitempty"`
+	BaseURL     string       `json:"base_url"`
+	APIKey      string       `json:"api_key"`
+	Model       string       `json:"model"`
+	MaxTokens   int          `json:"max_tokens"`
+	Temperature *float64     `json:"temperature,omitempty"`
+	Timeout     Duration     `json:"timeout"`
+	MaxRetries  int          `json:"max_retries"`
 }
 
 // Duration 是一个便于 JSON 序列化的 time.Duration，既接受 Go duration 字符串
@@ -230,6 +247,8 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return parseDuration(v, &cfg.Engine.HeartbeatInterval, "BEACONX_HEARTBEAT_INTERVAL")
 		}},
 		{"BEACONX_ADMIN_TOKEN", func(v string) error { cfg.Auth.AdminToken = v; return nil }},
+		{"BEACONX_EVIDENCE_DIR", func(v string) error { cfg.Evidence.Dir = v; return nil }},
+		{"BEACONX_EVIDENCE_KEY", func(v string) error { cfg.Evidence.KeyHex = v; return nil }},
 		{"BEACONX_POLICY_DEFAULT_ACTION", func(v string) error { cfg.Policy.DefaultAction = v; return nil }},
 		{"BEACONX_APPROVAL_TIMEOUT", func(v string) error { return parseDuration(v, &cfg.Policy.ApprovalTimeout, "BEACONX_APPROVAL_TIMEOUT") }},
 		{"BEACONX_LLM_BASE_URL", func(v string) error { cfg.LLM.BaseURL = v; return nil }},
@@ -301,6 +320,52 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MaxBodyBytes <= 0 {
 		return errors.New("server.max_body_bytes 必须为正数")
+	}
+	if c.Engine.MaxConcurrent <= 0 {
+		return errors.New("engine.max_concurrent 必须大于等于 1")
+	}
+	for name, d := range map[string]Duration{
+		"engine.planner_interval":   c.Engine.PlannerInterval,
+		"engine.worker_interval":    c.Engine.WorkerInterval,
+		"engine.lease_ttl":          c.Engine.LeaseTTL,
+		"engine.heartbeat_interval": c.Engine.HeartbeatInterval,
+	} {
+		if d.Value() <= 0 {
+			return fmt.Errorf("%s 必须为正数", name)
+		}
+	}
+	switch c.Policy.DefaultAction {
+	case "allow", "ask", "deny":
+	default:
+		return fmt.Errorf("policy.default_action %q 不是 allow|ask|deny 之一", c.Policy.DefaultAction)
+	}
+	if c.Policy.ApprovalTimeout.Value() <= 0 {
+		return errors.New("policy.approval_timeout 必须为正数")
+	}
+	if c.Evidence.KeyHex != "" {
+		key, err := hex.DecodeString(c.Evidence.KeyHex)
+		if err != nil || len(key) != 32 {
+			return errors.New("evidence.key_hex 必须是 64 位十六进制字符串（32 字节）")
+		}
+	}
+	if (c.LLM.BaseURL == "") != (c.LLM.Model == "") {
+		return errors.New("llm.base_url 与 llm.model 必须同时设置")
+	}
+	for i, fb := range c.LLM.Fallbacks {
+		if fb.BaseURL == "" || fb.Model == "" {
+			return fmt.Errorf("llm.fallbacks[%d] 必须同时设置 base_url 与 model", i)
+		}
+	}
+	if c.LLM.BaseURL != "" {
+		if c.LLM.MaxTokens <= 0 {
+			return errors.New("llm.max_tokens 必须为正数")
+		}
+		if c.LLM.Timeout.Value() <= 0 {
+			return errors.New("llm.timeout 必须为正数")
+		}
+		if c.LLM.MaxRetries < 0 {
+			return errors.New("llm.max_retries 必须大于等于 0")
+		}
 	}
 	return nil
 }

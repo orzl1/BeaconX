@@ -8,6 +8,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,12 @@ import (
 	"github.com/orzl1/BeaconX/internal/infra/llm"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
+
+// LLM 是规划/执行所需的模型能力；*llm.Client 与 llm.Router 都实现它。
+type LLM interface {
+	CompleteJSON(ctx context.Context, messages []llm.Message) (llm.Response, error)
+	CompleteWithTools(ctx context.Context, messages []llm.Message, tools []llm.ToolDef, toolChoice string) (llm.ToolResponse, error)
+}
 
 // Config 是规划/执行行为参数。
 type Config struct {

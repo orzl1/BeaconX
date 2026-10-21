@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/app/events"
+	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 	"github.com/orzl1/BeaconX/internal/tenant"
@@ -66,6 +67,7 @@ type Options struct {
 	Store    *pg.Store
 	Engine   *runner.Engine
 	Broker   *events.Broker
+	Evidence *evidence.Store
 	TenantID int64
 }
 
@@ -100,6 +102,9 @@ func Routes() []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/audit", Summary: "任务工具调用审计"},
 		{Method: http.MethodGet, Pattern: "/api/v1/approvals", Summary: "审批列表"},
 		{Method: http.MethodPost, Pattern: "/api/v1/approvals/{id}/decide", Summary: "审批决策"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/traffic", Summary: "任务流量采集记录"},
+		{Method: http.MethodPost, Pattern: "/api/v1/traffic/{id}/evidence", Summary: "把采集记录冻结为证据"},
+		{Method: http.MethodGet, Pattern: "/api/v1/evidence/{id}/verify", Summary: "校验证据完整性"},
 	}
 }
 
@@ -171,6 +176,12 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleListApprovals, nil
 	case "/api/v1/approvals/{id}/decide":
 		return o.handleDecideApproval, nil
+	case "/api/v1/missions/{id}/traffic":
+		return o.handleListTraffic, nil
+	case "/api/v1/traffic/{id}/evidence":
+		return o.handleCreateEvidence, nil
+	case "/api/v1/evidence/{id}/verify":
+		return o.handleVerifyEvidence, nil
 	default:
 		return nil, ErrUnboundRoute
 	}

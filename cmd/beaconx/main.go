@@ -12,11 +12,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/app/ai"
 	"github.com/orzl1/BeaconX/internal/app/events"
+	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/app/executor"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/app/system"
@@ -94,6 +98,8 @@ func usage() {
   BEACONX_LLM_MAX_RETRIES     429/5xx 重试次数（默认 2）
   BEACONX_POLICY_DEFAULT_ACTION 无规则命中时的动作 allow|ask|deny（默认 ask）
   BEACONX_APPROVAL_TIMEOUT     审批等待超时（默认 60s）
+  BEACONX_EVIDENCE_DIR         证据目录（默认状态目录下 tenants/<id>/evidence）
+  BEACONX_EVIDENCE_KEY         证据加密密钥（64 位十六进制；为空时自动生成 evidence.key）
 `)
 }
 
@@ -202,6 +208,22 @@ func serve(args []string) int {
 			CreatedAt: ev.CreatedAt,
 		})
 	}
+	// 证据存储：正文加密落盘，快照带签名；密钥优先取配置，否则在状态目录生成并复用。
+	evDir := cfg.Evidence.Dir
+	if evDir == "" {
+		evDir = filepath.Join(cfg.State.Dir, "tenants", strconv.FormatInt(cfg.Tenant.DefaultID, 10), "evidence")
+	}
+	evKey, err := loadOrCreateEvidenceKey(cfg.Evidence.KeyHex, filepath.Join(cfg.State.Dir, "evidence.key"))
+	if err != nil {
+		log.Error("准备证据密钥失败", "error", err)
+		return 1
+	}
+	evStore, err := evidence.New(evidence.Config{Dir: evDir, Key: evKey})
+	if err != nil {
+		log.Error("初始化证据存储失败", "error", err)
+		return 1
+	}
+
 	// 工具与策略：内置默认规则幂等写入；执行器是所有工具调用的唯一入口。
 	if err := store.EnsurePolicyRules(ctx, cfg.Tenant.DefaultID, policy.SeedDefaults()); err != nil {
 		log.Error("写入内置策略规则失败", "error", err)
@@ -216,6 +238,7 @@ func serve(args []string) int {
 		TenantID:      cfg.Tenant.DefaultID,
 		DefaultAction: policy.Action(cfg.Policy.DefaultAction),
 		AskTimeout:    cfg.Policy.ApprovalTimeout.Value(),
+		Evidence:      evStore,
 	}, log)
 
 	// 规划/执行实现：配置了模型端点时走真实 LLM，否则使用 M2 的空实现。
@@ -225,21 +248,27 @@ func serve(args []string) int {
 		aiMode  string         = "idle"
 	)
 	if cfg.LLM.BaseURL != "" && cfg.LLM.Model != "" {
-		client, err := llm.NewClient(llm.Config{
-			BaseURL:     cfg.LLM.BaseURL,
-			APIKey:      cfg.LLM.APIKey,
-			Model:       cfg.LLM.Model,
-			MaxTokens:   cfg.LLM.MaxTokens,
-			Temperature: cfg.LLM.Temperature,
-			Timeout:     cfg.LLM.Timeout.Value(),
-			MaxRetries:  cfg.LLM.MaxRetries,
-		})
+		profiles := []llm.Profile{{
+			Name:    "primary",
+			BaseURL: cfg.LLM.BaseURL,
+			APIKey:  cfg.LLM.APIKey,
+			Model:   cfg.LLM.Model,
+		}}
+		for i, fb := range cfg.LLM.Fallbacks {
+			profiles = append(profiles, llm.Profile{
+				Name:    fmt.Sprintf("fallback-%d", i+1),
+				BaseURL: fb.BaseURL,
+				APIKey:  fb.APIKey,
+				Model:   fb.Model,
+			})
+		}
+		router, err := llm.NewRouter(profiles, cfg.LLM.Timeout.Value(), cfg.LLM.MaxRetries, log)
 		if err != nil {
-			log.Error("初始化模型客户端失败", "error", err)
+			log.Error("初始化模型路由失败", "error", err)
 			return 1
 		}
-		planner = ai.NewPlanner(store, client, cfg.LLM.Model, ai.Config{}, log)
-		worker = ai.NewWorker(store, client, cfg.LLM.Model, log).SetTools(exec, llmToolDefs(registry.List("worker")))
+		planner = ai.NewPlanner(store, router, cfg.LLM.Model, ai.Config{}, log)
+		worker = ai.NewWorker(store, router, cfg.LLM.Model, log).SetTools(exec, llmToolDefs(registry.List("worker")))
 		aiMode = "llm"
 	}
 	engine := runner.New(runner.Config{
@@ -271,6 +300,7 @@ func serve(args []string) int {
 		Authenticator:  httpapi.NewTokenAuthenticator(adminToken),
 		Store:          store,
 		Engine:         engine,
+		Evidence:       evStore,
 		Broker:         broker,
 		TenantID:       cfg.Tenant.DefaultID,
 		Info:           func(ctx context.Context) any { return sys.NewInfo(ctx) },
@@ -320,6 +350,28 @@ func serve(args []string) int {
 
 	log.Info("已停止")
 	return 0
+}
+
+// loadOrCreateEvidenceKey 读取或生成证据加密密钥（32 字节，十六进制持久化）。
+func loadOrCreateEvidenceKey(configuredHex, keyPath string) ([]byte, error) {
+	if configuredHex != "" {
+		return hex.DecodeString(configuredHex)
+	}
+	if raw, err := os.ReadFile(keyPath); err == nil {
+		key, decErr := hex.DecodeString(strings.TrimSpace(string(raw)))
+		if decErr != nil || len(key) != 32 {
+			return nil, fmt.Errorf("证据密钥文件 %s 已损坏", keyPath)
+		}
+		return key, nil
+	}
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return nil, fmt.Errorf("生成证据密钥失败: %w", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key[:])), 0o600); err != nil {
+		return nil, fmt.Errorf("写入证据密钥失败: %w", err)
+	}
+	return key[:], nil
 }
 
 // llmToolDefs 把工具定义转换为模型可识别的 function 定义。

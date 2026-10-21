@@ -1,8 +1,8 @@
-# 数据模型（M1–M4）
+# 数据模型（M1–M5）
 
-本文描述 BeaconX M1–M4 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）。
+本文描述 BeaconX M1–M5 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0005_policy.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0006_evidence.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -33,6 +33,8 @@
 | 0005 | `policy_rules` | 工具调用策略规则（内置 + 人工维护） |
 | 0005 | `approvals` | ask 决策产生的待人工审批项 |
 | 0005 | `audit_events` | 每次工具调用的策略与执行审计 |
+| 0006 | `traffic_exchanges` | 工具调用的两阶段流量采集（intent → result） |
+| 0006 | `evidence_snapshots` | 冻结的证据快照（签名 + 正文引用） |
 
 ### 2.1 租户根表（0001）
 
@@ -86,6 +88,13 @@
 - `policy_rules`：`name`、`tool`、`arg_pattern`（默认空串）、`action`（CHECK `allow` / `ask` / `deny`）、`priority`（默认 0）、`timeout_seconds`（默认 0）、`enabled`（默认 true）、`immutable`（默认 false）、`created_at`、`updated_at`；`PRIMARY KEY (tenant_id, id)`、`UNIQUE (tenant_id, name)`；索引 `idx_policy_rules_lookup (tenant_id, enabled, priority DESC, id)`。启动时用 `ON CONFLICT (tenant_id, name) DO NOTHING` 幂等播种内置规则，不覆盖用户改动。
 - `approvals`：`mission_id`、`node_id`、`tool`、`args JSONB`（原始参数）、`status`（`pending` / `approved` / `rejected` / `timeout` / `cancelled`，默认 `pending`）、`note`、`decided_by`、`decided_at`、`expires_at`（NOT NULL）、`created_at`；`PRIMARY KEY (tenant_id, id)`；外键 `(tenant_id, mission_id)` → `missions`、`(tenant_id, node_id)` → `operation_nodes`、`tenant_id` → `tenants`，均级联删除；部分索引 `idx_approvals_pending (tenant_id, created_at) WHERE status = 'pending'`。
 - `audit_events`：`mission_id`、`node_id`（可空）、`tool`、`action`、`rule_name`（默认空串）、`args_digest`（参数原始 JSON 的 SHA-256）、`outcome`、`detail`、`actor`（默认 `system`）、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键到 `missions` 与 `tenants`；索引 `idx_audit_events_mission (tenant_id, mission_id, id)`。审计不保存原始参数（参数在审批表），只保存摘要。
+
+### 2.10 证据链（0006）
+
+- `traffic_exchanges`：`mission_id`、`node_id`（可空）、`tool`、`phase`（CHECK `intent` / `result`，默认 `intent`）、`request_hash`、`request_size`、`response_hash`、`response_size`、`status_code`（可空）、`error`（默认空串）、`redaction`（默认空串）、`created_at`、`completed_at`（可空）；`PRIMARY KEY (tenant_id, id)`；外键 `(tenant_id, mission_id)` → `missions` 与 `tenant_id` → `tenants`，均级联删除；索引 `idx_traffic_exchanges_mission (tenant_id, mission_id, id)`。一次调用对应一行，先写 intent，再更新为 result；崩溃会留下 `phase='intent'` 的未完成行。
+- `evidence_snapshots`：`mission_id`、`tool`、`request_hash`、`request_size`、`response_hash`、`response_size`、`signature`、`redaction`、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键同 `traffic_exchanges`；索引 `idx_evidence_snapshots_mission (tenant_id, mission_id, id)`。
+- 正文（请求参数与工具输出）不落数据库：`*_hash` / `*_size` 指向 `internal/app/evidence` 加密存储的 blob（`sha256` 内容寻址、AES-256-GCM、路径 `blobs/<hash 前两位>/<hash>.enc`）；`signature` 是对包含快照 ID 的规范化元数据做 HMAC-SHA256。数据库行 ID 是接口使用的 `evidence_id`，快照 ID 可由元数据重算。
+- 表结构与校验细节见 [证据链](evidence.md)。
 
 ## 3. 资产身份与归一化
 

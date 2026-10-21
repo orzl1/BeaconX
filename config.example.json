@@ -39,10 +39,21 @@
     "model": "deepseek-flash",
     "max_tokens": 2048,
     "timeout": "60s",
-    "max_retries": 2
+    "max_retries": 2,
+    "fallbacks": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "",
+        "model": "gpt-4o-mini"
+      }
+    ]
   },
   "policy": {
     "default_action": "ask",
     "approval_timeout": "60s"
+  },
+  "evidence": {
+    "dir": "",
+    "key_hex": ""
   }
 }

@@ -75,6 +75,7 @@
 - **恢复**：`paused → queued` 并发 `resumed` 事件；任务重新回到队列，由准入调度决定何时再次开跑（不直接进入 `running`）。
 - **取消**：允许从 `queued` / `running` / `paused` / `finalizing` 迁移到 `cancelled`，发 `cancelled` 事件，停止执行协程并释放租约。
 - **删除**：先尽力取消（若仍可取消），停止执行协程，再删除 `missions` 行；节点、边、锚点、事件、范围与资产链接随外键级联删除，接口返回 204，之后查询返回 404。
+- **预算超限暂停（M5）**：引擎在每轮执行循环开始检查 token 预算；若 `max_tokens > 0` 且 `spent_tokens >= max_tokens`，把任务从 `running` 迁移到 `paused`（事件 `paused`，`actor=system`，reason=「模型 token 预算超限暂停」）并退出该任务协程。这是**暂停而不是失败**：提高预算或确认后调用 `resume`，任务重新排队、再次准入继续。步骤预算超限仍由规划器按完成收尾。
 - 状态不允许该操作时引擎返回 `ErrNotRunning`，HTTP 层映射为 409 `conflict`；任务不存在映射为 404 `not_found`。
 
 | 场景 | HTTP 结果 |
@@ -122,6 +123,8 @@
 M3 起由 `internal/app/ai` 提供 LLM 实现：Planner 读取态势快照、调用 OpenAI 兼容模型生成结构化计划与动作；Worker 把模型的观察写成 fact 节点。启用条件、规划流程、追问语义、预算与真实冒烟结果见 [AI 规划与执行](ai.md)。未配置 `llm.base_url` 与 `llm.model` 时仍使用上述空实现；配置后启动日志打印 `规划模式 mode=llm model=<模型名>`。
 
 工具调用在 M4 接入：`ai.Worker` 装配工具后进入「模型 → 工具 → 模型」循环，每次工具调用都统一经 `internal/app/executor`（策略判定 → 审批 → 执行 → 审计），executor 是工具调用的唯一入口；命中 ask 时 worker 会阻塞等待人工决策或超时（默认 60s）。规则、审批与审计详见 [工具与策略](tools-policy.md)。通过 `runner.New(cfg, store, planner, worker, log, sink)` 注入即可，准入、租约、恢复、SSE 与状态机逻辑保持不变。事件通过 `EventSink` 投递到 `events.Broker`，由 SSE 处理器回放与转发。
+
+证据采集在工具执行前发生（M5）：executor 在策略门通过、真正调用工具之前先登记 `traffic_exchanges` 的 intent 阶段（参数脱敏后加密落盘），工具返回后再写 result（输出、状态码、错误）；采集失败只记 WARN，不阻塞工具执行。证据快照、签名与篡改校验见 [证据链](evidence.md)。
 
 ## 9. 验收与本地实测
 

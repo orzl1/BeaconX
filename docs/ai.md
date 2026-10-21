@@ -33,6 +33,7 @@ M3 **没有接入任何真实工具**（M4 才接入）。因此 Worker 的“�
 | `llm.temperature` | —（仅配置文件） | 未设置 | 可选；未设置时不发送，使用服务端默认值 |
 | `llm.timeout` | `BEACONX_LLM_TIMEOUT` | `60s` | 单次 HTTP 请求超时；`<=0` 时使用 60s |
 | `llm.max_retries` | `BEACONX_LLM_MAX_RETRIES` | `2` | 最多重试次数（不含首次）；`<=0` 时使用 2。仅 429、5xx 与网络错误会重试，因此无法用 0 关闭重试 |
+| `llm.fallbacks` | —（仅配置文件） | 空 | 故障转移候选数组；每个元素含 `base_url` / `api_key` / `model`，两项必填，按顺序尝试 |
 
 环境变量值为空时视为未设置；其余配置规则见 [配置说明](configuration.md)。
 
@@ -103,13 +104,21 @@ M3 **没有接入任何真实工具**（M4 才接入）。因此 Worker 的“�
 - 步骤状态：`pending`（唯一可派发）、`ready`、`running`、`done`、`skipped`、`failed`；只有 `done` 才满足依赖，`skipped` / `failed` 都不会让下游步骤就绪。
 - `ParseDecision` 只做依赖去重这一项规范化；步骤 key 不做大小写/空白修正，格式问题会作为校验错误暴露，而不是被静默改写。
 
-## 7. 预算与用量
+## 7. 预算、用量与模型路由（M5）
 
 - 任务预算字段：`max_tokens`（BIGINT，默认 0=不限）、`spent_tokens`（已用 token，默认 0）、`max_steps`（integer，默认 0=不限）、`steps_used`（已新增步骤数，默认 0）。
 - 创建任务时可通过请求体传入 `max_tokens` / `max_steps`；任一大于 0 才会写入预算，省略或 0 表示不限制。
-- 每次模型调用（`planner` / `planner-retry` / `planner-followup` / `worker`）都会在 `llm_usage` 写一条记录（role、model、prompt_tokens、completion_tokens、total_tokens），并在**同一事务**中累加 `missions.spent_tokens`。
-- 预算是**软上限**：只在规划轮次开始时判定，正在进行的模型调用不会被中断，因此 `spent_tokens` 可能略微超过 `max_tokens`；超限后任务按正常完成流程收尾（状态 `done`，不是 `failed`）。
+- 每次模型调用（`planner` / `planner-retry` / `planner-followup` / `worker` / `worker-tool`）都会在 `llm_usage` 写一条记录（role、model、prompt_tokens、completion_tokens、total_tokens），并在**同一事务**中累加 `missions.spent_tokens`。
+- 预算是**软上限**：正在进行的模型调用不会被中断，因此 `spent_tokens` 可能略微超过 `max_tokens`。M5 起 token 预算超限由**引擎**在下一轮循环把任务从 `running` 置为 `paused`（事件 `paused`，reason=「模型 token 预算超限暂停」，actor=system），不硬失败；之后可用 `resume` 重新排队继续。步骤预算超限仍走规划器的完成收尾。
 - `steps_used` 只统计实际新增的步骤；重复声明的已有步骤不重复计数。
+
+### 模型路由与故障转移
+
+- `llm.fallbacks` 是 JSON 数组，主 profile（`llm.base_url` + `llm.model`）之后按顺序尝试；每个元素包含 `base_url` / `api_key` / `model`，必须同时设置 `base_url` 与 `model`，否则启动校验失败。fallback 没有独立的环境变量，只能写在配置文件里。
+- `llm.Router` 是单层替换：每个 profile 仍是独立 `llm.Client`，保留各自的超时、重试与 JSON 模式 400 回退；Router 不重复实现退避。
+- 可切换的错误类别（会尝试下一个 profile）：`auth`（401/403）、`quota`（402）、`rate_limit`（429）、`transient`（5xx、网络错误、超时）。**不可切换**：`context_overflow`（HTTP 400 且响应体提示上下文/长度超限）与 `fatal`（其他 4xx、无法分类、调用方已取消）——换 profile 也会撞同样的问题，因此立即失败。
+- 每次切换写一条 WARN 级别结构化日志「模型切换」（from / to / kind / reason）；全部 profile 失败时返回 `RouteError`（记录尝试次数与最后错误），`ClassifyError` 可对任意错误统一返回结构化类别。
+- 预算暂停与路由都只作用于模型调用层；暂停/恢复由引擎状态机完成，`resume` 后任务重新排队并由准入调度再次启动。
 
 ## 8. 存储（0004 迁移）
 

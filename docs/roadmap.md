@@ -1,6 +1,6 @@
 # 路线图
 
-每个里程碑都以「可验收」为准，不以「代码写完」为准。M0、M1、M2、M3 与 M4 已完成（M4 于 2026-10-21 收官），下一阶段为 **M5**（未开始）；M4 的部分增强项列入 [M4.1 延期项](#m41-延期项)。
+每个里程碑都以「可验收」为准，不以「代码写完」为准。M0–M5 已完成（M5 于 2026-10-21 收官），下一阶段为 **M6**（未开始）；M4 与 M5 的部分增强项分别列入 [M4.1 延期项](#m41-延期项) 与 [M5.1 延期项](#m51-延期项)。
 
 | 阶段 | 目标 | 验收标准 |
 | --- | --- | --- |
@@ -9,8 +9,8 @@
 | **M2 运行时与引擎**（已完成 2026-10-21） | 任务状态 reducer + 事件、准入调度、规划/执行循环、动作租约、SSE 回放。实际交付：迁移 0003（任务时间字段、动作租约、mission_events）；`internal/domain/task`（状态机 + Reduce）；`internal/app/runner`（准入调度、每任务规划/执行循环、暂停/恢复/取消/删除、崩溃恢复、租约续约）；`internal/app/events` + SSE 处理器（先订阅后回放、Last-Event-ID、心跳、慢消费者丢弃）；静态令牌鉴权（Bearer 或 `?token=`） | kill -9 后无永久 running；暂停/恢复/删除可用；断线补洞无丢失（实测：10 个测试包全绿；引擎集成测试 5 项通过；HTTP 冒烟创建 201、约 1 秒内 done、4 条事件可回放、重复暂停 409、删除 204→404、无令牌 401） |
 | **M3 规划与执行**（已完成 2026-10-21） | 目标分解、态势快照、结构化规划决策、计划依赖图、过程检索、上下文压缩、预算与收尾。实际交付：迁移 0004（plan_steps / step_dependencies / llm_usage / 任务预算列）；`internal/infra/llm`（OpenAI 兼容客户端：超时、重试、JSON 模式回退、错误体脱敏）；`internal/domain/plan`（Decision / Step / 依赖校验 / 就绪判定）；`internal/app/ai`（LLM Planner 与 Worker、追问、完成时 skipped、用量记录）；预算与超限事件 | 同一组靶场任务的完成率达标；规划输出 100% 通过 schema 校验；依赖派发用例通过（实测：`go test ./...` 13 个测试包全绿；假 LLM 端到端通过；DeepSeek `deepseek-flash` 真实冒烟约 50s 完成、3 动作 / 3 fact / 5 次调用约 3.8k tokens） |
 | **M4 工具与策略**（已完成 2026-10-21） | 工具注册表（schema 生成）、MCP 连接池、技能版本化；策略规则 + 审批 + 模型兜底 + 审计；统一拦截入口与启动自检。实际交付：迁移 0005（policy_rules / approvals / audit_events）；`internal/app/tools`（Registry + `http_probe` / `shell_exec`，JSON Schema 与风险级别）；`internal/domain/policy`（Rule / Evaluate / SeedDefaults：五条内置规则、优先级匹配、fail closed）；`internal/app/executor`（取规则 → allow/ask/deny → 审批等待 → 执行 → 审计，工具调用唯一入口）；`internal/app/ai` Worker 工具循环（最多 6 轮）；审批与审计 HTTP 接口；MCP/技能/模型兜底/规则 CRUD 延期到 M4.1 | 工具面按角色收敛；审批/超时/审计用例通过；所有执行型 Agent 均受策略检查（实测：`go test ./...` 16 个测试包全绿；执行器集成测试 4 项通过；DeepSeek `deepseek-flash` 真实冒烟 14 次工具调用全部经策略判定与审批，GET 走 allow、shell 走 ask 并批准，目标不可达时如实记录 TCP 失败，审计可见 allow/ask 与 executed/tool_error） |
-| **M5 证据与模型路由**（下一阶段，未开始） | 采集两阶段、脱敏与加密、证据版本令牌、复测；单层模型路由 + 结构化错误 + 预算 | 篡改证据必失败；预算超限可暂停；模型故障切换有单一来源日志 |
-| **M6 前端与交付** | 由 OpenAPI 生成客户端、页面按功能域拆分、SSE/查询 hooks、图可视化、e2e；自更新与发布链（macOS/Linux） | 5 条 e2e 全绿；发布包带校验和；升级回滚演练通过 |
+| **M5 证据与模型路由**（已完成 2026-10-21） | 采集两阶段、脱敏与加密、证据版本令牌、复测；单层模型路由 + 结构化错误 + 预算。实际交付：迁移 0006（traffic_exchanges / evidence_snapshots）；`internal/app/evidence`（AES-256-GCM 内容寻址 blob、HMAC-SHA256 快照签名、ErrTampered、RedactHeaders/RedactJSON）；`internal/app/executor` 两阶段采集（intent→result，工具调用前置捕获）；证据三接口（traffic 列表 / 冻结快照 / 校验）；`internal/infra/llm` 的 Router + ErrorKind/ClassifyError（auth/quota/rate_limit/transient 切换，context_overflow/fatal 立即失败）；引擎 token 预算超限暂停；MITM/复测/密钥轮换/纯文本脱敏列入 M5.1 | 篡改证据必失败；预算超限可暂停；模型故障切换有单一来源日志（实测：`go test ./...` 17 个测试包全绿；evidence 包 36 个测试含 13 类篡改场景；执行器采集+篡改集成测试、预算暂停测试、Router/错误分类测试通过；POST 快照→verify 正常，改数据库字段或改 blob 后 409 tampered） |
+| **M6 前端与交付**（下一阶段，未开始） | 由 OpenAPI 生成客户端、页面按功能域拆分、SSE/查询 hooks、图可视化、e2e；自更新与发布链（macOS/Linux） | 5 条 e2e 全绿；发布包带校验和；升级回滚演练通过 |
 
 ## M1 交付明细
 
@@ -45,6 +45,16 @@
 - **执行与审批**：`internal/app/executor` 是工具调用唯一入口（取规则 → 判定 → ask 建审批并写 `approval_required` 事件 → 轮询等待 → 执行 → 写审计）；`internal/httpapi` 新增审批列表/决策与任务审计接口；`internal/app/ai` Worker 进入「模型 → 工具 → 模型」循环（最多 6 轮）。
 - **验收**：`go test ./...` 16 个测试包全绿；执行器集成测试 4 项（allow / 批准后执行 / deny / 人工拒绝）通过；真实 DeepSeek 冒烟 14 次工具调用全部经策略判定与审批，GET 走 allow、shell 走 ask 并经 API 批准，目标不可达时模型如实记录 TCP 连接失败并产出事实，审计表可见 allow/ask 与 executed/tool_error。
 
+## M5 交付明细
+
+- **迁移 0006**：`traffic_exchanges`（两阶段 intent→result，请求/响应哈希与大小、状态码、错误、redaction、完成时间）与 `evidence_snapshots`（签名、正文引用、大小、redaction、创建时间）及索引。
+- **证据存储**：`internal/app/evidence` 实现 AES-256-GCM 加密的内容寻址 blob（`nonce||ciphertext`、AAD 绑定明文 sha256、原子写入、已存在损坏不覆盖）、HMAC-SHA256 快照签名与校验、`ErrTampered`、`RedactHeaders` / `RedactJSON`；主密钥由 `BEACONX_EVIDENCE_KEY` 或状态目录 `evidence.key` 提供。
+- **两阶段采集**：`internal/app/executor` 在策略门通过后、执行工具前登记 intent（参数脱敏加密落盘），执行后写 result（输出脱敏落盘、状态码、错误）；采集失败只记日志，不阻塞工具执行；崩溃会留下未完成的 intent 行。
+- **证据接口**：`GET /api/v1/missions/{id}/traffic`、`POST /api/v1/traffic/{id}/evidence`、`GET /api/v1/evidence/{id}/verify`；篡改（数据库字段或 blob）返回 409 `tampered`，未完成的采集返回 409 `conflict`。
+- **模型路由**：`internal/infra/llm` 新增 `Router` / `ErrorKind` / `ClassifyError` / `RouteError`；`llm.fallbacks` 按序故障转移，仅 auth/quota/rate_limit/transient 可切换，context_overflow/fatal 立即失败，每次切换写一条「模型切换」日志。
+- **预算暂停**：引擎在每轮循环检查 token 预算，超限把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），不硬失败，可用 `resume` 继续。
+- **验收**：`go test ./...` 17 个测试包全绿；evidence 36 个测试（含 13 类篡改场景）、执行器采集+篡改集成测试、预算暂停测试、Router/错误分类测试通过；快照创建→verify 正常，改库/改文件后返回 409。
+
 ## M4.1 延期项
 
 以下 M4 增强项未在本里程碑实现，已明确延后：
@@ -54,6 +64,16 @@
 - 规则未命中时的模型兜底审批。
 - 策略规则的 CRUD/API 与任务级/资产级作用域。
 - 更完备的参数级策略（命令/URL/目录白名单、结构化参数匹配）与更强的沙箱/网络出口控制。
+
+## M5.1 延期项
+
+以下 M5 增强项未在本里程碑实现，已明确延后：
+
+- MITM 代理与真实网络报文采集（当前采集的是工具参数与输出文本）。
+- 漏洞复测（retester）与证据版本令牌的自动流转。
+- 证据密钥轮换与多密钥并存。
+- 纯文本输出脱敏，以及把 `RedactHeaders` 接入真实抓包链路。
+- 证据保留策略/GC 与批量导出。
 
 ## 后续方向
 

@@ -176,10 +176,7 @@ func (c *Client) do(ctx context.Context, payload []byte) (completion, error) {
 	}
 
 	if httpResp.StatusCode < http.StatusOK || httpResp.StatusCode > 299 {
-		return completion{}, &APIError{
-			StatusCode: httpResp.StatusCode,
-			Body:       sanitizeErrorBody(body, c.apiKey),
-		}
+		return completion{}, newAPIError(httpResp.StatusCode, body, c.apiKey)
 	}
 	return decodeCompletion(body)
 }

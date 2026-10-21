@@ -250,9 +250,13 @@ func (e *Engine) runMission(mission pg.Mission, parent context.Context) {
 			return
 		}
 
-		// 规划：到点询问一次；完成且没有待办动作时收尾。
+		// 到点先检查预算，再规划；完成且没有待办动作时收尾。
 		select {
 		case <-plannerTicker.C:
+			// 预算超限时暂停任务，等待人工追加预算或终止，而不是硬失败。
+			if e.pauseIfOverBudget(ctx, mission.ID) {
+				return
+			}
 			done, err := e.planner.Plan(ctx, mission)
 			if err != nil {
 				e.log.Warn("规划失败", "mission_id", mission.ID, "error", err)
@@ -296,6 +300,23 @@ func (e *Engine) runMission(mission pg.Mission, parent context.Context) {
 			e.log.Warn("结束动作失败", "mission_id", mission.ID, "action_id", action.ID, "error", err)
 		}
 	}
+}
+
+// pauseIfOverBudget 在 token 预算耗尽时把任务置为 paused，并写入事件。
+func (e *Engine) pauseIfOverBudget(ctx context.Context, missionID int64) bool {
+	maxTokens, spent, _, _, err := e.store.MissionBudget(ctx, e.cfg.TenantID, missionID)
+	if err != nil || maxTokens <= 0 || spent < maxTokens {
+		return false
+	}
+	ev, applied, err := e.store.TransitionMission(ctx, e.cfg.TenantID, missionID,
+		[]task.Status{task.StatusRunning}, task.StatusPaused,
+		task.EvPaused, "system", "模型 token 预算超限暂停", nil)
+	if err != nil || !applied {
+		return false
+	}
+	e.emit(ev)
+	e.log.Warn("任务因 token 预算超限暂停", "mission_id", missionID, "spent", spent, "max", maxTokens)
+	return true
 }
 
 func (e *Engine) executeWithHeartbeat(ctx context.Context, mission pg.Mission, action pg.Node) (graph.NodeState, error) {

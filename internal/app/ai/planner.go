@@ -16,14 +16,14 @@ import (
 // Planner 用 LLM 生成计划步骤与下一步动作，实现 runner.Planner。
 type Planner struct {
 	store  *pg.Store
-	client *llm.Client
+	client LLM
 	cfg    Config
 	log    *slog.Logger
 	model  string
 }
 
 // NewPlanner 创建规划器。
-func NewPlanner(store *pg.Store, client *llm.Client, model string, cfg Config, log *slog.Logger) *Planner {
+func NewPlanner(store *pg.Store, client LLM, model string, cfg Config, log *slog.Logger) *Planner {
 	if log == nil {
 		log = slog.Default()
 	}
