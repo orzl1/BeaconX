@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.7.0
+  version: 0.8.0
   description: |
-    BeaconX M6 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
-    流量采集与证据校验、自更新与 SSE 事件流；M6.2 补齐企业、企业资产范围、
-    资产身份、任务资产关联与覆盖率查询。
+    BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
+    流量采集与证据校验、自更新、SSE 事件流；M6.2 补齐企业/资产/任务资产/覆盖率，
+    以及任务范围、计划、作战图、发现、发现证据、复测与 Markdown 报告。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -29,6 +29,14 @@ tags:
     description: 企业与「企业级资产范围」（需要令牌）
   - name: assets
     description: 资产、身份键与任务资产关联/覆盖率（需要令牌）
+  - name: graph
+    description: 任务范围、计划步骤、作战图与节点（需要令牌）
+  - name: findings
+    description: 任务发现、发现证据关联与状态流转（需要令牌）
+  - name: retests
+    description: 复测请求与结果（需要令牌）
+  - name: report
+    description: 任务 Markdown 报告（需要令牌）
 paths:
   /healthz:
     get:
@@ -926,6 +934,551 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/scope:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions, graph]
+      summary: 任务范围列表
+      description: |
+        按 id 升序返回任务范围条目；空列表返回 `[]`（不是 null）。任务不存在返回 404。
+      operationId: listMissionScope
+      responses:
+        "200":
+          description: 任务范围条目列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionScopeList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [missions, graph]
+      summary: 新增任务范围
+      description: |
+        kind 必须是 root_domain/subdomain/ip/cidr/url/keyword 之一（与数据库 CHECK 一致）；
+        (kind, value) 重复返回 409；任务不存在返回 404。
+      operationId: addMissionScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissionScopeCreateRequest"
+      responses:
+        "201":
+          description: 任务范围条目已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionScopeEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/scope/{scope_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+      - $ref: "#/components/parameters/MissionScopeID"
+    delete:
+      tags: [missions, graph]
+      summary: 删除任务范围
+      description: 条目必须属于路径中的任务，否则返回 404；成功返回 204。
+      operationId: deleteMissionScope
+      responses:
+        "204":
+          description: 已删除
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/plan:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions, graph]
+      summary: 任务计划步骤
+      description: |
+        返回任务的计划步骤（含 depends_on/status/priority），空计划返回 `[]`；
+        任务不存在返回 404。
+      operationId: getMissionPlan
+      responses:
+        "200":
+          description: 计划步骤列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanStepList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/graph:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+      - $ref: "#/components/parameters/GraphKindQuery"
+      - $ref: "#/components/parameters/GraphStateQuery"
+      - $ref: "#/components/parameters/GraphLimitQuery"
+    get:
+      tags: [missions, graph]
+      summary: 任务作战图
+      description: |
+        一次性返回任务的节点、边与锚点；`kind`/`state` 过滤只作用于节点
+        （边与锚点返回该任务全量，按 id 排序）。非法 kind/state 返回 400；
+        limit 缺省 500、上限 2000；空数组返回 `[]`。任务不存在返回 404。
+      operationId: getMissionGraph
+      responses:
+        "200":
+          description: 作战图视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphView"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/nodes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/NodeID"
+    get:
+      tags: [graph]
+      summary: 作战图节点详情
+      description: 返回节点本身（含 payload）；节点不存在返回 404。
+      operationId: getOperationNode
+      responses:
+        "200":
+          description: 节点详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationNode"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/nodes/{id}/state:
+    parameters:
+      - $ref: "#/components/parameters/NodeID"
+    patch:
+      tags: [graph]
+      summary: 更新作战图节点状态
+      description: |
+        state 只允许 open/running/done/exhausted/blocked；节点类型规则由领域层校验
+        （例如事实/发现/提示/摘要等知识类节点不允许 running，目标不允许 running/exhausted），
+        非法迁移返回 400。成功返回更新后的节点。
+      operationId: updateOperationNodeState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodeStatePatchRequest"
+      responses:
+        "200":
+          description: 更新后的节点
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperationNode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/findings:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions, findings]
+      summary: 发现列表
+      description: |
+        按创建时间倒序返回任务的发现；支持 ?severity= 与 ?status= 过滤（非法取值返回 400），
+        ?limit= 缺省 50、上限 200。空列表返回 `{"findings":[]}`。任务不存在返回 404。
+      operationId: listFindings
+      parameters:
+        - name: severity
+          in: query
+          required: false
+          description: 严重级别过滤。
+          schema:
+            $ref: "#/components/schemas/Severity"
+        - name: status
+          in: query
+          required: false
+          description: 处置状态过滤。
+          schema:
+            $ref: "#/components/schemas/FindingStatus"
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数上限，缺省 50、上限 200；超出或非正数按缺省处理。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: 发现列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [missions, findings]
+      summary: 创建发现
+      description: |
+        创建一条发现，初始 status=open、severity 缺省 info；title 必填。
+        asset_id/node_id 可选，必须存在且属于同一租户（节点还要求同一任务），否则 400。
+      operationId: createFinding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingCreateRequest"
+      responses:
+        "201":
+          description: 已创建的发现
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/findings/{id}:
+    parameters:
+      - $ref: "#/components/parameters/FindingID"
+    get:
+      tags: [findings]
+      summary: 发现详情
+      description: 返回发现字段平铺 + `evidence:[]`（已绑定的证据快照列表）。
+      operationId: getFinding
+      responses:
+        "200":
+          description: 发现详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    patch:
+      tags: [findings]
+      summary: 更新发现
+      description: |
+        局部更新 title/severity/detail/asset_id。asset_id 三态：字段缺省=不变、
+        JSON null=清空、正整数=设置；资产不存在返回 400。
+      operationId: updateFinding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingUpdate"
+      responses:
+        "200":
+          description: 更新后的发现
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/findings/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/FindingID"
+    post:
+      tags: [findings]
+      summary: 发现状态流转
+      description: |
+        按发现状态机迁移：open→confirmed/false_positive/closed、confirmed→fixed/retest/closed、
+        retest→confirmed/fixed/closed、fixed→retest/closed；closed/false_positive 终态，
+        同状态不算迁移。非法迁移返回 409，status 取值非法返回 400。
+      operationId: transitionFinding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingStatusRequest"
+      responses:
+        "200":
+          description: 迁移后的发现
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/findings/{id}/evidence:
+    parameters:
+      - $ref: "#/components/parameters/FindingID"
+    get:
+      tags: [findings, evidence]
+      summary: 发现关联证据
+      description: 列出发现已绑定的证据快照（按绑定时间、快照 id 升序）；空列表返回 `[]`。
+      operationId: listFindingEvidence
+      responses:
+        "200":
+          description: 证据绑定列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingEvidenceList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [findings, evidence]
+      summary: 绑定证据到发现
+      description: |
+        快照必须存在、同租户且属于发现所在任务（否则 400）；重复绑定返回 409。
+        成功返回 201 与绑定视图。
+      operationId: addFindingEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingEvidenceRequest"
+      responses:
+        "201":
+          description: 已绑定
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingEvidenceLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/findings/{id}/evidence/{snapshot_id}:
+    parameters:
+      - $ref: "#/components/parameters/FindingID"
+      - $ref: "#/components/parameters/SnapshotID"
+    delete:
+      tags: [findings, evidence]
+      summary: 解除证据绑定
+      description: 解除发现与证据快照的绑定；未绑定返回 404，成功返回 204。
+      operationId: removeFindingEvidence
+      responses:
+        "204":
+          description: 已解除
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/retests:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions, retests]
+      summary: 复测列表
+      description: 按创建时间倒序返回任务的复测；?limit= 缺省 50、上限 200；空列表返回 `[]`。
+      operationId: listRetests
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数上限，缺省 50、上限 200。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: 复测列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetestList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [missions, retests]
+      summary: 发起复测
+      description: |
+        为任务内某条发现发起复测，初始 status=pending；finding 必须存在且属于该任务，
+        否则 404/400。requested_by 缺省为 user。
+      operationId: createRetest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetestCreateRequest"
+      responses:
+        "201":
+          description: 已创建的复测
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Retest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/retests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RetestID"
+    get:
+      tags: [retests]
+      summary: 复测详情
+      operationId: getRetest
+      responses:
+        "200":
+          description: 复测详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Retest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    patch:
+      tags: [retests]
+      summary: 更新复测结果
+      description: |
+        按复测状态机迁移：pending→running、running→passed/failed/error；终态不可再变，
+        非法迁移返回 409。status 缺省非法值返回 400；note 非空时更新说明。
+      operationId: updateRetest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetestPatchRequest"
+      responses:
+        "200":
+          description: 更新后的复测
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Retest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/report:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [missions, report]
+      summary: 生成任务 Markdown 报告
+      description: |
+        只读投影：任务元信息、发现（最多 500）、计划步骤、fact 节点（最多展示 100 条并标注总数）、
+        证据统计（traffic/快照）。任务不存在返回 404。响应固定为 text/markdown; charset=utf-8。
+      operationId: getMissionReport
+      responses:
+        "200":
+          description: Markdown 报告
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1040,6 +1593,74 @@ components:
       description: 资产标签模糊搜索关键字（大小写不敏感）。
       schema:
         type: string
+    MissionScopeID:
+      name: scope_id
+      in: path
+      required: true
+      description: 任务范围条目标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    NodeID:
+      name: id
+      in: path
+      required: true
+      description: 作战图节点标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    GraphKindQuery:
+      name: kind
+      in: query
+      required: false
+      description: 按节点类型过滤；非法取值返回 400。
+      schema:
+        $ref: "#/components/schemas/NodeKind"
+    GraphStateQuery:
+      name: state
+      in: query
+      required: false
+      description: 按节点状态过滤；非法取值返回 400。
+      schema:
+        $ref: "#/components/schemas/NodeState"
+    GraphLimitQuery:
+      name: limit
+      in: query
+      required: false
+      description: 节点返回条数上限，缺省 500，最大 2000；非数字或非正数按缺省处理。
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 2000
+    FindingID:
+      name: id
+      in: path
+      required: true
+      description: 发现标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    RetestID:
+      name: id
+      in: path
+      required: true
+      description: 复测标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    SnapshotID:
+      name: snapshot_id
+      in: path
+      required: true
+      description: 证据快照标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
   responses:
     BadRequest:
       description: 请求参数或请求体非法
@@ -1798,3 +2419,431 @@ components:
               percent:
                 type: number
                 format: double
+
+    MissionScopeKind:
+      type: string
+      description: 任务范围类型；与 mission_scope.kind 的 CHECK 约束一致。
+      enum: [root_domain, subdomain, ip, cidr, url, keyword]
+    MissionScopeEntry:
+      type: object
+      required: [tenant_id, id, mission_id, kind, value, allowed_actions, note, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/MissionScopeKind"
+        value:
+          type: string
+          description: 范围值（域名/IP/CIDR/URL/关键字）。
+        allowed_actions:
+          type: array
+          description: 该范围允许的动作集合；缺省为空数组。
+          items:
+            type: string
+        note:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    MissionScopeList:
+      type: object
+      required: [scope]
+      properties:
+        scope:
+          type: array
+          items:
+            $ref: "#/components/schemas/MissionScopeEntry"
+    MissionScopeCreateRequest:
+      type: object
+      required: [kind, value]
+      properties:
+        kind:
+          $ref: "#/components/schemas/MissionScopeKind"
+        value:
+          type: string
+          description: 范围值，不能为空。
+        note:
+          type: string
+        allowed_actions:
+          type: array
+          description: 可选；该范围允许的动作集合。
+          items:
+            type: string
+    PlanStepStatus:
+      type: string
+      description: 计划步骤状态。
+      enum: [pending, ready, running, done, skipped, failed]
+    PlanStep:
+      type: object
+      required: [tenant_id, id, mission_id, key, title, status, priority, depends_on, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        key:
+          type: string
+          description: 步骤标识（小写字母/数字/_/-，1..64）。
+        title:
+          type: string
+        detail:
+          type: string
+        status:
+          $ref: "#/components/schemas/PlanStepStatus"
+        priority:
+          type: integer
+          description: 步骤优先级（越大越先被规划器考虑）。
+        depends_on:
+          type: array
+          description: 依赖的步骤 key 列表；没有依赖时为空数组。
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PlanStepList:
+      type: object
+      required: [steps]
+      properties:
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanStep"
+    NodeKind:
+      type: string
+      description: 作战图节点类型。
+      enum: [goal, hypothesis, action, fact, finding, hint, digest]
+    NodeState:
+      type: string
+      description: 作战图节点状态（跨类型共享；具体类型允许的状态由领域层规则收敛）。
+      enum: [open, running, done, exhausted, blocked]
+    OperationNode:
+      type: object
+      required: [tenant_id, id, mission_id, kind, state, title, payload, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/NodeKind"
+        state:
+          $ref: "#/components/schemas/NodeState"
+        title:
+          type: string
+        body:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+          description: 节点结构化载荷（工具、参数、证据引用等）。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    OperationEdge:
+      type: object
+      required: [tenant_id, id, mission_id, src_id, dst_id, rel, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        src_id:
+          type: integer
+          format: int64
+          description: 上游节点标识。
+        dst_id:
+          type: integer
+          format: int64
+          description: 下游节点标识。
+        rel:
+          type: string
+          description: 边语义（spawns/derived_from/yields/proves/covers）。
+          enum: [spawns, derived_from, yields, proves, covers]
+        created_at:
+          type: string
+          format: date-time
+    OperationAnchor:
+      type: object
+      required: [tenant_id, node_id, asset_id, role, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        node_id:
+          type: integer
+          format: int64
+        asset_id:
+          type: integer
+          format: int64
+        role:
+          type: string
+          description: 锚点角色（target/touched/tested/evidence）。
+          enum: [target, touched, tested, evidence]
+        created_at:
+          type: string
+          format: date-time
+    GraphView:
+      type: object
+      required: [nodes, edges, anchors]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationEdge"
+        anchors:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperationAnchor"
+    NodeStatePatchRequest:
+      type: object
+      required: [state]
+      properties:
+        state:
+          $ref: "#/components/schemas/NodeState"
+    Severity:
+      type: string
+      description: 发现严重级别。
+      enum: [info, low, medium, high, critical]
+    FindingStatus:
+      type: string
+      description: 发现处置状态；closed 与 false_positive 为终态。
+      enum: [open, confirmed, fixed, retest, closed, false_positive]
+    RetestStatus:
+      type: string
+      description: 复测状态；passed/failed/error 为终态。
+      enum: [pending, running, passed, failed, error]
+    Finding:
+      type: object
+      required: [tenant_id, id, mission_id, title, severity, status, detail, evidence_count, created_at, updated_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        asset_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 关联资产；没有关联时为 null。
+        node_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 关联作战图节点；没有关联时为 null。
+        title:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        status:
+          $ref: "#/components/schemas/FindingStatus"
+        detail:
+          type: string
+        evidence_count:
+          type: integer
+          description: 已绑定的证据快照数量。
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    FindingList:
+      type: object
+      required: [findings]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+    FindingCreateRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          description: 发现标题（必填，去空白后非空）。
+        severity:
+          $ref: "#/components/schemas/Severity"
+        detail:
+          type: string
+        asset_id:
+          type: integer
+          format: int64
+          nullable: true
+        node_id:
+          type: integer
+          format: int64
+          nullable: true
+    FindingUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        detail:
+          type: string
+        asset_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 字段缺省=不变、null=清空资产关联、正整数=设置资产。
+    FindingStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/FindingStatus"
+    FindingEvidence:
+      type: object
+      required: [tenant_id, finding_id, snapshot_id, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        finding_id:
+          type: integer
+          format: int64
+        snapshot_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    FindingEvidenceList:
+      type: object
+      required: [evidence]
+      properties:
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/FindingEvidence"
+    FindingEvidenceRequest:
+      type: object
+      required: [snapshot_id]
+      properties:
+        snapshot_id:
+          type: integer
+          format: int64
+          minimum: 1
+    FindingEvidenceLink:
+      type: object
+      required: [finding_id, snapshot_id]
+      properties:
+        finding_id:
+          type: integer
+          format: int64
+        snapshot_id:
+          type: integer
+          format: int64
+    FindingDetail:
+      allOf:
+        - $ref: "#/components/schemas/Finding"
+        - type: object
+          required: [evidence]
+          properties:
+            evidence:
+              type: array
+              items:
+                $ref: "#/components/schemas/FindingEvidence"
+    Retest:
+      type: object
+      required: [tenant_id, id, mission_id, finding_id, status, note, requested_by, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        finding_id:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/RetestStatus"
+        note:
+          type: string
+        requested_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+    RetestList:
+      type: object
+      required: [retests]
+      properties:
+        retests:
+          type: array
+          items:
+            $ref: "#/components/schemas/Retest"
+    RetestCreateRequest:
+      type: object
+      required: [finding_id]
+      properties:
+        finding_id:
+          type: integer
+          format: int64
+          minimum: 1
+        note:
+          type: string
+        requested_by:
+          type: string
+          description: 缺省为 user。
+    RetestPatchRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/RetestStatus"
+        note:
+          type: string
+          description: 非空时更新复测说明；空字符串表示不修改。

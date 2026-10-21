@@ -4,12 +4,11 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 文档版本 | v1.0 |
+| 文档版本 | v1.1 |
 | 更新日期 | 2026-10-21 |
-| 适用 commit | `bfb2540` + M6.2-B1（本次提交） |
-| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付）+ M6.2-B1（资产/企业/范围/覆盖率） |
-| 路由数量 | 39 条（M0–M6 共 21 条 + M6.2-B1 共 18 条） |
-| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付） |
+| 适用 commit | 本次提交（当前工作区，未提交） |
+| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付）+ M6.2-B1（资产/企业/范围/覆盖率）+ M6.2-B2（范围/计划/图/发现/复测/报告） |
+| 路由数量 | 59 条（M0–M6 共 21 条 + M6.2-B1 共 18 条 + M6.2-B2 共 20 条） |
 | 校验命令 | `make docs-check`（校验本文档覆盖全部 HTTP 路由） |
 | 文档语言 | 中文；标识符、JSON 字段、错误码、环境变量、SQL、路径保留英文 |
 
@@ -155,7 +154,7 @@ cmd/beaconx
 | `internal/logging` | 结构化日志 | `New(Log)`（slog） | `logging.go` |
 | `internal/platform` | 状态目录 | `New`、`Ensure`、`EnsureTenant`、`TenantDir` | `state.go` |
 | `internal/tenant` | 租户上下文 | `ID`、`With`、`From`、`MustFrom`、`DefaultID=1` | `tenant.go` |
-| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go` |
+| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`（59 条）、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产/范围/计划/作战图/节点/发现/复测/报告处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go`、`graph_api.go`、`findings_api.go`、`report_api.go` |
 | `internal/app/runner` | 任务运行时 | `Engine`、`Config`、`Planner`/`Worker` 接口、`IdlePlanner`、`NoopWorker`、`EventSink`；调度/租约/暂停/恢复/取消/删除/恢复对账/预算暂停 | `engine.go` |
 | `internal/app/ai` | LLM 规划与执行 | `Planner.Plan`、`Worker.Execute`、`Worker.SetTools`、`runToolLoop`、`parseObservation`、`Config`、`LLM` 接口 | `ai.go`、`planner.go`、`worker.go` |
 | `internal/app/executor` | 工具调用唯一入口 | `Executor.Execute/ExecuteText`、`beginCapture/finishCapture`、`waitApproval`、`audit`、`Config` | `executor.go` |
@@ -163,7 +162,7 @@ cmd/beaconx
 | `internal/app/events` | 进程内事件总线 | `Event`、`Broker`（`Subscribe/Publish/Subscribers/Close`） | `broker.go` |
 | `internal/app/evidence` | 证据存储 | `Store`（`PutBlob/GetBlob/Seal/Verify`）、`Snapshot`、`BlobRef`、`ErrTampered`、`RedactHeaders/RedactJSON` | `store.go`、`snapshot.go`、`redact.go` |
 | `internal/app/system` | 系统信息/就绪 | `Service`、`Info`、`Readiness`、`Check`、`BuildInfo` | `service.go` |
-| `internal/infra/pg` | PostgreSQL Store | `DB`、`Store`、`Mission`、`Asset`、`Company`、`CompanyScope`、`AssetIdentity`、`Node/Edge/Anchor`、`MissionEvent`、`PlanStep`、`Approval`、`AuditEvent`、`TrafficExchange`、`EvidenceSnapshot`、`Coverage`；B1 的 `ListCompanies/CreateCompany/UpdateCompany/DeleteCompany`、`ListCompanyScope/AddCompanyScope/DeleteCompanyScope`、`SearchAssets/CreateAsset/GetAsset/UpdateAsset/DeleteAsset/ListAssetIdentities`、`AddMissionAssetLink/RemoveMissionAssetLink` | `pg.go`、`models.go`、`store*.go`、`store_asset_api.go`、`mission_runtime.go`、`plan_store.go`、`policy_store.go`、`evidence_store.go` |
+| `internal/infra/pg` | PostgreSQL Store | `DB`、`Store`、`Mission`、`Asset`、`Company`、`CompanyScope`、`AssetIdentity`、`Node/Edge/Anchor`、`MissionEvent`、`PlanStep`、`Approval`、`AuditEvent`、`TrafficExchange`、`EvidenceSnapshot`、`Coverage`、`Finding`、`FindingEvidence`、`Retest`；B1 的企业/资产/任务资产 CRUD；B2 的 `ListMissionScopeEntries/DeleteMissionScope`、`ListFindings/CreateFinding/GetFinding/UpdateFinding/TransitionFinding`、`AddFindingEvidence/RemoveFindingEvidence/ListFindingEvidence`、`CreateRetest/GetRetest/ListRetests/UpdateRetestStatus`、`MissionEvidenceStats` | `pg.go`、`models.go`、`store*.go`、`store_asset_api.go`、`store_scope_api.go`、`store_finding.go`、`mission_runtime.go`、`plan_store.go`、`policy_store.go`、`evidence_store.go` |
 | `internal/infra/llm` | OpenAI 兼容客户端与路由 | `Client`、`Router`、`Profile`、`Message/ToolDef/ToolCall`、`APIError`、`ErrorKind`、`ClassifyError`、`RouteError` | `client.go`、`chat.go`、`tools.go`、`router.go`、`errors.go` |
 | `internal/infra/selfupdate` | 自更新 | `Updater`（`Check/Apply/Rollback`）、`Release`、`Config`、`ErrNoUpdate` 等 | `selfupdate.go` |
 | `internal/infra/migrate` | 迁移执行 | `Load/Apply/Latest`、`Migration`、`Result` | `migrate.go` |
@@ -172,6 +171,7 @@ cmd/beaconx
 | `internal/domain/policy` | 执行期策略 | `Rule/Action(allow/ask/deny)/Risk(low/medium/high)`、`Evaluate`、`ActiveRules`、`SeedDefaults` | `rule.go`、`evaluate.go`、`defaults.go`、`action.go` |
 | `internal/domain/graph` | 作战图枚举 | `NodeKind`（7）、`NodeState`（5）、`EdgeRel`（5）、`AnchorRole`（4）、`ValidateNode/Edge/Anchor`、`ErrNotFound` | `graph.go` |
 | `internal/domain/asset` | 资产身份归一化 | `Kind`（6）、`Identity`、`Normalize`、`NormalizeDomain/IP/CIDR/Service/URL` | `asset.go` |
+| `internal/domain/finding` | 发现/复测领域模型 | `Severity`（5）、`Status`（6）、`RetestStatus`（5）、`ValidateTransition`、`ValidateRetestTransition`、`Terminal()`、错误 `ErrInvalidStatus/ErrIllegalTransition/ErrTerminalStatus/ErrInvalidRetestStatus/ErrIllegalRetestTransition/ErrRetestTerminal` | `finding.go`、`retest.go` |
 | `internal/webui` | 前端托管 | `Handler()`：静态文件、`index.html` 回退、`/api/` JSON 404 | `webui.go` |
 | `web/` | 前端源码 | `src/app/page.tsx`、`components/*`、`lib/api.ts`/`types.ts`/`format.ts`/`hooks.ts` | 见 §8 |
 
@@ -208,7 +208,7 @@ HTTP 请求
 
 ## 4. 数据模型全表
 
-迁移文件 `migrations/0001_init.sql` – `0006_evidence.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
+迁移文件 `migrations/0001_init.sql` – `0007_findings.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
 
 ### 4.1 迁移清单
 
@@ -220,6 +220,7 @@ HTTP 请求
 | `0004_planning` | 计划步骤/依赖/LLM 用量 + 任务预算列 | 3 表 + ALTER |
 | `0005_policy` | 策略规则/审批/审计 | 3 表 |
 | `0006_evidence` | 流量采集（两阶段）/证据快照 | 2 表 |
+| `0007_findings` | 发现 / 发现证据关联 / 复测 + 索引 + 触发器 | 3 表 |
 
 ### 4.2 表清单与关键约束
 
@@ -243,7 +244,7 @@ HTTP 请求
 | 表 | 关键列 | 约束/索引 | 语义 |
 | --- | --- | --- | --- |
 | `missions` | `name/goal/description`、`status`（queued/running/paused/finalizing/done/failed/cancelled）、`queued`、`queued_at/started_at/finished_at/deadline_at`、`reason`、`max_tokens`、`spent_tokens`、`max_steps`、`steps_used` | PK(tenant_id,id)；FK tenants CASCADE；`idx_missions_queue`（`WHERE queued`）、`idx_missions_status`；updated_at 触发器 | 任务主体；状态词表由 0003 收敛，默认 `queued` |
-| `mission_scope` | `mission_id`、`kind`（root_domain/subdomain/ip/cidr/url/keyword）、`value`、`allowed_actions TEXT[]`、`note` | PK(tenant_id,id)；UNIQUE(tenant_id,mission_id,kind,value)；复合 FK missions CASCADE；索引 `idx_mission_scope_mission` | 任务范围（Store 有 Add/List，**无 API**） |
+| `mission_scope` | `mission_id`、`kind`（root_domain/subdomain/ip/cidr/url/keyword）、`value`、`allowed_actions TEXT[]`、`note` | PK(tenant_id,id)；UNIQUE(tenant_id,mission_id,kind,value)；复合 FK missions CASCADE；索引 `idx_mission_scope_mission` | 任务授权边界（B2 已暴露 API，见 §5 #37–#39） |
 | `mission_asset_links` | `mission_id`、`asset_id`、`source`（scope/discovered/manual） | PK(tenant_id,mission_id,asset_id)；FK missions/assets CASCADE；索引 `idx_mission_assets_asset` | 任务资产登记；覆盖度分母主来源（B1 已暴露 API，见 §5 #33–#35） |
 
 #### 作战图（Operation Graph）
@@ -259,7 +260,7 @@ HTTP 请求
 | 表 | 关键列 | 约束/索引 | 语义 |
 | --- | --- | --- | --- |
 | `mission_events` | `mission_id`、`type`、`actor`(system)、`reason`、`payload JSONB`、`created_at` | PK(tenant_id,id)；FK missions CASCADE；索引 `idx_mission_events_stream(tenant_id,mission_id,id)` | 只追加事件流；SSE 回放与状态追溯来源 |
-| `plan_steps` | `mission_id`、`key`（正则 `^[a-z0-9_-]{1,64}$`）、`title/detail`、`status`（pending/ready/running/done/skipped/failed）、`priority` | PK(tenant_id,id)；UNIQUE(tenant_id,mission_id,key)；UNIQUE(tenant_id,id)；FK missions CASCADE；索引 `idx_plan_steps_mission` | 跨规划轮次保留的长期计划（Store 有 List，**无 API**） |
+| `plan_steps` | `mission_id`、`key`（正则 `^[a-z0-9_-]{1,64}$`）、`title/detail`、`status`（pending/ready/running/done/skipped/failed）、`priority` | PK(tenant_id,id)；UNIQUE(tenant_id,mission_id,key)；UNIQUE(tenant_id,id)；FK missions CASCADE；索引 `idx_plan_steps_mission` | 跨规划轮次保留的长期计划（B2 已暴露只读 API，见 §5 #40） |
 | `step_dependencies` | `step_id`、`depends_on_step_id` | PK(tenant_id,step_id,depends_on_step_id)；`CHECK(step_id<>depends_on_step_id)`；FK plan_steps CASCADE | 步骤依赖；只有 done 满足依赖 |
 | `llm_usage` | `mission_id`（可空）、`role`、`model`、`prompt/completion/total_tokens`、`created_at` | PK(tenant_id,id)；FK missions/tenants CASCADE；索引 `idx_llm_usage_mission` | 逐次调用台账（Store 有 Record，**无查询 API**） |
 
@@ -278,13 +279,22 @@ HTTP 请求
 | `traffic_exchanges` | `mission_id`、`node_id`（可空）、`tool`、`phase`（intent/result）、`request_hash/size`、`response_hash/size`、`status_code`、`error`、`redaction`、`completed_at` | PK(tenant_id,id)；FK missions/tenants CASCADE；索引 `idx_traffic_exchanges_mission` | 一次工具调用一行，先 intent 后 result；崩溃留 intent |
 | `evidence_snapshots` | `mission_id`、`tool`、`request_hash/size`、`response_hash/size`、`signature`、`redaction`、`created_at` | PK(tenant_id,id)；FK missions/tenants CASCADE；索引 `idx_evidence_snapshots_mission` | 冻结证据；正文在加密 blob，DB 只存引用与签名 |
 
+#### 发现、发现证据与复测（0007）
+
+| 表 | 关键列 | 约束/索引 | 语义 |
+| --- | --- | --- | --- |
+| `findings` | `mission_id`、`asset_id`（可空）、`node_id`（可空）、`title`、`severity`（info/low/medium/high/critical）、`status`（open/confirmed/fixed/retest/closed/false_positive）、`detail`、`created_at`、`updated_at` | PK(tenant_id,id)；FK missions/tenants CASCADE；索引 `idx_findings_mission`、部分索引 `idx_findings_asset`（`WHERE asset_id IS NOT NULL`）；`trg_findings_updated_at` | 发现生命周期；资产/节点**不建复合 FK**（删除时不能 SET NULL 置空 tenant_id），写入时应用层校验；B2 已暴露 API |
+| `finding_evidence` | `finding_id`、`snapshot_id`、`created_at` | PK(tenant_id,finding_id,snapshot_id)；复合 FK findings/evidence_snapshots CASCADE；索引 `idx_finding_evidence_snapshot` | 发现 ↔ 证据快照多对多；重复绑定 409；快照删除级联解除绑定 |
+| `retests` | `mission_id`、`finding_id`、`status`（pending/running/passed/failed/error）、`note`、`requested_by`、`started_at`、`finished_at`、`created_at` | PK(tenant_id,id)；FK missions/findings/tenants CASCADE；索引 `idx_retests_mission` | 一次复测请求一行；状态迁移维护 started_at/finished_at；B2 已暴露 API |
+
 ### 4.3 关系与语义
 
 - **租户**：`tenants` 是唯一根；`companies`、`assets`、`missions`、`plan_steps` 等都以 `tenant_id` 关联并级联删除。
 - **双图**：资产图（`companies`/`company_scope`/`assets`/`asset_identity`）跨任务共享；作战图（`operation_nodes`/`operation_edges`/`operation_anchors`）每任务私有；两图只通过 `operation_anchors.asset_id` 相连。
 - **任务资产**：`mission_asset_links` 是任务与资产的关系表；`mission_scope` 是授权边界；覆盖度：分母 = links ∪ target 锚点，分子 = fact 节点 tested 锚点。
-- **任务执行**：`missions` 1–N `mission_events`/`plan_steps`/`approvals`/`audit_events`/`traffic_exchanges`/`evidence_snapshots`；`operation_nodes` 1–N `operation_edges`（src/dst）与 `operation_anchors`。
-- **证据链**：`traffic_exchanges`（采集）→ 冻结 → `evidence_snapshots`（签名 + 引用）。
+- **任务执行**：`missions` 1–N `mission_events`/`plan_steps`/`approvals`/`audit_events`/`traffic_exchanges`/`evidence_snapshots`/`findings`/`retests`；`operation_nodes` 1–N `operation_edges`（src/dst）与 `operation_anchors`。
+- **证据链**：`traffic_exchanges`（采集）→ 冻结 → `evidence_snapshots`（签名 + 引用）→ `finding_evidence`（发现绑定证据）→ `findings`。
+- **发现/复测**：`findings` 可选关联 `assets`/`operation_nodes`（应用层校验，无 FK）；`retests` 必须属于同一任务内的某条发现；`finding_evidence` 只存快照引用，正文仍在加密 blob。
 
 ### 4.4 状态/枚举字段与 CHECK
 
@@ -304,14 +314,17 @@ HTTP 请求
 | `assets.type` / `asset_identity.kind` | root_domain / subdomain / ip / service / app / endpoint | 资产类型（注意没有 cidr） |
 | `company_scope.kind` | root_domain / subdomain / ip / cidr / url / keyword / icp | 公司范围（有 icp） |
 | `mission_scope.kind` | root_domain / subdomain / ip / cidr / url / keyword | 任务范围（无 icp） |
+| `findings.severity` | info / low / medium / high / critical | 发现严重级别 |
+| `findings.status` | open / confirmed / fixed / retest / closed / false_positive | 发现状态机（§6.10） |
+| `retests.status` | pending / running / passed / failed / error | 复测状态机（§6.10） |
 
 ### 4.5 触发器与索引汇总
 
-- `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes` 五张表（0002 创建）。
-- 索引共 20 个（见各表行）：资产类型/父级、公司范围、任务范围、任务资产、节点三索引（含租约领取部分索引）、边、锚点、任务队列/状态、事件流、计划、LLM 用量、策略查询、待审批、审计、流量、证据。
-- 查询路径约定：所有查询带 `tenant_id`；列表默认按 `id DESC`；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
+- `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings` 六张表（0002/0007 创建）。
+- 索引共 24 个（见各表行）：B1 的 20 个 + 0007 的 `idx_findings_mission`/`idx_findings_asset`/`idx_finding_evidence_snapshot`/`idx_retests_mission`。
+- 查询路径约定：所有查询带 `tenant_id`；任务/审批/流量/审计/发现/复测按 `id` 或 `created_at DESC`；B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
 
-## 5. API 全表（当前 39 条）
+## 5. API 全表（当前 59 条）
 
 ### 5.1 通用约定
 
@@ -325,12 +338,12 @@ HTTP 请求
 | 超时 | 全局 `server.request_timeout`（默认 30s）；超时且未写响应头 → 504 `timeout`；SSE 长连接同样受该超时约束（到期服务端结束流，EventSource 自动重连） |
 | 租户 | 单租户 v1；`StaticTenant(DefaultID)` 注入上下文，所有查询带 `tenant_id` |
 | 请求 ID | `X-Request-ID` 透传或生成，响应头回传并写入错误信封 |
-| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`q`/`type` 过滤）；任务/审批/流量/审计按 `id DESC`，B1 企业/资产/范围/任务资产列表按 `id` 升序；`limit` 超上限时回退默认值（见各接口） |
+| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`severity`/`q`/`type` 过滤）；任务/审批/流量/审计按 `id DESC`，发现/复测按 `created_at DESC, id DESC`，B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；`limit` 超上限时回退默认值（见各接口） |
 | 内容类型 | 请求/响应 `application/json`（SSE 为 `text/event-stream`） |
 | 幂等 | 创建任务非幂等；审批决策用 CAS（仅 pending）；删除任务 204 且重复删除 404；B1 资产按身份键 upsert、任务资产重复登记 409 |
 | 方法/路径不匹配 | 路径存在但方法不支持 → 405 `method_not_allowed` + `Allow` 头；路径完全不存在 → JSON 404 `not_found` |
 
-### 5.2 路由总表（当前 39 条）
+### 5.2 路由总表（当前 59 条）
 
 | # | 方法 | 路径 | 鉴权 | 处理函数（文件） | 请求 | 成功响应 | 主要错误 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -370,9 +383,29 @@ HTTP 请求
 | 34 | POST | `/api/v1/missions/{id}/assets` | Bearer | `handleAddMissionAsset` | `{asset_id*,source?}`（manual/discovered/scope） | 201 + `{mission_id,asset_id,source}` | 400/401/404/409 |
 | 35 | DELETE | `/api/v1/missions/{id}/assets/{asset_id}` | Bearer | `handleRemoveMissionAsset` | — | 204 | 400/401/404 |
 | 36 | GET | `/api/v1/missions/{id}/coverage` | Bearer | `handleMissionCoverage` | — | `Coverage`（空任务全零、`by_type:[]`） | 400/401/404 |
-| 37 | GET | `/api/v1/system/update/check` | Bearer | `handleUpdateCheck`（`update.go`） | — | `{"has_update":bool,"release":ReleaseInfo}` | 401/502/503 |
-| 38 | POST | `/api/v1/system/update/apply` | Bearer | `handleUpdateApply` | 空 body | `{"updated":bool,"version":"…","message":"…"}` | 401/409/502/503 |
-| 39 | POST | `/api/v1/system/update/rollback` | Bearer | `handleUpdateRollback` | 空 body | `{"rolled_back":true,"message":"…"}` | 401/409/503 |
+| 37 | GET | `/api/v1/missions/{id}/scope` | Bearer | `handleListMissionScope`（`graph_api.go`） | — | `{"scope":[MissionScopeEntry]}`（id 升序） | 400/401/404/503 |
+| 38 | POST | `/api/v1/missions/{id}/scope` | Bearer | `handleAddMissionScope` | `{kind*,value*,note?,allowed_actions?}` | 201 + `MissionScopeEntry` | 400/401/404/409/503 |
+| 39 | DELETE | `/api/v1/missions/{id}/scope/{scope_id}` | Bearer | `handleDeleteMissionScope` | — | 204 | 400/401/404/503 |
+| 40 | GET | `/api/v1/missions/{id}/plan` | Bearer | `handleMissionPlan` | — | `{"steps":[PlanStep]}`（空 `[]`） | 400/401/404/503 |
+| 41 | GET | `/api/v1/missions/{id}/graph` | Bearer | `handleMissionGraph` | `?kind=&state=&limit=`（默认 500/上限 2000） | `{"nodes":[OperationNode],"edges":[OperationEdge],"anchors":[OperationAnchor]}` | 400/401/404/503 |
+| 42 | GET | `/api/v1/nodes/{id}` | Bearer | `handleNodeGet` | — | `OperationNode` | 400/401/404/503 |
+| 43 | PATCH | `/api/v1/nodes/{id}/state` | Bearer | `handleNodePatchState` | `{state*}` | 200 + `OperationNode` | 400/401/404/503 |
+| 44 | GET | `/api/v1/missions/{id}/findings` | Bearer | `handleListFindings`（`findings_api.go`） | `?severity=&status=&limit=` | `{"findings":[Finding]}`（创建时间倒序） | 400/401/404/503 |
+| 45 | POST | `/api/v1/missions/{id}/findings` | Bearer | `handleCreateFinding` | `{title*,severity?,detail?,asset_id?,node_id?}` | 201 + `Finding`（初始 open） | 400/401/404/503 |
+| 46 | GET | `/api/v1/findings/{id}` | Bearer | `handleGetFinding` | — | `FindingDetail`（Finding 平铺 + `evidence:[]`） | 400/401/404/503 |
+| 47 | PATCH | `/api/v1/findings/{id}` | Bearer | `handleUpdateFinding` | `{title?,severity?,detail?,asset_id?}`（asset_id 三态） | 200 + `Finding` | 400/401/404/503 |
+| 48 | POST | `/api/v1/findings/{id}/status` | Bearer | `handleTransitionFinding` | `{status*}` | 200 + `Finding` | 400/401/404/409/503 |
+| 49 | GET | `/api/v1/findings/{id}/evidence` | Bearer | `handleListFindingEvidence` | — | `{"evidence":[FindingEvidence]}` | 400/401/404/503 |
+| 50 | POST | `/api/v1/findings/{id}/evidence` | Bearer | `handleAddFindingEvidence` | `{snapshot_id*}` | 201 + `{finding_id,snapshot_id}` | 400/401/404/409/503 |
+| 51 | DELETE | `/api/v1/findings/{id}/evidence/{snapshot_id}` | Bearer | `handleRemoveFindingEvidence` | — | 204 | 400/401/404/503 |
+| 52 | GET | `/api/v1/missions/{id}/retests` | Bearer | `handleListRetests` | `?limit=` | `{"retests":[Retest]}`（创建时间倒序） | 400/401/404/503 |
+| 53 | POST | `/api/v1/missions/{id}/retests` | Bearer | `handleCreateRetest` | `{finding_id*,note?,requested_by?}` | 201 + `Retest`（初始 pending） | 400/401/404/503 |
+| 54 | GET | `/api/v1/retests/{id}` | Bearer | `handleGetRetest` | — | `Retest` | 400/401/404/503 |
+| 55 | PATCH | `/api/v1/retests/{id}` | Bearer | `handlePatchRetest` | `{status*,note?}` | 200 + `Retest` | 400/401/404/409/503 |
+| 56 | GET | `/api/v1/missions/{id}/report` | Bearer | `handleMissionReport`（`report_api.go`） | — | `text/markdown; charset=utf-8`（Markdown 文本） | 400/401/404/503 |
+| 57 | GET | `/api/v1/system/update/check` | Bearer | `handleUpdateCheck`（`update.go`） | — | `{"has_update":bool,"release":ReleaseInfo}` | 401/502/503 |
+| 58 | POST | `/api/v1/system/update/apply` | Bearer | `handleUpdateApply` | 空 body | `{"updated":bool,"version":"…","message":"…"}` | 401/409/502/503 |
+| 59 | POST | `/api/v1/system/update/rollback` | Bearer | `handleUpdateRollback` | 空 body | `{"rolled_back":true,"message":"…"}` | 401/409/503 |
 
 > 前端页面 `/` 与 `/_next/*` 由 `internal/webui.Handler` 提供（公开，不经过 `Routes()`）；`/api/` 下未匹配路径由 WebUI 返回 JSON 404。
 
@@ -426,7 +459,25 @@ HTTP 请求
 - 任务资产：`GET /missions/{id}/assets` 先校验任务存在（404）；POST body `{asset_id,source}`，`source` 缺省 manual、白名单 `scope/discovered/manual`，任务不存在 404、资产不存在 400、重复登记 409；DELETE 未登记 404；`GET /missions/{id}/coverage` 任务不存在 404，空任务返回 `{total:0,tested:0,percent:0,by_type:[]}`。
 - 方法/路径兜底：路径存在但方法不支持 → 405 `method_not_allowed` + `Allow`；路径不存在 → JSON 404 `not_found`；Store 未装配 → 503 `store_unavailable`。
 
-**自更新**（#37–#39）
+**任务范围/计划/作战图/节点**（#37–#43，M6.2-B2a；实现见 `graph_api.go`、`store_scope_api.go`）
+
+- 任务范围：列表按 id 升序；POST body `{kind,value,note?,allowed_actions?}`，kind 白名单 6 种（root_domain/subdomain/ip/cidr/url/keyword），value 必填；重复 `(kind,value)` 409——实现是「先查后写 + 唯一键兜底」，并发窗口内仍可能由唯一键拒绝；成功 201 返回**条目对象**（含 id）；DELETE 未找到 404。
+- 计划：`{"steps":[PlanStep]}`，空任务返回 `[]`；字段 key/title/detail/status/priority/depends_on。
+- 作战图：一次返回 `{nodes,edges,anchors}`，空数组不是 null；`?kind=`/`?state=` 非法取值 400（不静默忽略）；`?limit=` 缺省 **500**、上限 **2000**，但 `pg.Store.ListNodes` 内部最大 **1000**——有过滤或 limit>1000 时实际先取 1000 条再在内存过滤/截断，因此超大数据集需要分页时结果可能不完整（已知限制）；边最多取 5000 条、锚点全量。
+- 节点：`GET /nodes/{id}` 含 payload；`PATCH /nodes/{id}/state` 的 state 必须是 5 种之一，节点类型规则由 `graph.ValidateNode`（经 `SetNodeState`）校验，非法 400；节点不存在 404。
+- 以上接口任务不存在均 404（`requireMission` 先确认），Store 未装配 503 `store_unavailable`。
+
+**发现/发现证据/复测/报告**（#44–#56，M6.2-B2b；实现见 `findings_api.go`、`report_api.go`、`store_finding.go`、`domain/finding`）
+
+- 发现列表：`?severity=`/`?status=` 非法取值 400；`?limit=` 缺省 50、上限 200；按 `created_at DESC, id DESC`；空 `[]`。
+- 创建发现：title 必填（去空白），severity 缺省 `info`；asset_id/node_id 可选，资产需存在且同租户、节点需存在且属于同一任务，否则 400；初始 status=`open`，201。
+- 详情：Finding 字段平铺 + `evidence:[]`；PATCH 支持 title/severity/detail/asset_id，asset_id 三态（缺省不变 / null 清空 / 数字设置），资产不存在 400。
+- 状态流转：`POST /findings/{id}/status` body `{status}`；status 非法 400，非法迁移（含同状态、终态）409；成功返回更新后的 Finding。
+- 发现证据：列表按绑定时间、快照 id 升序；绑定 body `{snapshot_id}`，快照必须存在且属于发现所在任务（否则 400），重复绑定 409，201 返回 `{finding_id,snapshot_id}`；解绑未绑定时 404，成功 204。
+- 复测：列表按 `created_at DESC, id DESC`，limit 50/200；创建 body `{finding_id,note?,requested_by?}`，finding 必须存在且属于路径任务（否则 404/400），初始 `pending`，requested_by 缺省 `user`，201；详情 200；PATCH `{status,note?}`，status 非法 400、非法迁移 409，进入 running 时写 started_at、进入终态写 finished_at，note 非空才更新。
+- 报告：`text/markdown; charset=utf-8`，只读投影，不调模型；包含任务信息、发现（最多 500）、计划步骤、fact 节点（最多展示 100 条并注明总数）、证据统计；空段落显式输出“无：…”。任务不存在 404。
+
+**自更新**（#57–#59）
 
 - `check`：调用 GitHub latest release API，比较版本，返回本平台资产与 SHA256SUMS 信息；未装配 Updater → 503 `update_unavailable`；禁用/网络失败 → 502 `update_check_failed`。
 - `apply`：检查→下载→校验和→`--version` 冒烟→备份 `.old`→替换；成功/无更新均 200；失败 409 `update_failed`；替换后需重启。
@@ -436,11 +487,11 @@ HTTP 请求
 
 | HTTP | code | 场景 |
 | --- | --- | --- |
-| 400 | `bad_request` | 请求体非法、任务/审批/证据/采集 id 非法、名称为空；资产类型/身份键/父资产非法、范围 kind/source 非法、任务资产引用预检失败 |
+| 400 | `bad_request` | 请求体非法、任务/审批/证据/采集/发现/复测 id 非法、名称为空；资产类型/身份键/父资产非法、范围 kind/source 非法、任务资产引用预检失败；图的 kind/state 非法、节点状态非法、发现 severity/status 或资产/节点引用非法 |
 | 401 | `unauthorized` | 缺少/错误令牌 |
-| 404 | `not_found` | 任务/审批/采集/证据/企业/资产/企业范围条目/任务资产关联不存在；WebUI 下未知 `/api/` 路径 |
+| 404 | `not_found` | 任务/审批/采集/证据/企业/资产/企业范围条目/任务资产关联/任务范围条目/节点/发现/复测/证据绑定不存在；WebUI 下未知 `/api/` 路径 |
 | 405 | `method_not_allowed` | 路径存在但请求方法不在路由表（响应带 `Allow` 头） |
-| 409 | `conflict` | 当前状态不允许该操作（暂停/恢复/取消）；采集未完成冻结证据；审批已处理；企业 slug/范围条目/资产身份键/任务资产重复 |
+| 409 | `conflict` | 当前状态不允许该操作（暂停/恢复/取消）；采集未完成冻结证据；审批已处理；企业 slug/范围条目/资产身份键/任务资产/任务范围重复；发现/复测非法状态迁移、证据重复绑定 |
 | 409 | `tampered` | 证据签名或正文哈希校验失败 |
 | 409 | `update_failed` / `rollback_failed` | 自更新/回滚失败 |
 | 500 | `internal_error` | 未分类服务端错误 |
@@ -449,7 +500,7 @@ HTTP 请求
 | 502 | `update_check_failed` | GitHub API/Release 检查失败、自更新禁用 |
 | 503 | `auth_unavailable` | 未装配认证器（fail closed） |
 | 503 | `runtime_unavailable` | Store/Engine 未装配（任务接口） |
-| 503 | `store_unavailable` | Store 未装配（企业/资产接口） |
+| 503 | `store_unavailable` | Store 未装配（B1/B2 企业与资产域接口） |
 | 503 | `sse_unavailable` | Broker/Store 未装配 |
 | 503 | `evidence_unavailable` | 证据存储未装配 |
 | 503 | `update_unavailable` | Updater 未装配 |
@@ -459,10 +510,10 @@ HTTP 请求
 
 以下 `pg.Store` 方法或数据已实现，但**没有 HTTP API**（详见 §9/§10）：
 
-- 任务范围：`mission_scope` 的 `AddMissionScope/ListMissionScope` 仍无 API（B1 只暴露了企业范围与任务资产，没有暴露任务范围）。
+- 任务范围/计划/作战图：已随 B2a 暴露（§5 #37–#43）；仍无写入节点/边/锚点的 API（`AddNode/AddEdge/AddAnchor` 仅内部使用），图数据由 AI/执行路径写入。
 - 资产细节：身份键只有 `GET /assets/{id}/identities`（只读）；没有独立新增/删除/修改身份键 API；企业 `attrs` 无 PATCH 入口。
-- 作战图：`AddNode/GetNode/SetNodeState/ListNodes`、`AddEdge/ListEdges`、`AddAnchor/ListAnchors`。
-- 计划/用量：`ListPlanSteps/ReadyPlanSteps`、`MissionBudget`、`RecordLLMUsage`（写入侧）、`ListMissionEvents`。
+- 任务事件：除 SSE 外没有分页查询历史事件的 API（`ListMissionEvents` 仅内部使用）。
+- 用量/预算：`MissionBudget`、`RecordLLMUsage`（写入侧）、`llm_usage` 查询、`ReadyPlanSteps`（内部调度）。
 - 策略：`ListPolicyRules`（只读；没有 CRUD API）。
 - 内部维护：`ListQueuedMissions/TransitionMission/SetMissionStatus/ListMissionScope` 等引擎/内部方法。
 
@@ -580,6 +631,38 @@ HTTP 请求
 - **任务资产/来源**：`mission_asset_links.source` 仅 `scope`/`discovered`/`manual`；重复登记 409；登记时任务不存在 404、资产不存在 400。
 - **覆盖度**：分母 = `mission_asset_links` ∪ 角色为 `target` 的锚点；分子 = `kind='fact'` 节点上角色为 `tested` 的锚点；`percent` 为 0–100（分母 0 时为 0），按资产类型汇总后按类型名排序。
 
+### 6.10 发现与复测状态机（M6.2-B2b）
+
+实现：`internal/domain/finding/finding.go`、`retest.go`；Store 在事务内 `SELECT ... FOR UPDATE` 后二次校验，非法迁移包装为 `ErrConflict` → HTTP **409**；status 取值非法 → 400。
+
+**发现状态（6）**：
+
+| 当前 | 允许迁移到 | 说明 |
+| --- | --- | --- |
+| `open` | `confirmed` / `false_positive` / `closed` | 新建发现初始状态 |
+| `confirmed` | `fixed` / `retest` / `closed` | 已确认存在 |
+| `retest` | `confirmed` / `fixed` / `closed` | 等待/正在复测 |
+| `fixed` | `retest` / `closed` | 已修复（可再复测） |
+| `closed` | —（终态） | 已关闭 |
+| `false_positive` | —（终态） | 误报 |
+
+规则：`open → open` 等**同状态不算迁移**（409）；终态任何迁移返回 `ErrTerminalStatus`（409）；未列出的边一律 409。
+
+**复测状态（5）**：
+
+| 当前 | 允许迁移到 | 说明 |
+| --- | --- | --- |
+| `pending` | `running` | 发起复测初始状态 |
+| `running` | `passed` / `failed` / `error` | 进入 running 写 `started_at`，进入终态写 `finished_at` |
+| `passed` / `failed` / `error` | —（终态） | 终态不可再迁移 |
+
+### 6.11 任务范围、计划与作战图规则（M6.2-B2a）
+
+- **任务范围**：kind 六种（`root_domain/subdomain/ip/cidr/url/keyword`，与 `mission_scope.kind` CHECK 一致），`(mission_id,kind,value)` 唯一；HTTP 创建时先查重返回 409，写入用 `AddMissionScope`（幂等 upsert）并由唯一键兜底并发。范围条目包含 `allowed_actions T[]` 与 `note`；当前没有「把范围编译成策略规则」的逻辑。
+- **计划步骤**：只读 API 返回 `key/title/detail/status/priority/depends_on`；状态语义见 §6.4；API 不写步骤（写入由 AI Planner 完成）。
+- **作战图/节点**：`kind` 7 种、`state` 5 种共享；`graph.ValidateNode` 按类型收敛状态：goal 不允许 running/exhausted，fact/finding/hint/digest 不允许 running（知识类节点写入即终态），action/hypothesis 允许全部 5 种；`PATCH /nodes/{id}/state` 非法状态 400，kind 规则不满足 400。
+- **图查询**：只读；`edges` 两端同任务由数据库复合外键保证；节点/边/锚点由 AI/执行路径写入，当前没有写图 API。
+
 ## 7. 运行时机制
 
 ### 7.1 引擎调度与任务执行
@@ -655,6 +738,12 @@ HTTP 请求
 
 `internal/infra/selfupdate`：检查 GitHub latest release → 版本比较（`dev` 视为旧）→ 下载本平台 zip（200MiB）与 SHA256SUMS（4MiB）→ sha256 校验 → 解压出 basename 为 `beaconx`/`beaconx.exe` 的条目 → 状态目录写 `beaconx.new` → `--version` 冒烟（10s）→ 备份当前二进制为 `<binary>.old` → rename 替换 → 写 `selfupdate/update.json`（version/installed_at，0600）。失败不改当前文件；`Rollback` 用 `.old` 还原；替换/回滚均需重启进程。状态目录为 `state.dir/selfupdate`；容器内通常无写权限，建议关闭自更新。
 
+### 7.9 发现、复测与报告写入路径（M6.2-B2）
+
+- **人工 API 唯一写入**：发现由 `POST /missions/{id}/findings` 创建、`PATCH /findings/{id}` 编辑、`POST /findings/{id}/status` 迁移；证据绑定由 `POST /findings/{id}/evidence`（校验快照同任务）；复测由 `POST /missions/{id}/retests` 创建、`PATCH /retests/{id}` 推进。AI 自动写 finding、复测执行器（自动跑验证并回写 passed/failed）**均未实现**。
+- **状态机校验位置**：`internal/domain/finding` 纯函数校验，Store 事务内 `FOR UPDATE` 二次校验后写入；API 把非法迁移映射为 409，不修改其它字段。
+- **报告生成器**：`internal/httpapi/report_api.go` 的 `renderMissionReport` 是只读投影，读取任务、发现（≤500）、计划步骤、fact 节点（≤100 展示，标注总数）与证据统计后拼 Markdown；不调用模型、不写库，结论为“同一数据同一报告（除生成时间）”。导出 PDF/Word 未实现。
+
 ## 8. 前端对接指南
 
 ### 8.1 令牌与请求封装
@@ -696,7 +785,9 @@ HTTP 请求
 | 流量列表 | 5s | 证据列表与任务详情同屏 |
 | 系统探针（healthz/readyz/info） | 10s | 公开接口，无需令牌 |
 | 企业/资产/范围/任务资产/覆盖度 | 10s | B1 新接口；编辑后立即重拉 |
-| 计划步骤/作战图 | 无 | **API 未实现**（B2） |
+| 任务范围/计划/作战图/节点 | 10s | B2a 新接口；图较大时降低频率或按需拉取 |
+| 发现/复测 | 5s | B2b 新接口；状态迁移后立即重拉 |
+| 报告 | 按需 | `GET /missions/{id}/report` 返回 Markdown，点击生成/下载，不轮询 |
 
 ### 8.4 字段字典
 
@@ -707,10 +798,15 @@ HTTP 请求
 | `TrafficExchange` | `tenant_id,id,mission_id,node_id,tool,phase,request_hash,request_size,response_hash,response_size,status_code,error,redaction,created_at,completed_at` | `phase` intent/result；`status_code` 可空；`node_id` 可空；正文不在 JSON 中 |
 | `EvidenceSnapshot` | `tenant_id,id,mission_id,tool,request_hash,request_size,response_hash,response_size,signature,redaction,created_at` | DB 行；正文在加密 blob；`signature` HMAC-SHA256 |
 | `AuditEvent` | `tenant_id,id,mission_id,node_id,tool,action,rule_name,args_digest,outcome,detail,actor,created_at` | `action` allow/ask/deny；`outcome` executed/tool_error/denied_by_rule/rejected_by_user/approval_unavailable；只有参数摘要 |
-| `PlanStep`（无 API） | `tenant_id,id,mission_id,key,title,detail,status,priority,depends_on,created_at,updated_at` | 计划步骤；`depends_on` 为 key 数组；`status` 见 §6.4 |
-| `Node`（无 API） | `tenant_id,id,mission_id,kind,state,title,body,payload,created_at,updated_at` | 作战图节点；`payload` 为对象 |
-| `Edge`（无 API） | `tenant_id,id,mission_id,src_id,dst_id,rel,created_at` | 边两端同任务（DB 复合外键保证） |
-| `Anchor`（无 API） | `tenant_id,node_id,asset_id,role,created_at` | role target/touched/tested/evidence |
+| `PlanStep`（B2 已暴露） | `tenant_id,id,mission_id,key,title,detail,status,priority,depends_on,created_at,updated_at` | `GET /missions/{id}/plan`；`depends_on` 为 key 数组；`status` 见 §6.4 |
+| `Node`（B2 已暴露） | `tenant_id,id,mission_id,kind,state,title,body,payload,created_at,updated_at` | `OperationNode`；`payload` 为对象；kind/state 见 §6.11 |
+| `Edge`（B2 已暴露） | `tenant_id,id,mission_id,src_id,dst_id,rel,created_at` | `OperationEdge`；边两端同任务（DB 复合外键保证） |
+| `Anchor`（B2 已暴露） | `tenant_id,node_id,asset_id,role,created_at` | `OperationAnchor`；role target/touched/tested/evidence |
+| `MissionScopeEntry`（B2 已暴露） | `tenant_id,id,mission_id,kind,value,allowed_actions,note,created_at` | 任务范围；kind 六种；空 `allowed_actions` 返回 `[]` |
+| `GraphView`（B2 已暴露） | `nodes:[OperationNode], edges:[OperationEdge], anchors:[OperationAnchor]` | `GET /missions/{id}/graph`；空数组不是 null |
+| `Finding`（B2 已暴露） | `tenant_id,id,mission_id,asset_id,node_id,title,severity,status,detail,evidence_count,created_at,updated_at` | 详情额外带 `evidence:[]`；asset_id/node_id 可空；severity 见 §6.10 |
+| `FindingEvidence`（B2 已暴露） | `tenant_id,finding_id,snapshot_id,created_at` | 发现 ↔ 证据快照绑定；正文在加密 blob |
+| `Retest`（B2 已暴露） | `tenant_id,id,mission_id,finding_id,status,note,requested_by,created_at,started_at,finished_at` | 状态见 §6.10；started_at/finished_at 可空 |
 | `MissionEvent`（SSE data/回放） | `tenant_id,id,mission_id,type,actor,reason,payload,created_at` | SSE 的 data 为 `events.Event`（id/mission_id/type/payload/created_at），不含 actor/reason |
 | `Company` / `Asset`（B1 已暴露） | Company: `tenant_id,id,name,slug,attrs,created_at,updated_at`；Asset: `tenant_id,id,type,label,parent_id,attrs,identities,created_at,updated_at` | 列表 `?q=&limit=`（id 升序）；Asset 的 `identities` 为 `{kind,key}` 数组；创建带 identities 时 upsert；资产类型见 §4.4 |
 | `CompanyScope` / `AssetIdentity`（B1 已暴露） | CompanyScope: `tenant_id,id,company_id,kind,value,source,created_at`；AssetIdentity: `tenant_id,asset_id,kind,key,created_at` | 企业范围 source manual/import；身份键只读列表，写入只能随创建资产 |
@@ -720,7 +816,7 @@ HTTP 请求
 | `ReleaseInfo` | `version,tag,url,notes,published_at,asset_url,asset_name,checksum_url` | update/check 的 `release` |
 | `UpdateCheckResult` / `UpdateApplyResult` / `RollbackResult` | check: `has_update,release`；apply: `updated,version,message`；rollback: `rolled_back,message` | 自更新接口 |
 
-> 字段字典中标注「无 API」的类型来自 `internal/infra/pg` 结构体，数据可能已入库但当前 HTTP 不返回；B1 已把 `Company`/`Asset`/`CompanyScope`/`AssetIdentity`/`Coverage` 暴露为 API，`PlanStep`/`Node`/`Edge`/`Anchor` 仍未暴露（见 §10 B2）。
+> 字段字典中标注「B1/B2 已暴露」的类型可直接从 HTTP 读取；B2 已把 `PlanStep`/`Node`/`Edge`/`Anchor`/`MissionScopeEntry`/`Finding`/`FindingEvidence`/`Retest` 暴露为 API。图写入、AI 自动 finding、复测执行器仍未实现（见 §10 B2 未包含项）。
 
 ### 8.5 任务可用操作矩阵
 
@@ -735,6 +831,15 @@ HTTP 请求
 - 按钮建议：仅在状态允许时启用，否则禁用并提示；删除始终二次确认。
 - 暂停/恢复/取消成功返回 200 + 最新 Mission；状态不允许返回 409 `conflict`；不存在 404；id 非法 400。
 
+**发现/复测操作矩阵（M6.2-B2b）**：
+
+| 操作 | 允许的前置状态 | 失败 |
+| --- | --- | --- |
+| 发现状态流转 | 仅 §6.10 表中列出的边（open/confirmed/retest/fixed 的内部边） | 终态、同状态、未列出边 → 409；status 非法 → 400 |
+| 发现编辑/绑定证据 | 任意状态（编辑不改状态；重复绑定 409；快照跨任务 → 400） | 发现/快照不存在 → 404/400 |
+| 发起复测 | 任意发现（新复测初始 pending） | finding 不属于任务 → 400；发现不存在 → 404 |
+| 推进复测 | pending→running；running→passed/failed/error | 终态/同状态/跳级 → 409；status 非法 → 400 |
+
 ### 8.6 展示约定
 
 - **状态颜色建议**：queued 灰、running 蓝、paused 琥珀、finalizing 紫、done 绿、failed 红、cancelled 深灰；不要用颜色单独承载信息，配文字标签。
@@ -742,7 +847,7 @@ HTTP 请求
 - **预算**：`spent_tokens/max_tokens`、`steps_used/max_steps` 用进度条；0 显示“不限”。
 - **空状态**：列表空返回 `[]`（不是 null）；页面展示空状态，不用假数据。
 - **错误**：展示后端 `error.message`，附 `code`/`request_id`；401 引导重新输入令牌。
-- **分页**：当前接口只支持 `limit`（默认 50，超上限回退），按 id 倒序；没有 cursor/total，页面可提示“最多显示 N 条”，不要伪造总数。
+- **分页**：当前接口只支持 `limit`（默认 50，超上限回退），没有 cursor/total；任务/审批/流量按 id 倒序，发现/复测按创建时间倒序，任务范围/计划按 id 升序；页面可提示“最多显示 N 条”，不要伪造总数。
 - **长文本**：任务 goal/description、审计 detail、证据摘要需限高/折叠。
 
 ### 8.7 B1 资产/企业对接要点
@@ -754,11 +859,21 @@ HTTP 请求
 - 任务资产：先 `POST /assets`（或复用已有资产）拿到 `asset_id`，再 `POST /missions/{id}/assets {asset_id,source}`；任务不存在 404、资产不存在 400、重复登记 409；`GET /missions/{id}/coverage` 空任务返回全零而非 404。
 - 错误处理：企业/资产接口的 store 未就绪是 503 `store_unavailable`（与任务接口的 `runtime_unavailable` 不同）；路径存在但方法错配为 405 + `Allow`，路径不存在为 404 JSON。
 
+### 8.8 B2 范围/计划/图/发现/复测/报告对接要点
+
+- **任务范围**：列表 `GET /missions/{id}/scope` 按 id 升序；新增 body `{kind,value,note?,allowed_actions?}`，重复 409，201 返回带 id 的条目；删除 204。
+- **计划/图**：`GET /missions/{id}/plan` 返回 `{steps:[]}`；`GET /missions/{id}/graph?kind=&state=&limit=` 返回 `{nodes,edges,anchors}`。图节点 limit 缺省 500/上限 2000，但 ListNodes 内部上限 1000——需要完整图时建议按 kind 分页拉取；kind/state 传非法值会 400（不要依赖后端忽略）。
+- **发现**：列表支持 severity/status 过滤（非法值 400）；创建时 title 必填、severity 缺省 info；PATCH 的 asset_id 三态与资产 parent_id 一致；状态迁移只允许 §6.10 表内边，其它一律 409。
+- **发现证据**：绑定 body `{snapshot_id}`；快照必须属于发现所在任务（否则 400），重复绑定 409；解绑未绑定 404。前端应把「绑定证据」做成从流量/证据列表选择快照，而不是手填 id。
+- **复测**：创建 body `{finding_id,note?,requested_by?}`，finding 必须属于该任务；PATCH 只推进状态（pending→running→终态），note 非空才覆盖；终态 409。
+- **报告**：`GET /missions/{id}/report` 返回 `text/markdown; charset=utf-8`，前端按 Markdown 渲染（或直接下载）；不是 JSON，不要 `response.json()`；报告只读、不落库。
+- **一致性**：发现/复测的 400 是「参数/引用非法」，409 是「状态机拒绝或重复」，遇到 409 应刷新详情后提示，而不是自动重试。
+
 ## 9. 原版 27 页映射与后端缺口
 
 参考产品的页面清单来自 `research/` 下研究资料（gitignored，不随仓库发布）；下表的「原版页面」只是页面职责对照，不代表本仓库包含其代码。
 
-**状况分级**：`A` 已有可用 API（可能部分字段/操作缺失，见缺口列）；`B` 数据/Store 已有，缺 HTTP API；`C` 完全未实现（无数据/无 API）；`D` 需新增领域能力（新表/新模块/新流程）。B1 已把企业/资产/任务资产/覆盖度从 B 提升为 A。
+**状况分级**：`A` 已有可用 API（可能部分字段/操作缺失，见缺口列）；`B` 数据/Store 已有，缺 HTTP API；`C` 完全未实现（无数据/无 API）；`D` 需新增领域能力（新表/新模块/新流程）。B1 已把企业/资产/任务资产/覆盖度从 B 提升为 A；B2 已把任务范围/计划/作战图/节点/发现/复测/报告提升为 A（基础版）。
 
 | # | 原版页面 | 原版职责 | 状况 | 现有 API/数据 | 缺口 | 建议前端页面 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -768,19 +883,19 @@ HTTP 请求
 | 4 | chat | 会话列表 + transcript + @提及 | D | 无会话/消息表 | 会话模型、LLM 对话 API、SSE | 后续 |
 | 5 | dashboard | token 用量、趋势、活动 | B | `llm_usage`/`missions.spent_tokens` 数据已有 | 聚合统计 API | 首页仪表盘（B3） |
 | 6 | tasks | 任务列表/分类/归档/批量/创建 | A/B | 任务 CRUD + 列表 API | 分类/归档/批量（无表） | 任务列表（已实现基础版） |
-| 7 | tasks/detail | 任务头 + 10 Tab 容器 | A/B | 任务详情/事件/审计/流量/证据 API；B1 补齐任务资产/覆盖度 | 计划/作战图/任务范围 API | 任务详情（已实现基础版） |
+| 7 | tasks/detail | 任务头 + 10 Tab 容器 | A | 任务详情/事件/审计/流量/证据；B1 任务资产/覆盖度；B2 范围/计划/图/发现/复测/报告 | 会话 transcript；策略只读/编辑 | 任务详情（B2 已实现基础版） |
 | 8 | tasks/detail/sessions | transcript + 任务 SSE + worker 操作 | C | 仅 `mission_events` | Agent 会话/消息/侧问模型与 API | 后续（需新领域） |
-| 9 | tasks/detail/overview | 目标/约束/范围/拦截/LLM 链 | B | `mission_scope`/`plan_steps`/policy 数据已有；资产/覆盖度已可查 | 任务范围/计划/策略只读+编辑 API | 任务概览（B2/B4） |
-| 10 | tasks/detail/graph | 探索图可视化 | B | `operation_nodes/edges/anchors` 数据已有 | 图查询 API | 作战图（B2） |
-| 11 | tasks/detail/broadcast | 分页播报板 | B/C | 节点数据部分存在 | 专门查询/语义 API | 可并入作战图 |
-| 12 | tasks/detail/findings | 任务发现 | C/D | `operation_nodes.kind=finding` 存在但无写入/查询 | 发现生命周期、severity/status/资产关联 | 发现列表（B2） |
-| 13 | tasks/detail/retests | 复测 | D | 无 | 复测模型/API | 后续（B2） |
+| 9 | tasks/detail/overview | 目标/约束/范围/拦截/LLM 链 | A/B | B2：任务范围/计划 API；B1：资产/覆盖度；policy 数据已有 | 策略只读+编辑 API（B4） | 任务概览（B2 基础版） |
+| 10 | tasks/detail/graph | 探索图可视化 | A | B2：`GET /missions/{id}/graph` + 节点详情/状态 | 图布局/大图分页（ListNodes 1000） | 作战图（B2 已实现） |
+| 11 | tasks/detail/broadcast | 分页播报板 | B/C | 图节点数据可查 | 专门查询/语义 API | 可并入作战图 |
+| 12 | tasks/detail/findings | 任务发现 | A | B2：任务内发现 CRUD/状态/证据绑定 | 跨任务发现列表（独立页） | 发现列表（B2 基础版） |
+| 13 | tasks/detail/retests | 复测 | A | B2：复测 CRUD/状态推进 | 自动复测执行器（未实现） | 复测（B2 基础版） |
 | 14 | tasks/detail/assets | 任务资产 | A | B1：`GET/POST /missions/{id}/assets`、`DELETE .../{asset_id}` | 无（权限/来源筛选可后续补） | 任务资产（B1 已实现） |
-| 15 | tasks/detail/coverage-graph | 覆盖度图 | A | B1：`GET /missions/{id}/coverage`（整体+按类型） | 图布局/节点数据仍需 B2 作战图 API | 覆盖度（B1 已实现） |
+| 15 | tasks/detail/coverage-graph | 覆盖度图 | A | B1：覆盖度 API；B2：作战图 API | 图布局 | 覆盖度（B1/B2 已实现） |
 | 16 | tasks/detail/intercept | 任务内审批 | A | `GET /approvals` + decide | 任务级过滤参数（可前端过滤） | 审批（已有） |
-| 17 | tasks/detail/report | Markdown 报告 | D | 无报告生成 | 报告生成/存储 API | 后续（B2） |
-| 18 | findings | 发现三视图/筛选/导出 | C/D | 无发现专用表 | 发现域 + 列表/编辑 API | 后续（B2） |
-| 19 | findings/detail | 发现详情/攻击链/流量 | D | 无 | 发现详情 + 图/证据关联 | 后续（B2） |
+| 17 | tasks/detail/report | Markdown 报告 | A | B2：`GET /missions/{id}/report`（text/markdown） | PDF/Word 导出（未实现） | 报告（B2 已实现基础版） |
+| 18 | findings | 发现三视图/筛选/导出 | A/B | B2：任务内发现列表/详情/编辑；无跨任务列表 | 跨任务发现列表/导出 API | 发现页（B2 基础版） |
+| 19 | findings/detail | 发现详情/攻击链/流量 | A | B2：发现详情 + 证据绑定；图节点可查 | 攻击链聚合视图（前端组合） | 发现详情（B2 基础版） |
 | 20 | traffic | 抓包列表/详情/删除/清理 | A/B | 流量列表 + 冻结 + 校验 API | 正文读取/删除/按 host 清理 | 流量页（B3） |
 | 21 | commands | 工具执行历史 + 统计 | B | `audit_events` + audit API 已有 | 按工具聚合/分页 API | 工具历史（B3） |
 | 22 | llm-records | LLM 原始记录 + token 聚合 | B | `llm_usage` 数据已有 | 查询/聚合 API | LLM 用量（B3） |
@@ -802,17 +917,17 @@ HTTP 请求
 
 > 表中 #1–#7 与 #18–#37 对应原版 27 个顶层页面；#8–#17 是任务详情页的 10 个 Tab（对照用，不单独计页面）。
 
-**B1 已实现（18 条，§5 #19–#36）**：企业 5 条、企业范围 3 条、资产 6 条、任务资产/覆盖度 4 条。前端可先做「资产/企业/任务资产/覆盖度」页面。
+**B1 已实现（18 条，§5 #19–#36）**：企业 5 条、企业范围 3 条、资产 6 条、任务资产/覆盖度 4 条。**B2 已实现（20 条，§5 #37–#56）**：B2a 任务范围/计划/作战图/节点 7 条；B2b 发现/证据/复测/报告 13 条。前端可先做「资产/企业/任务资产/覆盖度」+「任务详情范围/计划/图/发现/复测/报告」页面。
 
-**仍未暴露的已有数据（B 类）**：任务范围（`mission_scope` 的 List/Add）、作战图（`ListNodes/ListEdges/ListAnchors/GetNode/SetNodeState`）、计划步骤（`ListPlanSteps/ReadyPlanSteps`）、LLM 用量查询（`llm_usage` 写入侧已有）、策略规则（`ListPolicyRules` 只读，无 CRUD）、任务事件历史（除 SSE 外无分页查询 API）。
+**仍未暴露的已有数据（B 类）**：跨任务发现列表/导出、LLM 用量查询（`llm_usage` 写入侧已有）、策略规则（`ListPolicyRules` 只读，无 CRUD）、任务事件历史（除 SSE 外无分页查询 API）、图节点/边/锚点写入、身份键独立增删改。
 
-**完全未实现/需新领域能力（C/D 类）**：用户与登录、Agent 会话/transcript/侧问、发现生命周期、复测、报告生成、任务分类/归档/批量、同步、Workspace、LLM profile 管理、Agent/MCP/Skills 管理、自定义工具、通知、全局资产黑名单、日志流、设置项、GC/搜索自检。
+**完全未实现/需新领域能力（C/D 类）**：用户与登录、Agent 会话/transcript/侧问、AI 自动写 finding、复测执行器、报告 PDF/Word 导出、任务分类/归档/批量、同步、Workspace、LLM profile 管理、Agent/MCP/Skills 管理、自定义工具、通知、全局资产黑名单、日志流、设置项、GC/搜索自检。
 
-**B 方案前端优先级建议**：任务列表/详情/审批/流量/证据（现成）→ 企业/资产/任务资产/覆盖度（**B1 已完成**）→ 作战图+发现+报告+计划/任务范围（B2）→ 流量详情/命令/LLM 记录（B3）→ 策略/日志/通知/设置（B4）→ MCP/Skills/Agents/Workspace/Sync（B5）。
+**B 方案前端优先级建议**：任务列表/详情/审批/流量/证据（现成）→ 企业/资产/任务资产/覆盖度（**B1 已完成**）→ 任务范围/计划/作战图/发现/复测/报告（**B2 已完成**）→ 流量详情/命令/LLM 记录（B3）→ 策略/日志/通知/设置（B4）→ MCP/Skills/Agents/Workspace/Sync（B5）。
 
-## 10. M6.2 后端补齐路线（B1 已实现；B2–B5 草案）
+## 10. M6.2 后端补齐路线（B1/B2 已实现；B3–B5 草案）
 
-> B1 已在工作区实现（代码实际 18 条路由，见 §5 #19–#36）；B2–B5 仍是**未实现的 API 草案**，实际实现时以 OpenAPI 与本文档更新为准。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（默认 50/上限 200，超出回退）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，任务/审批/流量列表按 `id DESC`。
+> B1（18 条）与 B2（20 条）已实现（见 §5 #19–#56）；B3–B5 仍是**未实现的 API 草案**，实际实现时以 OpenAPI 与本文档更新为准。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（默认 50/上限 200，超出回退）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量按 `id DESC`。
 
 ### B1：资产 / 企业 / 范围 / 覆盖率 / 任务资产（已实现 2026-10-21）
 
@@ -825,35 +940,39 @@ HTTP 请求
 | 资产（6） | `GET/POST /api/v1/assets`；`GET/PATCH/DELETE /api/v1/assets/{id}`；`GET /api/v1/assets/{id}/identities` | `internal/httpapi/assets.go` |
 | 任务资产/覆盖度（4） | `GET/POST /api/v1/missions/{id}/assets`；`DELETE /api/v1/missions/{id}/assets/{asset_id}`；`GET /api/v1/missions/{id}/coverage` | `internal/httpapi/assets.go` |
 
-- Store 扩展：`internal/infra/pg/store_asset_api.go`（企业/范围/资产/任务资产 CRUD）；数据表沿用 0002，无需迁移。
+- Store 扩展：`internal/infra/pg/store_asset_api.go`；数据表沿用 0002，无需迁移。
 - 错误语义：400 `bad_request`、404 `not_found`、409 `conflict`、503 `store_unavailable`；路径存在但方法不支持 405 `method_not_allowed` + `Allow`。
 - 测试：`internal/httpapi/assets_integration_test.go`（企业/资产/范围/任务资产/覆盖度集成）。
 
 **B1 未包含（继续列入后续批次）**：
 
-- 任务范围 API（`mission_scope` 的 List/Add/Delete）与计划步骤只读 API（`GET /missions/{id}/plan`）。
 - 身份键独立新增/删除/修改（当前只读 + 随创建写入）；企业 `attrs` 更新（PATCH 仅 name/slug）。
 - 资产列表游标翻页（当前仅 `limit`，无 `after_id`）。
 - 验收（已完成）：18 条路由与 §5 一致、`make docs-check` 覆盖全部路由、企业/资产/覆盖度集成测试通过。
 
-### B2：发现 / 复测 / 报告 / 作战图与计划查询
+### B2：任务范围 / 计划 / 作战图 / 发现 / 复测 / 报告（已实现 2026-10-21，B2a+B2b）
 
-目标：补齐任务详情核心 Tab（图、发现、复测、报告、任务范围/计划）。需要**新迁移**（发现/复测表）与新领域模块。
+已实现 20 条（新增迁移 0007 与 `domain/finding`）：
 
-| 方法/路径 | 用途 | 依赖 |
+| 分类 | 已实现 API | 实现位置 |
 | --- | --- | --- |
-| `GET/POST /api/v1/missions/{id}/scope`；`DELETE /api/v1/missions/{id}/scope/{scope_id}` | 任务范围（B1 未包含） | `mission_scope` + `ListMissionScope/AddMissionScope`（删除需补 Store） |
-| `GET /api/v1/missions/{id}/plan` | 计划步骤只读（key/status/deps，B1 未包含） | `ListPlanSteps` |
-| `GET /api/v1/missions/{id}/graph` | 节点+边+锚点一次性返回（可按 kind/state 过滤） | `operation_nodes/edges/anchors` + `ListNodes/ListEdges/ListAnchors` |
-| `GET /api/v1/nodes/{id}` | 节点详情 | `GetNode` |
-| `PATCH /api/v1/nodes/{id}/state` | 人工推进/阻断节点 | `SetNodeState`（含 kind 规则校验） |
-| `GET /api/v1/missions/{id}/findings`；`POST /api/v1/missions/{id}/findings` | 发现列表/创建 | 新 `findings` 表（mission/asset/severity/status/detail/evidence） |
-| `GET/PATCH /api/v1/findings/{id}` | 发现详情/编辑 | 同上 |
-| `POST /api/v1/findings/{id}/status` | 发现状态流转 | 发现领域状态机（新） |
-| `GET/POST /api/v1/missions/{id}/retests`；`GET/PATCH /api/v1/retests/{id}` | 复测列表/发起/结果 | 新 `retests` 表 + 证据关联 |
-| `GET /api/v1/missions/{id}/report` | 生成/读取 Markdown 报告 | 报告生成器（基于事实/发现/步骤） |
+| 任务范围（3） | `GET/POST /api/v1/missions/{id}/scope`；`DELETE /api/v1/missions/{id}/scope/{scope_id}` | `internal/httpapi/graph_api.go`、`internal/infra/pg/store_scope_api.go` |
+| 计划/图/节点（4） | `GET /missions/{id}/plan`；`GET /missions/{id}/graph`；`GET /nodes/{id}`；`PATCH /nodes/{id}/state` | `internal/httpapi/graph_api.go` |
+| 发现（5） | `GET/POST /missions/{id}/findings`；`GET/PATCH /findings/{id}`；`POST /findings/{id}/status` | `internal/httpapi/findings_api.go`、`internal/infra/pg/store_finding.go` |
+| 发现证据（3） | `GET/POST /findings/{id}/evidence`；`DELETE /findings/{id}/evidence/{snapshot_id}` | `internal/httpapi/findings_api.go` |
+| 复测（4） | `GET/POST /missions/{id}/retests`；`GET/PATCH /retests/{id}` | `internal/httpapi/findings_api.go` |
+| 报告（1） | `GET /missions/{id}/report`（text/markdown） | `internal/httpapi/report_api.go` |
 
-依赖：发现/复测领域模型、evidence 关联、AI 产出 finding 的写入路径（可由 API 人工创建先跑通）。风险：发现语义与证据绑定需先定 schema。
+- 迁移 0007：`findings` / `finding_evidence` / `retests` 三表（见 §4）；领域包 `internal/domain/finding`（Severity、发现/复测状态机）。
+- 状态机：发现 6 状态、复测 5 状态，非法迁移 409（见 §6.10）；报告只读投影（见 §7.9）。
+- 测试：`internal/httpapi/graph_api_test.go`、`findings_api_test.go`、`internal/domain/finding/*_test.go`、`internal/httpapi/assets_integration_test.go` 等。
+
+**B2 未包含（后续批次/前端组合实现）**：
+
+- AI 自动写 finding（当前只有人工 API）；复测执行器（自动复跑验证并回写 passed/failed）未实现。
+- 图可视化数据分页：`ListNodes` 内部上限 1000，大图需要游标/分段 API。
+- 任务范围编译为策略规则、报告导出 PDF/Word、跨任务发现列表/导出。
+- 验收（已完成）：20 条路由与 §5 一致、`make docs-check` 覆盖全部路由、0007 迁移与发现/复测状态机测试通过。
 
 ### B3：流量详情 / 命令历史 / LLM 记录
 
@@ -966,13 +1085,13 @@ HTTP 请求
 
 ## 12. 测试 / CI / 发布
 
-### 12.1 测试分层（19 个测试包）
+### 12.1 测试分层（20 个测试包）
 
 | 层 | 包 | 内容 | 需要 PostgreSQL |
 | --- | --- | --- | --- |
-| 领域（纯函数） | `domain/asset`、`domain/graph`、`domain/task`、`domain/plan`、`domain/policy` | 归一化、枚举/校验、状态机穷举、依赖/环、策略匹配 | 否 |
+| 领域（纯函数） | `domain/asset`、`domain/graph`、`domain/task`、`domain/plan`、`domain/policy`、`domain/finding` | 归一化、枚举/校验、状态机穷举、依赖/环、策略匹配、发现/复测迁移矩阵 | 否 |
 | 配置/平台 | `config`、`platform`、`tenant`（无测试）、`logging`（无测试） | 默认值/环境变量/校验、目录权限 | 否 |
-| HTTP | `httpapi` | 路由/鉴权/健康、任务 API 集成、审批、证据、SSE、B1 企业/资产集成、docs-check | 部分 |
+| HTTP | `httpapi` | 路由/鉴权/健康、任务 API 集成、审批、证据、SSE、B1 企业/资产集成、B2 范围/计划/图/发现/复测/报告、docs-check | 部分 |
 | 存储 | `infra/pg` | 资产 upsert/隔离/覆盖度、性能（`BEACONX_PERF=1`） | 是 |
 | AI/执行 | `app/ai`、`app/executor`、`app/tools`、`app/evidence` | 假 LLM 端到端、工具循环、策略/审批/证据采集、加密/签名/篡改 | 部分是 |
 | 运行时 | `app/runner` | 完成/暂停恢复/恢复对账/删除/并发上限/预算暂停 | 是 |
@@ -1026,7 +1145,8 @@ make docs-check
 | 无浏览器级 e2e、无 URL 路由、无 CORS | 前端交付/多源部署 | §8、M6.1 |
 | 发布包文件名与 selfupdate 解压不匹配；无签名；Windows 自更新未验证 | 自更新可用性/供应链 | §7.8、§12.4 |
 | `beaconx help` 未列新变量；compose 未透传新变量 | 部署一致性 | §11.5 |
-| 无规则 CRUD、发现/复测/报告、资产/图/计划/覆盖度/用量 API | 前端 27 页大部分不可做 | §9、§10 |
+| 无规则 CRUD、流量详情/命令历史/LLM 用量查询、跨任务发现列表 API | 前端剩余页面（B3/B4）不可做 | §9、§10 |
+| AI 自动写 finding、复测执行器、图大集合分页、报告导出 PDF/Word 未实现 | B2 只到“人工 API 基础版” | §7.9、§10 |
 | 纯文本输出未脱敏、MITM/真实流量未实现、证据密钥不支持轮换 | 证据/安全边界 | §6.8、M5.1 |
 | LLM 规划诊断事件（planner_*）前端未登记 | 前端看不到诊断事件 | §8.2 |
 
@@ -1039,6 +1159,7 @@ make docs-check
 | HTTP API（新增/修改/删除） | 本文档 §5/§8 + `api/openapi.yaml` + README 接口表 |
 | 数据表/迁移 | 本文档 §4/§6 + `docs/data-model.md` |
 | 状态机/事件 | 本文档 §6/§7/§8 操作矩阵 + 前端 `STREAM_EVENT_TYPES` |
+| 发现/复测领域 | 本文档 §4/§6/§7/§8/§10 + `docs/data-model.md` + `internal/domain/finding` 测试 |
 | 配置项 | 本文档 §11 + `docs/configuration.md` + `config.example.json` + `.env.example` |
 | 运行时机制 | 本文档 §7 + `docs/runtime.md`/`docs/ai.md`/`docs/release.md` |
 | 前端字段/接口 | 本文档 §8 + `docs/web.md` |
@@ -1067,4 +1188,5 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 日期 | commit | 变更点 | 影响章节 |
 | --- | --- | --- | --- |
 | 2026-10-21 | `bfb2540` | 创建文档，记录 M0–M6 现状（初始 21 条路由；后端 + 前端 + 交付） | 全部 |
-| 2026-10-21 | 本次提交 | 实现 M6.2-B1：企业/资产/范围/覆盖率/任务资产 API（代码实际 18 条，总路由 39 条；已按代码口径统一） | §1、§3、§5、§6、§8、§9、§10、§14 |
+| 2026-10-21 | 提交 38aaeb4（M6.2-B1） | 实现 M6.2-B1：企业/资产/范围/覆盖率/任务资产 API（18 条，总路由 39 条） | §1、§3、§5、§6、§8、§9、§10、§14 |
+| 2026-10-21 | 本次提交 | 实现 M6.2-B2：B2a 任务范围/计划/作战图/节点 7 条 + B2b 发现/证据/复测/报告 13 条（共 20 条，总路由 39→59）；新增迁移 0007 三表与 `internal/domain/finding` 状态机 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |

@@ -127,9 +127,30 @@ func Routes() []Route {
 		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/assets", Summary: "把资产登记到任务"},
 		{Method: http.MethodDelete, Pattern: "/api/v1/missions/{id}/assets/{asset_id}", Summary: "解除任务资产关联"},
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/coverage", Summary: "任务资产覆盖度"},
+		// M6.2-B2：任务范围、计划、作战图与节点。
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/scope", Summary: "任务范围列表"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/scope", Summary: "新增任务范围"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/missions/{id}/scope/{scope_id}", Summary: "删除任务范围"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/plan", Summary: "任务计划步骤"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/graph", Summary: "任务作战图（节点/边/锚点，支持 ?kind=&state=&limit=）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/nodes/{id}", Summary: "作战图节点详情"},
+		{Method: http.MethodPatch, Pattern: "/api/v1/nodes/{id}/state", Summary: "更新作战图节点状态"},
 		{Method: http.MethodGet, Pattern: "/api/v1/system/update/check", Summary: "检查新版本"},
 		{Method: http.MethodPost, Pattern: "/api/v1/system/update/apply", Summary: "下载并安装新版本"},
 		{Method: http.MethodPost, Pattern: "/api/v1/system/update/rollback", Summary: "回滚到上一版本"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/findings", Summary: "发现列表"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/findings", Summary: "创建发现"},
+		{Method: http.MethodGet, Pattern: "/api/v1/findings/{id}", Summary: "发现详情"},
+		{Method: http.MethodPatch, Pattern: "/api/v1/findings/{id}", Summary: "更新发现"},
+		{Method: http.MethodPost, Pattern: "/api/v1/findings/{id}/status", Summary: "发现状态流转"},
+		{Method: http.MethodGet, Pattern: "/api/v1/findings/{id}/evidence", Summary: "发现关联证据"},
+		{Method: http.MethodPost, Pattern: "/api/v1/findings/{id}/evidence", Summary: "绑定证据到发现"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/findings/{id}/evidence/{snapshot_id}", Summary: "解除证据绑定"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/retests", Summary: "复测列表"},
+		{Method: http.MethodPost, Pattern: "/api/v1/missions/{id}/retests", Summary: "发起复测"},
+		{Method: http.MethodGet, Pattern: "/api/v1/retests/{id}", Summary: "复测详情"},
+		{Method: http.MethodPatch, Pattern: "/api/v1/retests/{id}", Summary: "更新复测结果"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/report", Summary: "生成任务 Markdown 报告"},
 	}
 }
 
@@ -288,6 +309,52 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleRemoveMissionAsset, nil
 	case "/api/v1/missions/{id}/coverage":
 		return o.handleMissionCoverage, nil
+	case "/api/v1/missions/{id}/scope":
+		if rt.Method == http.MethodPost {
+			return o.handleAddMissionScope, nil
+		}
+		return o.handleListMissionScope, nil
+	case "/api/v1/missions/{id}/scope/{scope_id}":
+		return o.handleDeleteMissionScope, nil
+	case "/api/v1/missions/{id}/plan":
+		return o.handleMissionPlan, nil
+	case "/api/v1/missions/{id}/graph":
+		return o.handleMissionGraph, nil
+	case "/api/v1/missions/{id}/findings":
+		if rt.Method == http.MethodPost {
+			return o.handleCreateFinding, nil
+		}
+		return o.handleListFindings, nil
+	case "/api/v1/findings/{id}":
+		if rt.Method == http.MethodPatch {
+			return o.handleUpdateFinding, nil
+		}
+		return o.handleGetFinding, nil
+	case "/api/v1/findings/{id}/status":
+		return o.handleTransitionFinding, nil
+	case "/api/v1/findings/{id}/evidence":
+		if rt.Method == http.MethodPost {
+			return o.handleAddFindingEvidence, nil
+		}
+		return o.handleListFindingEvidence, nil
+	case "/api/v1/findings/{id}/evidence/{snapshot_id}":
+		return o.handleRemoveFindingEvidence, nil
+	case "/api/v1/missions/{id}/retests":
+		if rt.Method == http.MethodPost {
+			return o.handleCreateRetest, nil
+		}
+		return o.handleListRetests, nil
+	case "/api/v1/retests/{id}":
+		if rt.Method == http.MethodPatch {
+			return o.handlePatchRetest, nil
+		}
+		return o.handleGetRetest, nil
+	case "/api/v1/missions/{id}/report":
+		return o.handleMissionReport, nil
+	case "/api/v1/nodes/{id}":
+		return o.handleNodeGet, nil
+	case "/api/v1/nodes/{id}/state":
+		return o.handleNodePatchState, nil
 	case "/api/v1/system/update/check":
 		return o.handleUpdateCheck, nil
 	case "/api/v1/system/update/apply":

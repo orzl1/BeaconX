@@ -110,7 +110,7 @@ make docker-build  # 构建含前端的镜像
 
 token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
 
-## HTTP 接口（M6 / M6.2-B1）
+## HTTP 接口（M6.2-B2）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -150,6 +150,26 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | POST | `/api/v1/missions/{id}/assets` | 把资产登记到任务（`{"asset_id","source"?}`，重复 409） |
 | DELETE | `/api/v1/missions/{id}/assets/{asset_id}` | 解除任务资产关联（返回 204） |
 | GET | `/api/v1/missions/{id}/coverage` | 任务资产覆盖度（空任务返回全零，200） |
+| GET | `/api/v1/missions/{id}/scope` | 任务范围列表（按 id 升序） |
+| POST | `/api/v1/missions/{id}/scope` | 新增任务范围（`kind` 六种，重复 409，201 返回条目） |
+| DELETE | `/api/v1/missions/{id}/scope/{scope_id}` | 删除任务范围（返回 204） |
+| GET | `/api/v1/missions/{id}/plan` | 计划步骤（空任务返回 `steps:[]`） |
+| GET | `/api/v1/missions/{id}/graph` | 作战图 `{nodes,edges,anchors}`（`?kind=&state=&limit=`，默认 500/上限 2000） |
+| GET | `/api/v1/nodes/{id}` | 作战图节点详情 |
+| PATCH | `/api/v1/nodes/{id}/state` | 更新节点状态（非法状态 400，kind 规则不满足 400） |
+| GET | `/api/v1/missions/{id}/findings` | 发现列表（`?severity=`、`?status=`、`?limit=`） |
+| POST | `/api/v1/missions/{id}/findings` | 创建发现（201，初始状态 `open`） |
+| GET | `/api/v1/findings/{id}` | 发现详情（平铺字段 + `evidence:[]`） |
+| PATCH | `/api/v1/findings/{id}` | 更新发现（`title`/`severity`/`detail`/`asset_id` 三态） |
+| POST | `/api/v1/findings/{id}/status` | 发现状态流转（非法迁移 409） |
+| GET | `/api/v1/findings/{id}/evidence` | 发现绑定的证据快照列表 |
+| POST | `/api/v1/findings/{id}/evidence` | 绑定证据快照（201，重复绑定 409） |
+| DELETE | `/api/v1/findings/{id}/evidence/{snapshot_id}` | 解除证据绑定（返回 204） |
+| GET | `/api/v1/missions/{id}/retests` | 复测列表（按创建时间倒序） |
+| POST | `/api/v1/missions/{id}/retests` | 发起复测（201，初始 `pending`） |
+| GET | `/api/v1/retests/{id}` | 复测详情 |
+| PATCH | `/api/v1/retests/{id}` | 更新复测结果（非法迁移 409） |
+| GET | `/api/v1/missions/{id}/report` | 生成任务 Markdown 报告（`text/markdown; charset=utf-8`） |
 | GET | `/api/v1/system/update/check` | 检查 GitHub Release 新版本 |
 | POST | `/api/v1/system/update/apply` | 下载、校验、冒烟并替换二进制（需重启生效） |
 | POST | `/api/v1/system/update/rollback` | 用 `<binary>.old` 回滚上一版本（需重启生效） |
@@ -244,6 +264,7 @@ docs/                   项目真源（project-map）、术语、配置、路线
 - **证据不可篡改**：正文加密落盘并按内容哈希寻址，快照带 HMAC 签名；校验失败一律返回 409 tampered，不覆盖疑似被篡改的数据。
 - **前端嵌入二进制**：前端是纯静态目录，构建后 `go:embed` 进二进制，运行时不需要 Node；未构建时显示占位页。
 - **自更新只做 SHA256**：发布包没有签名，自更新仅校验 SHA256SUMS 并做 `--version` 冒烟；失败不改当前二进制，支持 `.old` 回滚。
+- **发现/复测状态迁移**：发现与复测的状态机默认拒绝；非法迁移返回 409，同状态不算迁移，终态不可再变。
 - **品牌门禁**：`scripts/check-brand.sh` 在 CI 中阻止第三方项目标识进入代码、依赖与二进制。
 
 ## 文档

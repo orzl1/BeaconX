@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/domain/asset"
+	"github.com/orzl1/BeaconX/internal/domain/finding"
 	"github.com/orzl1/BeaconX/internal/domain/graph"
 )
 
@@ -186,4 +187,74 @@ func percent(tested, total int) float64 {
 		return 0
 	}
 	return float64(tested) * 100 / float64(total)
+}
+
+// ---------- 发现 / 证据关联 / 复测（M6.2-B2） ----------
+
+// Finding 是一条「发现」记录。
+//
+// EvidenceCount 不是表列，而是查询时通过 finding_evidence 子查询实时统计的
+// 关联证据数量，便于列表页直接展示。
+type Finding struct {
+	TenantID      int64            `json:"tenant_id"`
+	ID            int64            `json:"id"`
+	MissionID     int64            `json:"mission_id"`
+	AssetID       *int64           `json:"asset_id"`
+	NodeID        *int64           `json:"node_id"`
+	Title         string           `json:"title"`
+	Severity      finding.Severity `json:"severity"`
+	Status        finding.Status   `json:"status"`
+	Detail        string           `json:"detail"`
+	EvidenceCount int              `json:"evidence_count"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+}
+
+// FindingInput 是创建发现的输入。Severity 为空时由存储层默认 info。
+type FindingInput struct {
+	AssetID  *int64
+	NodeID   *int64
+	Title    string
+	Severity finding.Severity
+	Detail   string
+}
+
+// FindingUpdate 是发现的局部更新输入：nil 字段保持不变。
+//
+// AssetID 与 ClearAsset 互斥：前者把资产设置为指定值，后者显式清空资产关联。
+// HTTP 层用「字段缺省 / JSON null / 数字」三态映射到这两个字段。
+type FindingUpdate struct {
+	Title      *string
+	Severity   *finding.Severity
+	Detail     *string
+	AssetID    *int64
+	ClearAsset bool
+}
+
+// FindingEvidence 是发现与证据快照的关联。
+type FindingEvidence struct {
+	TenantID   int64     `json:"tenant_id"`
+	FindingID  int64     `json:"finding_id"`
+	SnapshotID int64     `json:"snapshot_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Retest 是一次复测请求。
+type Retest struct {
+	TenantID    int64                `json:"tenant_id"`
+	ID          int64                `json:"id"`
+	MissionID   int64                `json:"mission_id"`
+	FindingID   int64                `json:"finding_id"`
+	Status      finding.RetestStatus `json:"status"`
+	Note        string               `json:"note"`
+	RequestedBy string               `json:"requested_by"`
+	CreatedAt   time.Time            `json:"created_at"`
+	StartedAt   *time.Time           `json:"started_at"`
+	FinishedAt  *time.Time           `json:"finished_at"`
+}
+
+// MissionEvidenceStats 是任务维度的证据数量统计（报告生成用）。
+type MissionEvidenceStats struct {
+	TrafficCount  int `json:"traffic_count"`
+	SnapshotCount int `json:"snapshot_count"`
 }

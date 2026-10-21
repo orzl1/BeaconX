@@ -1,8 +1,8 @@
-# 数据模型（M1–M5）
+# 数据模型（M1–M6.2）
 
-本文描述 BeaconX M1–M5 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）。
+本文描述 BeaconX M1–M6.2 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0006_evidence.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0007_findings.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -35,6 +35,9 @@
 | 0005 | `audit_events` | 每次工具调用的策略与执行审计 |
 | 0006 | `traffic_exchanges` | 工具调用的两阶段流量采集（intent → result） |
 | 0006 | `evidence_snapshots` | 冻结的证据快照（签名 + 正文引用） |
+| 0007 | `findings` | 任务发现（严重级别、处置状态、可选资产/节点关联） |
+| 0007 | `finding_evidence` | 发现 ↔ 证据快照的绑定（多对多） |
+| 0007 | `retests` | 复测请求与结果（pending → running → 终态） |
 
 ### 2.1 租户根表（0001）
 
@@ -65,7 +68,7 @@
 
 ### 2.6 索引与触发器
 
-所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes` 五张表上；枚举值一律由 `CHECK` 约束在写入时校验。
+所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings` 六张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 `idx_findings_mission`、`idx_findings_asset`（部分索引）、`idx_finding_evidence_snapshot`、`idx_retests_mission` 四个索引。
 
 ### 2.7 运行时变更（0003）
 
@@ -95,6 +98,15 @@
 - `evidence_snapshots`：`mission_id`、`tool`、`request_hash`、`request_size`、`response_hash`、`response_size`、`signature`、`redaction`、`created_at`；`PRIMARY KEY (tenant_id, id)`，外键同 `traffic_exchanges`；索引 `idx_evidence_snapshots_mission (tenant_id, mission_id, id)`。
 - 正文（请求参数与工具输出）不落数据库：`*_hash` / `*_size` 指向 `internal/app/evidence` 加密存储的 blob（`sha256` 内容寻址、AES-256-GCM、路径 `blobs/<hash 前两位>/<hash>.enc`）；`signature` 是对包含快照 ID 的规范化元数据做 HMAC-SHA256。数据库行 ID 是接口使用的 `evidence_id`，快照 ID 可由元数据重算。
 - 表结构与校验细节见 [证据链](evidence.md)。
+
+### 2.11 发现、证据关联与复测（0007）
+
+- `findings`：`mission_id`、`asset_id`（可空）、`node_id`（可空）、`title`、`severity`（CHECK `info` / `low` / `medium` / `high` / `critical`，默认 `info`）、`status`（CHECK `open` / `confirmed` / `fixed` / `retest` / `closed` / `false_positive`，默认 `open`）、`detail`、`created_at`、`updated_at`；`PRIMARY KEY (tenant_id, id)`；外键 `(tenant_id, mission_id)` → `missions` 与 `tenant_id` → `tenants`，均级联删除；索引 `idx_findings_mission (tenant_id, mission_id, id)`、部分索引 `idx_findings_asset (tenant_id, asset_id) WHERE asset_id IS NOT NULL`；`updated_at` 由 `trg_findings_updated_at`（复用 `set_updated_at()`）维护。
+- `finding_evidence`：`finding_id`、`snapshot_id`（均非空）、`created_at`；`PRIMARY KEY (tenant_id, finding_id, snapshot_id)`；复合外键 `(tenant_id, finding_id)` → `findings`、`(tenant_id, snapshot_id)` → `evidence_snapshots`、`tenant_id` → `tenants`，均级联删除；索引 `idx_finding_evidence_snapshot (tenant_id, snapshot_id)` 支持「某证据被哪些发现引用」反查。正文仍由 `internal/app/evidence` 加密落盘，这里只存引用；重复绑定由 Store 的 `ON CONFLICT DO NOTHING` + 影响行数检测返回 HTTP 409（迁移注释称“幂等”，实际 API 语义为冲突）。
+- `retests`：`mission_id`、`finding_id`、`status`（CHECK `pending` / `running` / `passed` / `failed` / `error`，默认 `pending`）、`note`、`requested_by`（默认空串，API 缺省写 `user`）、`created_at`、`started_at`（可空）、`finished_at`（可空）；`PRIMARY KEY (tenant_id, id)`；外键 `(tenant_id, mission_id)` → `missions`、`(tenant_id, finding_id)` → `findings`、`tenant_id` → `tenants`，均级联删除；索引 `idx_retests_mission (tenant_id, mission_id, id)`。
+- **资产/节点为什么不做复合外键**：`assets` 与 `operation_nodes` 允许被删除，而 `ON DELETE SET NULL` 会把复合键中的 `tenant_id` 置空（违反 `NOT NULL`）；因此 `findings.asset_id` / `node_id` 保持裸 `BIGINT`，由写入路径校验「同租户存在」，节点还要求属于同一任务。删除资产/节点不会破坏发现记录，也不会自动清空关联；查询时按存在性解释。
+- **状态机**：发现 `open → confirmed/false_positive/closed`、`confirmed → fixed/retest/closed`、`retest → confirmed/fixed/closed`、`fixed → retest/closed`，`closed` 与 `false_positive` 终态；复测 `pending → running`、`running → passed/failed/error`，终态 `passed/failed/error`。领域校验在 `internal/domain/finding`，数据库 CHECK 只做最终兜底。
+- 与证据链的关系：`finding_evidence.snapshot_id` 指向 `evidence_snapshots`（同一任务）；快照删除会级联解除绑定，但不会删除发现。报告与前端详情通过该表展示「发现 → 证据」。
 
 ## 3. 资产身份与归一化
 
