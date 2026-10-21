@@ -4,13 +4,13 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 文档版本 | v2.0 |
+| 文档版本 | v2.1 |
 | 更新日期 | 2026-10-22 |
 | 适用 commit | 本次提交（当前工作区，未提交） |
-| 文档状态 | **已实现 140 条路由 + 计划剩余（⬜/🟡，见 §5.6）** |
-| 覆盖里程碑 | M0–M6（后端 + 前端 + 交付）+ M6.2-B1/B2/B3/B4/B5（已实现/部分，见状态列） |
-| 路由数量 | 已实现 140 条 = 基础 70（M0–M6/B1–B3）+ feature 70（B4 24 + B5 46；B5 报告多格式为既有 `/report` 扩展，不新增 pattern） |
-| 校验命令 | `make docs-check`（校验 Routes()+featureRouteSpecs() 共 140 条已实现路由是否被记录） |
+| 文档状态 | **已实现 143 条路由 + 计划剩余（⬜/🟡，见 §5.6）** |
+| 覆盖里程碑 | M0–M6（后端 + 前端 + 交付）+ M6.2-B1/B2/B3/B4/B5 + B6 硬化（已实现/部分，见状态列） |
+| 路由数量 | 已实现 143 条 = 基础 70 + feature 73（B4 24 + B5 46 + B6 3；报告多格式为既有 `/report` 扩展，不新增 pattern） |
+| 校验命令 | `make docs-check`（校验 Routes()+featureRouteSpecs() 共 143 条已实现路由是否被记录） |
 | 文档语言 | 中文；标识符、JSON 字段、错误码、环境变量、SQL、路径保留英文 |
 
 **状态图例（全文通用）**：
@@ -224,7 +224,7 @@ HTTP 请求
 
 ## 4. 数据模型全表
 
-迁移文件 `migrations/0001_init.sql` – `0015_sync.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
+迁移文件 `migrations/0001_init.sql` – `0016_findings_node_unique.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
 
 ### 4.1 迁移清单
 
@@ -245,6 +245,7 @@ HTTP 请求
 | `0013_workspace` | 空操作占位迁移（工作区以文件系统为准） | 0 表 |
 | `0014_b5_evidence` | 证据读取/校验/导出审计 + 2 索引 | 1 表 |
 | `0015_sync` | 同步数据源 / 外部项目 / 运行记录 + 索引 + 触发器 | 3 表 |
+| `0016_findings_node_unique` | findings(node_id) 部分唯一索引（node_id IS NOT NULL） | 0 表 + 1 索引 |
 
 ### 4.2 表清单与关键约束
 
@@ -352,7 +353,7 @@ HTTP 请求
 ### 4.5 触发器与索引汇总
 
 - `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 **13** 张表（0002/0007/0008–0015 创建）。
-- 索引共 **37** 个：0002+0006 的 20 个、0007 的 4 个、0008–0015 的 13 个（settings 无索引、0013 空操作）。
+- 索引共 **38** 个：0002+0006 的 20 个、0007 的 4 个、0008–0015 的 13 个、0016 的 1 个部分唯一索引（`uq_findings_node`）。
 - 查询路径约定：所有查询带 `tenant_id`；任务/审批/流量/审计/发现/复测按 `id` 或 `created_at DESC`；B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
 
 ### 4.6 B4/B5 新增表（0008–0015）
@@ -372,9 +373,9 @@ HTTP 请求
 | 0015 | `sync_projects` | PK(tenant_id,id)；UNIQUE(tenant_id,source_id,external_id)；`data JSONB`；FK source CASCADE；索引 + 触发器 | 外部项目（幂等 upsert） |
 | 0015 | `sync_runs` | PK(tenant_id,id)；`status` CHECK pending/running/succeeded/failed；`stats JSONB`；索引 source/status；project_id 无 FK（应用层校验） | 一次同步运行记录（只追加） |
 
-> 0008–0015 共新增 **11 张表**（0008 1 +0009 2 +0010 2 +0011 1 +0012 1 +0014 1 +0015 3；0013 为空操作）；新表索引与触发器见各迁移文件。B4/B5 的部分实现项（settings 热生效、通知真实事件推送/SSRF 白名单/配置加密、Agents 执行接入、sync 崩溃恢复/保留策略、证据轮换）仍为 🟡/⬜。
+> 0008–0015 共新增 **11 张表**（0008 1 +0009 2 +0010 2 +0011 1 +0012 1 +0014 1 +0015 3；0013 为空操作）；0016 新增 `findings(tenant_id,node_id) WHERE node_id IS NOT NULL` 部分唯一索引，保证同一节点最多一条发现（from-node 并发 409）。B4/B5/B6 的部分实现项（settings 热生效、通知真实事件推送/SSRF 白名单/配置加密、Agents 执行接入、sync 崩溃恢复/保留策略、证据轮换后重签）仍为 🟡/⬜。
 
-## 5. API 全表（当前 140 条）
+## 5. API 全表（当前 143 条）
 
 ### 5.1 通用约定
 
@@ -393,7 +394,7 @@ HTTP 请求
 | 幂等 | 创建任务非幂等；审批决策用 CAS（仅 pending）；删除任务 204 且重复删除 404；B1 资产按身份键 upsert、任务资产重复登记 409 |
 | 方法/路径不匹配 | 路径存在但方法不支持 → 405 `method_not_allowed` + `Allow` 头；路径完全不存在 → JSON 404 `not_found` |
 
-### 5.2 路由总表（当前 140 条）
+### 5.2 路由总表（当前 143 条）
 
 | # | 状态 | 方法 | 路径 | 鉴权 | 处理函数（文件） | 请求 | 成功响应 | 主要错误 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -473,12 +474,12 @@ HTTP 请求
 | 74 | 🟡 | PATCH | `/api/v1/settings` | Bearer | `settings_api.go` | `{settings:{…}}` | 200 Settings | 400/401/503 |
 | 75 | 🟡 | GET | `/api/v1/evidence/{id}/audit` | Bearer | `evidence_extra.go` | — | `{"audit":[]}` | 400/401/404/503 |
 | 76 | ✅ | POST | `/api/v1/evidence/{id}/export` | Bearer | `evidence_extra.go` | — | `application/zip` | 400/401/404/409/503 |
-| 77 | ⬜ | POST | `/api/v1/evidence/rotate` | Bearer | `evidence_extra.go` | `{new_key_hex?}` | 501 Error | 400/401/501/503 |
+| 77 | ✅ | POST | `/api/v1/evidence/rotate` | Bearer | `evidence_extra.go` | `{new_key_hex}`（64 hex） | `{rotated,new_key_hex_not_stored,notice}` | 400/401/409/500/503 |
 | 78 | ✅ | GET | `/api/v1/findings` | Bearer | `findings_extra.go` | `?mission_id=&severity=&status=&asset_id=&after_id=&limit=` | `{"findings":[]}` | 400/401/503 |
 | 79 | ✅ | GET | `/api/v1/findings/export` | Bearer | `findings_extra.go` | `?format=csv&mission_id=&severity=&status=&asset_id=` | `text/csv` | 400/401/503 |
 | 80 | ✅ | POST | `/api/v1/retests/{id}/run` | Bearer | `retest_extra.go` | — | `Retest` | 400/401/404/409/503 |
 | 81 | ✅ | GET | `/api/v1/retests/{id}/evidence` | Bearer | `retest_extra.go` | — | `{"evidence":[]}` | 400/401/404/503 |
-| 82 | 🟡 | POST | `/api/v1/missions/{id}/findings/from-node` | Bearer | `retest_extra.go` | `{node_id,title?,severity?}` | 201 Finding | 400/401/404/409/503 |
+| 82 | ✅ | POST | `/api/v1/missions/{id}/findings/from-node` | Bearer | `retest_extra.go` | `{node_id,title?,severity?}` | 201 Finding（节点已绑定→409） | 400/401/404/409/503 |
 | 83 | ✅ | GET | `/api/v1/mcp/servers` | Bearer | `mcp_api.go` | `?limit=` | `{"servers":[]}` | 401/503 |
 | 84 | ✅ | POST | `/api/v1/mcp/servers` | Bearer | `mcp_api.go` | `{name,transport,url/command,…}` | 201 McpServer | 400/401/409/503 |
 | 85 | ✅ | GET | `/api/v1/mcp/servers/{id}` | Bearer | `mcp_api.go` | — | McpServer | 400/401/404/503 |
@@ -492,7 +493,7 @@ HTTP 请求
 | 93 | ✅ | POST | `/api/v1/workspace/upload` | Bearer | `workspace_api.go` | multipart/form-data | `{path,size}` | 400/401/404/413/503 |
 | 94 | ✅ | DELETE | `/api/v1/workspace/files/{path...}` | Bearer | `workspace_api.go` | `?recursive=` | 204 | 400/401/404/409/503 |
 | 95 | ✅ | GET | `/api/v1/traffic/{id}/export` | Bearer | `traffic_extra.go` | `?format=har` | `application/json`（HAR） | 400/401/404/409/503 |
-| 96 | 🟡 | POST | `/api/v1/traffic/{id}/replay` | Bearer | `traffic_extra.go` | — | `{replayed,traffic_id,status_code}` | 400/401/404/409/503 |
+| 96 | ✅ | POST | `/api/v1/traffic/{id}/replay` | Bearer | `traffic_extra.go` | — | `{policy_gated,output,status,traffic_id}` | 400/401/403/404/409/502/503 |
 | 97 | ✅ | DELETE | `/api/v1/missions/{id}/traffic` | Bearer | `traffic_extra.go` | — | 204 | 400/401/404/503 |
 | 98 | ✅ | GET | `/api/v1/notifications/channels` | Bearer | `notifications_api.go` | `?limit=` | `{"channels":[]}` | 401/503 |
 | 99 | ✅ | POST | `/api/v1/notifications/channels` | Bearer | `notifications_api.go` | `{name,type,config,enabled}` | 201 NotificationChannel | 400/401/409/503 |
@@ -537,6 +538,9 @@ HTTP 请求
 | 138 | ✅ | GET | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | — | `{path,content}` | 400/401/404/503 |
 | 139 | ✅ | PUT | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | `{content}` | `{path,size}` | 400/401/404/413/503 |
 | 140 | ✅ | DELETE | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | — | 204 | 400/401/404/503 |
+| 141 | ✅ | GET | `/api/v1/activity` | Bearer | `activity_api.go` | `?limit=&before_id=&mission_id=&type=` | `{"activity":[{"id":1,"mission_id":1,"type":"created","payload":{},"created_at":"…"}],"next_before_id":0}` | 400/401/503 |
+| 142 | ✅ | GET | `/api/v1/skills/{name}/versions` | Bearer | `skills_api.go` | — | `{"versions":[{"timestamp":"20261022T041500.123456789","files":3,"size":1024}]}` | 400/401/404/503 |
+| 143 | ✅ | POST | `/api/v1/skills/{name}/versions/{timestamp}/restore` | Bearer | `skills_api.go` | 路径 timestamp | 200 Skill（文件已回滚） | 400/401/404/409/503 |
 
 > 前端页面 `/` 与 `/_next/*` 由 `internal/webui.Handler` 提供（公开，不经过 `Routes()`）；`/api/` 下未匹配路径由 WebUI 返回 JSON 404。
 
@@ -638,7 +642,7 @@ HTTP 请求
 | 409 | `tampered` | 证据签名或正文哈希校验失败；流量正文 blob 缺失/被篡改/密钥不匹配统一返回该错误 |
 | 409 | `update_failed` / `rollback_failed` | 自更新/回滚失败 |
 | 413 | `payload_too_large` | Skills/Workspace 上传或写文件超过大小上限 |
-| 501 | `not_implemented` | 证据密钥轮换（`POST /evidence/rotate`）未实现 |
+| 501 | `not_implemented` | 保留码；当前未使用（B6 起证据轮换已实现 200） |
 | 500 | `internal_error` | 未分类服务端错误 |
 | 500 | `replay_failed` | SSE 回放失败（尚未开始流） |
 | 500 | `sse_not_configured` | SSE 未配置任务解析器（正常不会出现） |
@@ -743,12 +747,20 @@ HTTP 请求
 | P-B5-39 | ✅ | GET `/api/v1/retests/{id}/evidence` | 复测关联证据列表 | `{"evidence":[]}` | 400/401/404/503 | `retests` + 证据关联 | 任务详情/复测 |
 | P-B5-40 | ✅ | GET `/api/v1/missions/{id}/report?format=` | 报告格式 `markdown/html/docx/pdf`（既有 route 扩展，无新 pattern） | `text/markdown`/html/docx/pdf 附件 | 400/401/404/503 | `internal/app/report` | 报告 |
 | P-B5-41 | ✅ | GET `/api/v1/traffic/{id}/export?format=har/pcap` | 导出流量；har 可脱敏 JSON，pcap 需真实报文（当前无） | 二进制/JSON 附件 | 400/401/404/409/503 | 导出器/抓包能力 | 流量 |
-| P-B5-42 | 🟡 | POST `/api/v1/traffic/{id}/replay` | 重放请求；**绕过 executor 策略/审批（高风险）** | `{"traffic_id":2,"mission_id":1,"status":200,"error":""}` | 400/401/404/409/503 | 直接调 http_probe（未走 executor） | 流量 |
+| P-B5-42 | ✅ | POST `/api/v1/traffic/{id}/replay` | 重放请求（**已改走 executor**：策略门/审批/审计/证据采集） | `{"policy_gated":true,"output":"…","status":200,"traffic_id":2}` | 403/400/401/404/409/502/503 | executor + 策略/审批 | 流量 |
 | P-B5-43 | ✅ | DELETE `/api/v1/missions/{id}/traffic` | 批量清理任务采集行（保留证据快照/正文） | 204 | 400/401/404/503 | 批量删除 Store | 流量 |
 | P-B5-44 | 🟡 | GET `/api/v1/evidence/{id}/audit` | 证据审计（🟡 仅 export/verify 部分埋点） | `{"audit":[]}` | 400/401/404/503 | `evidence_access_log`（0014） | 证据/流量 |
-| P-B5-45 | ⬜ | POST `/api/v1/evidence/rotate` | 密钥轮换（⬜ 未实现，返回 501） | `{"error":{"code":"not_implemented"}}` | 400/401/501/503 | 无 key-id，无法安全重写 | 系统设置 |
+| P-B5-45 | ✅ | POST `/api/v1/evidence/rotate` | 密钥轮换（重加密全部 blob；新密钥不落盘，需更新 env 并重启） | `{"rotated":10,"new_key_hex_not_stored":true,"notice":"…"}` | 400/401/500/503 | 证据存储 RotateKey | 系统设置 |
 | P-B5-46 | ✅ | POST `/api/v1/evidence/{id}/export` | 导出证据 zip（snapshot.json + 正文，写 export 审计） | `application/zip` | 400/401/404/409/503 | 证据导出器 | 证据/报告 |
-| P-B5-47 | 🟡 | POST `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（🟡 无唯一约束，可能重复） | 201 Finding | 400/401/404/409/503 | finding 域 + 节点校验 | 任务详情/发现 |
+| P-B5-47 | ✅ | POST `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（0016 部分唯一索引防重复） | 201 Finding；已绑定→409 | 400/401/404/409/503 | finding 域 + `uq_findings_node` | 任务详情/发现 |
+
+#### 5.6.4 B6 新增强化接口（3 条，✅）
+
+| 编号 | 状态 | 方法/路径 | 用途 / 请求 | 成功响应示例 | 错误码 | 依赖（已实现） | 前端页面 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| P-B6-01 | ✅ | GET `/api/v1/activity` | 全局活动流；`?limit=&before_id=&mission_id=&type=`（mission_events 倒序，默认 50/上限 200） | `{"activity":[{"id":1,"mission_id":1,"type":"created","payload":{},"created_at":"…"}],"next_before_id":0}` | 400/401/503 | `mission_events` + 索引 | /dashboard 活动流 |
+| P-B6-02 | ✅ | GET `/api/v1/skills/{name}/versions` | 技能版本历史（.versions 快照，保留最近 5 份；timestamp 降序） | `{"versions":[{"timestamp":"20261022T041500.123456789","files":3,"size":1024}]}` | 400/401/404/503 | 磁盘快照 | /system/skills 版本页 |
+| P-B6-03 | ✅ | POST `/api/v1/skills/{name}/versions/{timestamp}/restore` | 恢复技能文件到指定版本（先给当前状态打快照，可回滚；不改 DB 元数据） | `200 Skill` | 400/401/404/409/503 | 磁盘快照 | /system/skills 版本页 |
 
 #### 5.6.3 B4/B5 仍存在的缺口与风险（🟡/⬜）
 
@@ -760,22 +772,17 @@ HTTP 请求
 | 策略 immutable 的 arg_pattern 仍可改 | 🟡 | 仅禁止改 name/tool/action 与删除 | 规则 CRUD 收紧 + 审计 |
 | 通知真实事件推送 / SSRF 白名单 / config 加密 | 🟡 | test 支持 webhook 真发；email/generic skipped；config 明文返回、无出站白名单 | 事件触发、URL allowlist、敏感配置加密 |
 | Agents 接入 engine 装配 | 🟡 | 仅定义 CRUD/test，不改变运行时 | 引擎按 Agent 定义装配 |
-| 流量重放绕过策略/审批 | 🟡 | 直接 http_probe，仅 Bearer+tenant+工具限制 | 必须改走 executor（高风险） |
-| 证据轮换 | ⬜ | POST /evidence/rotate 返回 501（无 key-id，无法安全重写） | 密钥版本化后重加密 |
-| 证据读取审计覆盖 | 🟡 | 仅 export/verify 部分埋点；GET verify 与正文读取未全埋 | 全链路埋点 |
-| AI 自动写 finding 并发去重 | 🟡 | from-node 可创建，无唯一约束，可能重复 | 幂等键/唯一约束 |
+| 证据轮换后签名失效/无重签 | 🟡 | rotate 已实现，但主密钥切换使存量 Snapshot HMAC 失效（Verify→ErrTampered） | 离线重签流程/密钥版本化 |
+| 证据读取审计覆盖 | 🟡 | 已补 verify 与部分正文 read；仍有路径未埋点（best-effort） | 全链路埋点 |
+| Workspace 配额锁 | 🟡 | 默认 100MB（`BEACONX_WORKSPACE_QUOTA_MB`），per-mission 锁仅进程内 | 跨进程配额/清理 |
+| Skills restore 元数据 | 🟡 | restore 只回滚文件内容，不回滚 DB 元数据（version/description） | 元数据版本化 |
+| MCP stdio 硬化 | 🟡 | 默认禁用、env 白名单、临时目录、stdout 上限、超时 kill；端点显式 env 原样透传；Windows 400 | 更强沙箱/Windows CI |
 | sync 崩溃恢复/保留策略 | 🟡 | 异步运行、逐条容错 skipped；无崩溃恢复/清理 | 运行恢复 + 保留策略 |
-| LLM 请求/响应正文采集 | 🟡 | 仅 token 用量记录 | 新表/新采集（无最终 API） |
-| Dashboard 小时趋势/活动流 | 🟡 | 实时聚合，无小时粒度 | 新聚合 API（未排期） |
-| 日志 after_id / 跨进程 | 🟡 | 进程级环形 2000，无 after_id，多进程不聚合 | 持久化日志/游标 |
 | 报告图片/字体 | 🟡 | PDF 依赖阅读器 CJK 字体；DOCX 最小合法；无图片 | 字体嵌入/图片 |
-| MCP stdio 安全 | 🟡 | 默认禁用+白名单；命令仍由管理员配置 | 更强沙箱 |
-| Workspace 配额 | 🟡 | 单文件/上传大小限制；无租户配额 | 配额/清理 |
-| Skills 无版本历史 | 🟡 | version 仅展示用 | 版本化/回滚 |
-| 任务范围编译仅预览 | 🟡 | 不写 policy_rules | 落地编译 + 冲突处理 |
-| graph limit 2000 vs ListNodes 1000；after_id 仅部分列表 | 🟡 | 大图仍可能截断；after_id 未覆盖所有列表 | 全量游标分页 |
+| graph 过滤上限 | 🟡 | 已支持 after_id/next_after_id（升序 id>），但过滤仍先取 ListNodes 1000 | 全量过滤/游标 |
+| LLM 请求/响应正文采集 | ⬜ | 仅 token 用量记录 | 新表/新采集（无最终 API） |
 
-## 6. 领域状态机与业务规则## 6. 领域状态机与业务规则
+## 6. 领域状态机与业务规则
 
 ### 6.1 任务状态（7）
 
@@ -940,7 +947,7 @@ HTTP 请求
 - **跨任务发现/CSV**：支持过滤+after_id；CSV ≤10000 行、固定表头、防公式注入、空表仅表头。
 - **范围编译**：纯预览不落库；root/subdomain/ip/url→http_probe allow 草案（url 120 > subdomain/ip 110 > root 100），cidr/keyword/icp 仅 notes。
 - **MCP/Skills/Agents/Workspace/Sync**：MCP http JSON-RPC initialize+tools/list、stdio 默认禁用+白名单、失败保留旧工具；Skills 磁盘 `<state>/skills/<tenant>/<name>/`、zip 10MB/200 文件/文本扩展、无 skill_files 表；Agents 仅定义 CRUD/test，**未接入 engine（🟡）**；Workspace 文件系统为准、UTF-8≤1MB、上传≤10MB、拒绝路径穿越/符号链接、非空目录需 recursive；Sync manual/http_json、SSRF 三层（默认拒私网，仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开）、异步 ≤60s、逐条 skipped。
-- **报告/证据/复测**：报告格式 markdown/html/docx/pdf（PDF 依赖阅读器 CJK 字体、DOCX 最小合法、无图片）；流量重放直接调 http_probe，**绕过策略/审批（🟡 高风险）**；证据轮换返回 501（⬜）；证据审计仅部分动作埋点（🟡）；复测 run 重算签名/解密校验（非重跑 exploit），无证据 error；from-node 可重复（🟡）。
+- **报告/证据/复测**：报告格式 markdown/html/docx/pdf（PDF 依赖阅读器 CJK 字体、DOCX 最小合法、无图片）；流量重放已改走 **executor**（策略门/审批/审计/证据采集，未接线 503，deny/拒绝 403，超时 409，未知工具/其它 502）；证据轮换已实现（重加密全部 blob，新密钥不落盘，需更新 env 并重启；**存量 Snapshot 签名失效，无自动重签 🟡**）；证据审计覆盖 verify 与部分正文 read（best-effort 🟡）；复测 run 重算签名/解密校验（非重跑 exploit），无证据 error；from-node 用 0016 部分唯一索引兜底（并发 409）。
 
 ## 7. 运行时机制
 
@@ -1034,7 +1041,7 @@ HTTP 请求
 
 - HTTP 层：`internal/httpapi/{policy_api,settings_api,logs_api,notifications_api,assets_extra,findings_extra,evidence_extra,retest_extra,mcp_api,skills_api,agents_api,workspace_api,sync_api,traffic_extra,report_extra}.go`；全部通过 `RegisterFeatureRoutes` 在 init 注册，NewHandler 复用同一鉴权中间件。
 - 领域/存储：`internal/logging`（环形缓冲）、`internal/app/{mcp,report,syncdata,workspace}`；`internal/infra/pg/{store_policy_api,store_settings,store_notification,store_mcp,store_skill,store_agent,store_sync,store_data_extra,store_extra_b5}.go`。
-- 安全边界：文件类（Skills/Workspace）做路径 Clean+前缀校验、拒绝符号链接/穿越、大小上限；Sync 做保存/解析/拨号三层 SSRF 校验，默认拒私网；MCP env/headers 响应掩码、stdio 默认禁用；通知 webhook 无出站白名单（🟡）；流量重放绕过策略/审批（🟡 高风险）。
+- 安全边界：文件类（Skills/Workspace）做路径 Clean+前缀校验、拒绝符号链接/穿越、大小上限；Sync 做保存/解析/拨号三层 SSRF 校验，默认拒私网；MCP env/headers 响应掩码、stdio 默认禁用+env 白名单+临时工作目录+stdout 上限+超时 kill（Windows 400）；通知 webhook 无出站白名单（🟡）；流量重放已走 executor（policy_gated，403/409/502/503 语义）。
 - 未完成机制：settings 热生效、Agents 执行装配、证据密钥轮换、通知事件推送/加密、sync 崩溃恢复、LLM 正文采集、Dashboard 小时趋势（⬜/🟡）。
 
 ## 8. 前端对接指南
@@ -1190,15 +1197,21 @@ HTTP 请求
 | `LogEntry` | id,time,level,msg,attrs | GET 默认 200/上限 1000 无 after_id；SSE event=log |
 | `NotificationChannel` / `Delivery` | id,name,type,config,enabled / channel_id,event,status,detail | test 一律 200+delivery；email/generic skipped；config 明文（🟡） |
 | `McpServer` / `McpTool` | transport,url/command,args,env,headers,last_status,last_error / server_id,name,input_schema | refresh 失败保留旧工具；env/headers 掩码 |
-| `Skill` / `SkillFile` | name,description,version,file_count / path,size | upload zip≤10MB/≤200 文件；文件路由 `{path...}` |
+| `Skill` / `SkillFile` | name,description,version,file_count / path,size | upload zip≤10MB/≤200 文件；文件路由 `{path...}`；版本 `.versions` 隐藏 |
 | `Agent` | key,name,role,tools,system_prompt,model,enabled | CRUD/test；🟡 未接入执行 |
 | `SyncSource` / `SyncProject` / `SyncRun` | type,config / external_id,data / status,stats,error | run 202+running；SSRF 默认拒私网 |
 | `AssetIdentity` | kind,key | POST 新增/DELETE `{kind}/{key...}`；重复 409 |
 | `Finding`（跨任务/导出） | 同既有 Finding | `GET /findings` 跨任务；`/findings/export` CSV（≤10000） |
 | `Retest`（run/evidence） | 同既有 Retest | run 重算签名/解密，非重跑；evidence 列出绑定 |
 | `Report` | 同既有 Markdown；`format=markdown/html/docx/pdf` | PDF 依赖阅读器字体；DOCX 最小合法 |
-| `EvidenceAudit` | snapshot_id,action,actor,created_at | 🟡 仅 export/verify 部分埋点；rotate 501（⬜） |
-| `TrafficReplay` | replayed,traffic_id,status_code | 🟡 绕过策略/审批，仅 http_probe |
+| `EvidenceAudit` | snapshot_id,action,actor,created_at | 🟡 仅部分埋点；rotate 已实现（200，签名失效需重签） |
+| `TrafficReplay`（B6） | `policy_gated,output,status,traffic_id` | ✅ 走 executor；traffic_id best-effort（可为 0）；403/409/502/503 |
+| `ActivityItem` / `ActivityList`（B6） | id,mission_id,type,payload?,created_at；外层 activity,next_before_id | `GET /activity` 跨任务倒序；limit 50/200；不存在的 mission_id 返回空数组 |
+| `SkillVersion` / `SkillVersionList`（B6） | timestamp,files,size；外层 versions | `GET /skills/{name}/versions`；保留最近 5 份 |
+| `DashboardHour`（B6） | hour,missions_created,missions_done,tokens,approvals_requested | Dashboard 新增 `hourly` 最近 24 小时 UTC 桶，缺失补 0 |
+| `GraphView`（B6 扩展） | nodes,edges,anchors,next_after_id | `?after_id=` 取 id>after_id（升序），edges/anchors 仍全量 |
+| `WorkspaceEntryList`（B6 扩展） | files,root,quota_bytes,used_bytes | 配额默认 100MB，超限 413 quota_exceeded |
+| `Skill`（B6 扩展） | 既有字段 + versions/restore 操作 | versions 列表/restore；restore 只回滚文件不改元数据（🟡） |
 
 - 分页组件：B1–B3 列表 + B4 的 assets/findings/traffic/commands/llm-records 支持 `after_id`/`next_after_id`（方向随列表）；日志无 after_id。
 - 通知 test 用 200+delivery 展示，不要按 502 处理；webhook 真实出站、email/generic skipped。
@@ -1221,14 +1234,14 @@ HTTP 请求
 | 2 | setup | 首次初始化密码 | ⬜ | 完全阻塞 | 无 | 初始化流程（未排期） | 暂不实现 |
 | 3 | external redirect | 落地跳转 | ✅ | 可直接开发 | 单页 `/` | 无 | 不需要独立页面 |
 | 4 | chat | 会话列表 + transcript + @提及 | ⬜ | 完全阻塞 | 无会话/消息表 | 会话模型（未排期） | 后续 |
-| 5 | dashboard | 用量、趋势、活动 | 🟡 | 可直接开发（基础版） | #70 Dashboard；#67–#69 用量 | 小时趋势/活动流（🟡 未排期） | /dashboard |
+| 5 | dashboard | 用量、趋势、活动 | ✅ | 可直接开发 | #70 Dashboard（含 hourly）；#67–#69 用量；#141 activity | 无（活动流/小时趋势已实现） | /dashboard |
 | 6 | tasks | 任务列表/分类/归档/批量/创建 | ✅ | 可直接开发（基础版） | #5–#11 | 分类/归档/批量（⬜） | /missions |
 | 7 | tasks/detail | 任务头 + 10 Tab | ✅ | 可直接开发（基础版） | #7,#12,#13,#33–#56,#68 | 会话 transcript（⬜） | /missions/:id |
 | 8 | tasks/detail/sessions | transcript + SSE + worker 操作 | ⬜ | 完全阻塞 | 仅 #12 SSE | Agent 会话/侧问（未排期） | 后续 |
 | 9 | tasks/detail/overview | 目标/范围/拦截/LLM 链 | ✅ | 可直接开发 | #37–#40 范围/计划；#36 覆盖度；#117–#124 规则/审批 | LLM profile 管理（⬜） | 任务概览 Tab |
-| 10 | tasks/detail/graph | 探索图 | 🟡 | 可直接开发（基础版） | #41–#43 | 大图 after_id/分段（🟡） | 作战图 Tab |
+| 10 | tasks/detail/graph | 探索图 | ✅ | 可直接开发（基础版） | #41–#43；after_id/next_after_id | 过滤仍受 ListNodes 1000 上限（🟡） | 作战图 Tab |
 | 11 | tasks/detail/broadcast | 分页播报板 | 🟡 | 依赖计划接口 | #41 节点数据 | 专门查询/语义 API（未排期） | 并入作战图 |
-| 12 | tasks/detail/findings | 任务发现 | ✅ | 可直接开发 | #44–#51、#82（from-node）、#78/#79（跨任务/导出） | 并发去重（🟡） | 发现 Tab |
+| 12 | tasks/detail/findings | 任务发现 | ✅ | 可直接开发 | #44–#51、#82（from-node）、#78/#79（跨任务/导出） | 无 | 发现 Tab |
 | 13 | tasks/detail/retests | 复测 | ✅ | 可直接开发（基础版） | #52–#55、#80/#81（run/evidence） | 自动重跑 exploit（⬜ 非目标） | 复测 Tab |
 | 14 | tasks/detail/assets | 任务资产 | ✅ | 可直接开发 | #33–#35、#114/#115 身份写 | 无 | 任务资产 Tab |
 | 15 | tasks/detail/coverage-graph | 覆盖度图 | ✅ | 可直接开发 | #36 + #41 | 图布局前端组合 | 覆盖度 Tab |
@@ -1236,7 +1249,7 @@ HTTP 请求
 | 17 | tasks/detail/report | 报告 | ✅ | 可直接开发 | #56 多格式 markdown/html/docx/pdf | 图片/字体嵌入（🟡） | 报告 Tab |
 | 18 | findings | 发现三视图/筛选/导出 | ✅ | 可直接开发 | #78 跨任务列表、#79 CSV、#44–#51 任务内 | 跨任务详情聚合（前端组合） | /findings |
 | 19 | findings/detail | 发现详情/攻击链/流量 | ✅ | 可直接开发 | #46 详情；#41 图；#49 证据 | 攻击链聚合（前端） | /findings/:id |
-| 20 | traffic | 抓包列表/详情/删除/清理 | ✅ | 可直接开发（重放高风险 🟡） | #60–#64、#95 HAR、#96 replay、#97 清理 | replay 绕过策略（🟡 风险） | /traffic |
+| 20 | traffic | 抓包列表/详情/删除/清理 | ✅ | 可直接开发 | #60–#64、#95 HAR、#96 replay（策略门）、#97 清理 | replay 经 executor（403/409/502/503） | /traffic |
 | 21 | commands | 工具执行历史 + 统计 | ✅ | 可直接开发 | #65/#66 | 按工具统计（前端） | /commands |
 | 22 | llm-records | LLM 记录 + token 聚合 | 🟡 | 可直接开发（基础版） | #67–#69 | LLM 正文采集（⬜ 未实现） | /llm-records |
 | 23 | assets | 企业范围 + 资产 CRUD + 搜索 | ✅ | 可直接开发 | #19–#32、#114/#115 身份、#24 attrs 扩展 + after_id 扩展 | 全量游标（🟡） | /assets |
@@ -1246,7 +1259,7 @@ HTTP 请求
 | 27 | system/agents | Agent 列表/编辑器 | 🟡 | 依赖计划接口 | #125–#130 CRUD/test | 接入 engine 装配（🟡） | /system/agents |
 | 28 | system/agents/detail | 深链复用编辑器 | 🟡 | 依赖计划接口 | #127/#128 | 同上 | /system/agents/:key |
 | 29 | system/mcp | MCP CRUD/工具可见性 | ✅ | 可直接开发 | #83–#89 | stdio 沙箱（🟡） | /system/mcp |
-| 30 | system/skills | Skill 文件树/上传 | ✅ | 可直接开发 | #131–#140 | 版本历史（🟡） | /system/skills |
+| 30 | system/skills | Skill 文件树/上传/版本 | ✅ | 可直接开发 | #131–#140 + #142/#143 versions/restore | restore 不回滚元数据（🟡） | /system/skills |
 | 31 | system/tools | 工具参数编辑/自定义工具 | 🟡 | 依赖计划接口 | 静态注册 | 工具配置表（未排期） | /system/tools |
 | 32 | system/notify | 通知渠道/投递/测试 | ✅ | 可直接开发（基础版） | #98–#104 | 事件推送/SSRF/加密（🟡） | /system/notify |
 | 33 | system/intercept | 拦截规则/模拟 | ✅ | 可直接开发 | #117–#124 | 规则编译落库（🟡） | /system/policy |
@@ -1261,7 +1274,7 @@ HTTP 请求
 
 | 分组 | # | 建议路由 | 页面 | 核心组件 | 数据来源（已实现 # / 计划） | 空态/轮询 | 可开发状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 功能 | 1 | `/dashboard` | 概览 | 指标卡、状态/严重度分布、最近任务、用量摘要 | #70、#67–#69 | 空态；15s | ✅ 基础版可开发（趋势🟡） |
+| 功能 | 1 | `/dashboard` | 概览 | 指标卡、状态/严重度分布、最近任务、用量摘要、活动流/小时趋势 | #70（含 hourly）、#67–#69、#141 | 空态；15s | ✅ 可开发 |
 | 功能 | 2 | `/missions` | 任务列表 | 表格、状态筛选、创建抽屉 | #5–#11 | 空列表；5s | ✅ 可开发 |
 | 功能 | 3 | `/missions/:id` | 任务详情 | 头部 + Tab（概览/事件/流量/计划/图/发现/复测/报告/审批） | #7,#12,#13,#33–#56,#68 | SSE+5s | ✅ 可开发 |
 | 功能 | 4 | `/findings` | 发现列表 | 筛选、表格、CSV 导出 | #84/#85 + #44–#51 | 空列表；10s | ✅ 可开发 |
@@ -1276,7 +1289,7 @@ HTTP 请求
 | 系统 | 13 | `/system/llm` | LLM 配置 | profile CRUD/测试 | 仅 config；无 API | — | ⬜ 阻塞 |
 | 系统 | 14 | `/system/agents` | Agents | 列表/编辑器/试跑 | #125–#130 | 空态 | 🟡 CRUD 可做，执行接入⬜ |
 | 系统 | 15 | `/system/mcp` | MCP | server CRUD/刷新工具 | #83–#89 | 空态 | ✅ 可开发 |
-| 系统 | 16 | `/system/skills` | Skills | 文件树/上传/编辑 | #131–#140 | 空态 | ✅ 可开发 |
+| 系统 | 16 | `/system/skills` | Skills | 文件树/上传/编辑/版本/恢复 | #131–#140、#142/#143 | 空态 | ✅ 可开发（restore 元数据🟡） |
 | 系统 | 17 | `/system/tools` | 工具 | 内置参数编辑/自定义 | 静态注册 | — | 🟡 依赖计划 |
 | 系统 | 18 | `/system/notify` | 通知 | 渠道 CRUD、测试、投递 | #98–#104 | 空态 | ✅ 基础版（推送🟡） |
 | 系统 | 19 | `/system/policy` | 策略/审批 | 规则 CRUD、模拟、审批记录/取消 | #117–#124 | 空态；5s | ✅ 可开发 |
@@ -1382,13 +1395,33 @@ HTTP 请求
 | Agents | CRUD/test（6） | 🟡 未接入 engine 装配 |
 | Workspace | files/upload（5，`{path...}`） | ✅（路径穿越/符号链接拒绝、大小限制；配额 🟡） |
 | Sync | sources/projects/run/runs（9） | ✅ 基础版（SSRF 三层、默认拒私网；崩溃恢复/保留策略 🟡） |
-| 流量增强 | HAR 导出/重放/任务级清理（3） | ✅（重放绕过策略/审批 🟡 高风险） |
-| 证据增强 | 审计/导出/轮换（3） | 审计/导出 ✅ 部分；轮换返回 501（⬜） |
-| 复测/发现 | run/evidence/from-node（3） | ✅（run 只校验证据，不重跑 exploit；from-node 可能重复 🟡） |
+| 流量增强 | HAR 导出/重放/任务级清理（3） | ✅（B6 重放已走 executor 策略门） |
+| 证据增强 | 审计/导出/轮换（3） | 审计/导出 ✅ 部分；轮换 ✅（签名失效需重签 🟡） |
+| 复测/发现 | run/evidence/from-node（3） | ✅（run 只校验证据，不重跑 exploit；from-node 由 0016 唯一索引防重复） |
 | 报告 | markdown/html/docx/pdf 扩展 | ✅（PDF 依赖阅读器 CJK 字体；DOCX 最小合法） |
 
 - 迁移：0010 mcp、0011 skills、0012 agents、0013 workspace（空操作）、0014 evidence_access_log、0015 sync（3 表）。
-- 未完成/风险：证据密钥轮换（⬜ 501）、Agents 接入执行（🟡）、通知真实事件推送/SSRF 白名单/config 加密（🟡）、sync 崩溃恢复/保留策略（🟡）、证据审计覆盖不全（🟡）、流量重放绕过策略（🟡）、from-node 并发重复（🟡）、LLM 正文采集/Dashboard 小时趋势（⬜/未排期）。
+- 未完成/风险：证据轮换后重签（🟡）、Agents 接入执行（🟡）、通知真实事件推送/SSRF 白名单/config 加密（🟡）、sync 崩溃恢复/保留策略（🟡）、证据审计覆盖不全（🟡）、workspace 跨进程配额/stdio Windows CI（🟡）、LLM 正文采集（⬜）。
+
+### B6：硬化与可观测性（✅ 已实现/部分 2026-10-22）
+
+B6 新增 3 条 feature 路由（总数 140→**143**），并硬化既有能力：
+
+| 能力 | 状态 | 实际实现 |
+| --- | --- | --- |
+| 全局活动流 `GET /activity` | ✅ | mission_events 跨任务倒序；limit 50/200；before_id/mission_id/type；不存在任务过滤返回 [] |
+| Skills 版本 `GET /skills/{name}/versions`、`POST .../{versions}/{timestamp}/restore` | ✅ | .versions 快照、保留 5 份、restore 先快照再恢复；.versions 对文件接口隐藏/400；restore 不回滚 DB 元数据（🟡） |
+| 流量重放走 executor | ✅ | 经策略门/审批/审计/证据采集；未接线 503 executor_unavailable；deny/拒绝 403、超时 409、未知工具/其它 502；返回 policy_gated/output/status/traffic_id(best-effort) |
+| 证据密钥轮换 | ✅/🟡 | POST /evidence/rotate {new_key_hex}→200 {rotated,new_key_hex_not_stored,notice}；全程写锁、逐文件重加密、失败 best-effort 回滚；新密钥不落盘需更新 env 并重启；**存量 Snapshot 签名失效，无自动重签（🟡）** |
+| 证据审计覆盖 | 🟡 | verify 成功/失败均记 verify；流量正文读取且 blob 被快照引用时记 read；best-effort，仍有路径未埋点 |
+| 作战图分页 | ✅/🟡 | `?after_id=` 取 id>after_id（升序），响应 next_after_id；edges/anchors 全量；过滤仍受 ListNodes 1000 上限（🟡） |
+| Dashboard 小时趋势 | ✅ | `hourly` 最近 24 小时 UTC 整点桶（hour/missions_created/missions_done/tokens/approvals_requested，缺失补 0）；旧字段不变 |
+| MCP stdio 沙箱 | 🟡 | 默认禁用；env 白名单、临时工作目录、stdout≤1MiB、超时 kill 进程组、命令白名单/`BEACONX_MCP_STDIO_DIR`；端点显式 env 原样透传；Windows 400 |
+| Workspace 配额 | 🟡 | 默认 100MB（`BEACONX_WORKSPACE_QUOTA_MB`）；PUT/上传预检+后复核，超限 413 quota_exceeded；列表 quota_bytes/used_bytes；per-mission 锁仅进程内 |
+| from-node 唯一性 | ✅ | 0016 部分唯一索引 `uq_findings_node` 兜底，23505→409 |
+
+- 迁移：0016 仅一条部分唯一索引；无新表。
+- 仍为 ⬜/🟡：settings 热生效、通知真实事件推送/SSRF 白名单/加密、Agents 接入 engine、证据轮换后重签、审计全覆盖、workspace 跨进程配额、sync 崩溃恢复、报告字体、graph 过滤上限、LLM 正文采集。
 
 ## 11. 配置与环境变量
 
@@ -1474,6 +1507,8 @@ HTTP 请求
 | `BEACONX_SYNC_ALLOW_PRIVATE` | 是否允许同步访问私网/loopback | 默认 false；SSRF 防护用 |
 | `BEACONX_SYNC_MAX_BYTES` | http_json 同步响应大小上限 | 默认实现值（≤5MB 量级） |
 | `BEACONX_SYNC_TIMEOUT` | http_json 同步请求超时 | 默认 10s 量级 |
+| `BEACONX_MCP_STDIO_DIR` | stdio MCP 命令白名单目录 | 空；stdio 命令须精确白名单或位于该目录 |
+| `BEACONX_WORKSPACE_QUOTA_MB` | Workspace 配额（MB） | 默认 100；<=0/非法回默认 |
 
 > 这些变量由 B4/B5 功能代码直接读取，不属于 `internal/config` 的 29 个配置项；`BEACONX_TEST_PG_DSN` 仅测试使用。
 
@@ -1540,8 +1575,8 @@ make docs-check
 | 发布包文件名与 selfupdate 解压不匹配；无签名；Windows 自更新未验证 | 自更新可用性/供应链 | §7.8、§12.4 |
 | `beaconx help` 未列新变量；compose 未透传新变量 | 部署一致性 | §11.5 |
 | LLM 请求/响应正文采集、Dashboard 小时趋势/活动流、跨任务发现独立详情聚合 | 少量前端增强不可做 | §5.6.3、§9 |
-| from-node 并发去重、大图 after_id 分页、报告图片/字体嵌入、sync 崩溃恢复 | B4/B5 部分实现/风险 | §5.6.3、§10 |
-| 纯文本输出未脱敏、MITM/真实流量未实现、证据密钥轮换返回 501、审计埋点不全、流量重放绕过策略 | 证据/安全边界 | §6.8、§6.13、evidence.md |
+| 大图过滤上限、报告图片/字体嵌入、sync 崩溃恢复 | B4/B5/B6 部分实现/风险 | §5.6.3、§10 |
+| 纯文本输出未脱敏、MITM/真实流量未实现、证据轮换后签名失效/无重签、审计埋点不全 | 证据/安全边界 | §6.8、§6.13、evidence.md |
 | LLM 规划诊断事件（planner_*）前端未登记 | 前端看不到诊断事件 | §8.2 |
 
 ## 13. 一致性检查清单
@@ -1588,3 +1623,4 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 2026-10-21 | `e08401b` | 实现 M6.2-B3：流量列表/详情/正文/删除 5 条 + 命令历史 2 条 + LLM 记录/任务用量/用量聚合 3 条 + Dashboard 1 条（共 11 条，总路由 59→70）；无新迁移；`spent_total`/`today` 口径与 DB 时区说明 | §1、§3、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-22 | 本次提交（工作区） | B4+B5 最终文档同步：已实现 140 条（基础 70 + feature 70）；补 0008–0015 共 11 表、B4 24 条 + B5 46 条 pattern、报告多格式扩展、§5.6 状态与实际偏差；OpenAPI 1.0.0 / README / data-model / runtime / evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-21 | 本次提交 | 文档补全计划接口与三态标注（未实现，供前端设计）：新增 ✅/🟡/⬜ 图例；§5.2 已实现路由加状态列；§5.6 新增 73 条计划接口草案（B4 26 + B5 47）与 B1/B2/B3 缺口索引；§9 改为三态映射 + 可用性结论 + 21 项前端页面拆分；§10 B4/B5 改为计划明细表；data-model 增加计划表标注 | §1、§5、§9、§10、§14 |
+| 2026-10-22 | 本次提交（工作区） | B6 硬化文档同步：路由 140→143（activity、skills versions/restore）；重放改走 executor、证据轮换实现（签名失效警示）、审计覆盖、graph after_id、Dashboard hourly、stdio/workspace 硬化、0016 部分唯一索引；OpenAPI 1.1.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |

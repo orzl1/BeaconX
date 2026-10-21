@@ -292,6 +292,10 @@ func (o Options) handleCreateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 	transport := strings.TrimSpace(req.Transport)
 	if transport == mcp.TransportStdio {
+		if !mcp.StdioSupported() {
+			writeError(w, r, http.StatusBadRequest, "stdio_unsupported", "当前平台不支持 MCP stdio 传输")
+			return
+		}
 		allow, _ := o.mcpStdioPolicy(r)
 		if !allow {
 			writeError(w, r, http.StatusBadRequest, "stdio_disabled",
@@ -487,6 +491,10 @@ func (o Options) handleRefreshMCPServer(w http.ResponseWriter, r *http.Request) 
 	server, err := o.Store.GetMCPServer(r.Context(), o.TenantID, serverID)
 	if err != nil {
 		writeStoreError(w, r, err)
+		return
+	}
+	if server.Transport == mcp.TransportStdio && !mcp.StdioSupported() {
+		writeError(w, r, http.StatusBadRequest, "stdio_unsupported", "当前平台不支持 MCP stdio 传输")
 		return
 	}
 	allow, allowlist := o.mcpStdioPolicy(r)

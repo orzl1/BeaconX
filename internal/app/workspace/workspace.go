@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -43,6 +44,10 @@ const (
 	MaxReadBytes int64 = 10 << 20
 	// MaxListEntries 是递归列目录的最大条目数（超出截断）。
 	MaxListEntries = 2000
+	// DefaultQuotaMB 是每任务工作区的默认总大小上限（100MB）。
+	DefaultQuotaMB int64 = 100
+	// quotaEnv 是覆盖默认配额的配置键（单位 MB；<=0 或非数字用默认值）。
+	quotaEnv = "BEACONX_WORKSPACE_QUOTA_MB"
 )
 
 // 语义化错误：HTTP 层据此映射 400/404/409/413。
@@ -61,6 +66,8 @@ var (
 	ErrTooLarge = errors.New("内容超过大小上限")
 	// ErrDirNotEmpty 表示删除非空目录但没有 recursive=true。
 	ErrDirNotEmpty = errors.New("目录非空")
+	// ErrQuota 表示写入会让任务工作区超过总大小配额。
+	ErrQuota = errors.New("工作区用量超过配额")
 )
 
 // Entry 是目录列表中的一项（路径相对任务根目录，使用 / 分隔）。
@@ -74,6 +81,10 @@ type Entry struct {
 // Service 是某个状态目录下的工作区服务，可并发使用。
 type Service struct {
 	stateDir string
+	// lockMu 保护 locks；locks 按 tenant/mission 提供「同一任务串行写入」的
+	// 互斥锁，用于把「统计配额 + 写入」做成临界区，避免并发写超卖。
+	lockMu sync.Mutex
+	locks  map[string]*sync.Mutex
 }
 
 // New 创建服务并确保状态目录存在（0700）。
@@ -89,7 +100,7 @@ func New(stateDir string) (*Service, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("创建状态目录失败: %w", err)
 	}
-	return &Service{stateDir: abs}, nil
+	return &Service{stateDir: abs, locks: map[string]*sync.Mutex{}}, nil
 }
 
 // DefaultStateDir 解析默认状态目录（BEACONX_HOME > config.state.dir > ./data）。
@@ -104,6 +115,90 @@ func DefaultStateDir() string {
 		return cfg.State.Dir
 	}
 	return "data"
+}
+
+// QuotaBytes 返回每任务工作区的总大小上限（字节）。
+//
+// 配置键 BEACONX_WORKSPACE_QUOTA_MB：<=0、空或非数字时使用 DefaultQuotaMB。
+// 每次调用重新读取，便于测试用 t.Setenv 注入小配额。
+func (s *Service) QuotaBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv(quotaEnv))
+	if raw != "" {
+		if mb, err := strconv.ParseInt(raw, 10, 64); err == nil && mb > 0 {
+			return mb << 20
+		}
+	}
+	return DefaultQuotaMB << 20
+}
+
+// Usage 统计任务工作区的已用字节数（只累加普通文件，跳过符号链接与目录）。
+//
+// 目录不存在视为 0；统计失败返回错误（调用方决定是否降级展示）。
+func (s *Service) Usage(tenantID, missionID int64) (int64, error) {
+	if tenantID <= 0 || missionID <= 0 {
+		return 0, fmt.Errorf("%w: 租户或任务标识非法", ErrInvalidPath)
+	}
+	root := s.MissionRoot(tenantID, missionID)
+	if info, err := os.Lstat(root); errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	} else if err == nil && !info.IsDir() {
+		return 0, fmt.Errorf("%w: 任务工作区不是目录", ErrInvalidPath)
+	}
+	var used int64
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrNotExist) {
+				return nil
+			}
+			return walkErr
+		}
+		if d.IsDir() || d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return nil // 统计期间消失的文件：跳过
+		}
+		used += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("统计工作区用量失败: %w", err)
+	}
+	return used, nil
+}
+
+// missionLock 返回某任务工作区的互斥锁（不存在则创建）。
+func (s *Service) missionLock(tenantID, missionID int64) *sync.Mutex {
+	key := strconv.FormatInt(tenantID, 10) + "/" + strconv.FormatInt(missionID, 10)
+	s.lockMu.Lock()
+	defer s.lockMu.Unlock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
+	lock := s.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.locks[key] = lock
+	}
+	return lock
+}
+
+// checkQuotaLocked 在持有任务锁时校验「写入后」是否超配额。
+//
+// newBytes 是本次写入的字节数；replacedBytes 是被覆盖文件的原有大小（新建为 0），
+// 这样覆盖写不会因为旧文件也被计入而误判。
+func (s *Service) checkQuotaLocked(tenantID, missionID, newBytes, replacedBytes int64) error {
+	used, err := s.Usage(tenantID, missionID)
+	if err != nil {
+		return err
+	}
+	quota := s.QuotaBytes()
+	projected := used - replacedBytes + newBytes
+	if projected > quota {
+		return fmt.Errorf("%w: 写入后约 %d 字节，超过任务上限 %d 字节", ErrQuota, projected, quota)
+	}
+	return nil
 }
 
 // MissionRoot 返回任务工作区根目录（不创建）。
@@ -224,8 +319,22 @@ func (s *Service) Write(tenantID, missionID int64, relFile string, data []byte) 
 	if err != nil {
 		return Entry{}, err
 	}
-	if info, statErr := os.Lstat(abs); statErr == nil && info.IsDir() {
-		return Entry{}, fmt.Errorf("%w: 目标是目录", ErrIsDir)
+	// 配额是「统计 + 写入」的复合操作：同一任务的写串行化，避免并发超卖。
+	lock := s.missionLock(tenantID, missionID)
+	lock.Lock()
+	defer lock.Unlock()
+	var replacedBytes int64
+	if info, statErr := os.Lstat(abs); statErr == nil {
+		if info.IsDir() {
+			return Entry{}, fmt.Errorf("%w: 目标是目录", ErrIsDir)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return Entry{}, fmt.Errorf("%w: 不允许写入符号链接", ErrInvalidPath)
+		}
+		replacedBytes = info.Size()
+	}
+	if err := s.checkQuotaLocked(tenantID, missionID, int64(len(data)), replacedBytes); err != nil {
+		return Entry{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return Entry{}, fmt.Errorf("创建父目录失败: %w", err)
@@ -268,6 +377,21 @@ func (s *Service) Upload(tenantID, missionID int64, dir, filename string, r io.R
 	if err != nil {
 		return Entry{}, err
 	}
+	lock := s.missionLock(tenantID, missionID)
+	lock.Lock()
+	defer lock.Unlock()
+	var replacedBytes int64
+	if info, statErr := os.Lstat(abs); statErr == nil && !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		replacedBytes = info.Size()
+	}
+	// 上传大小未知（size<0）时按单文件上限保守估计，宁可多拒不可超卖。
+	projected := size
+	if projected < 0 {
+		projected = MaxUploadBytes
+	}
+	if err := s.checkQuotaLocked(tenantID, missionID, projected, replacedBytes); err != nil {
+		return Entry{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return Entry{}, fmt.Errorf("创建上传目录失败: %w", err)
 	}
@@ -289,6 +413,13 @@ func (s *Service) Upload(tenantID, missionID int64, dir, filename string, r io.R
 	if written > MaxUploadBytes {
 		_ = os.Remove(abs)
 		return Entry{}, fmt.Errorf("%w: 上传文件最多 %d 字节", ErrTooLarge, MaxUploadBytes)
+	}
+	// size 可能由调用方低估或为未知：按实际写入量再核对一次配额。
+	if written != replacedBytes {
+		if quotaErr := s.checkQuotaLocked(tenantID, missionID, written, replacedBytes); quotaErr != nil {
+			_ = os.Remove(abs)
+			return Entry{}, quotaErr
+		}
 	}
 	// 注意：上传允许任意二进制内容（脚本、字典、工具包等），只有「文本写入」
 	// 与「文本读取」要求 UTF-8；读取二进制文件会返回 ErrBinary。

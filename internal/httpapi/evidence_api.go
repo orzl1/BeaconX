@@ -98,17 +98,32 @@ func (o Options) handleVerifyEvidence(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: snap.CreatedAt,
 	})
 	if err != nil || sealed.Signature != snap.Signature {
+		o.logEvidenceAccess(r, snap.ID, "verify", "user")
 		writeError(w, r, http.StatusConflict, "tampered", "证据签名校验失败，可能已被篡改")
 		return
 	}
 	// 正文再校验一次内容哈希。
 	if _, err := o.Evidence.GetBlob(r.Context(), req); err != nil {
+		o.logEvidenceAccess(r, snap.ID, "verify", "user")
 		writeError(w, r, http.StatusConflict, "tampered", "证据请求正文校验失败: "+err.Error())
 		return
 	}
 	if _, err := o.Evidence.GetBlob(r.Context(), resp); err != nil {
+		o.logEvidenceAccess(r, snap.ID, "verify", "user")
 		writeError(w, r, http.StatusConflict, "tampered", "证据响应正文校验失败: "+err.Error())
 		return
 	}
+	o.logEvidenceAccess(r, snap.ID, "verify", "user")
 	writeJSON(w, http.StatusOK, map[string]any{"verified": true, "evidence_id": snap.ID, "signature": snap.Signature})
+}
+
+// logEvidenceAccess 追加一条证据访问审计（best-effort）。
+//
+// 审计失败不会改变业务结果：证据操作本身已经完成，把审计问题变成 5xx 只会让
+// 调用方重试并产生重复记录。调用方在没有 Store 时自动跳过。
+func (o Options) logEvidenceAccess(r *http.Request, snapshotID int64, action, actor string) {
+	if o.Store == nil || snapshotID <= 0 {
+		return
+	}
+	_, _ = o.Store.LogEvidenceAccess(r.Context(), o.TenantID, snapshotID, action, actor)
 }

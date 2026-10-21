@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/app/evidence"
-	"github.com/orzl1/BeaconX/internal/app/tools"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
 
@@ -20,12 +20,13 @@ import (
 // 路由通过 RegisterFeatureRoutes 在 init() 注册，NewHandler 构造时用 Build(Options)
 // 注入 Store/Evidence/TenantID。
 //
-// 安全边界（重要）：
+// 安全边界：
 //   - 导出/重放都需要 Bearer 鉴权（统一中间件）；
-//   - 重放当前**不经过 executor 的策略门与审批**：Options 没有执行器字段，而本批
-//     不允许改 handler.go。为降低风险，只允许重放 tool=http_probe 且请求参数必须
-//     是合法 JSON 的采集记录，重放结果作为新的 traffic 行落库（可审计）；
-//   - 后续应把重放接到 executor（策略门 + 审批 + 审计）上，替换这里的直接调用。
+//   - 重放**必须经过 executor**（策略门 + 审批 + 审计 + 采集），Options.Executor
+//     未接线时返回 503，绝不静默降级为直接调用工具；仅允许同租户、tool=http_probe、
+//     请求参数为合法 JSON 的采集记录；
+//   - 重放产生的采集行由 executor 的 Evidence 配置负责落库；这里只做 best-effort
+//     查询最新 traffic_id 返回给调用方。
 
 const (
 	// harSizeLimit 是 HAR 导出允许的最大请求+响应正文字节数（含解码后）。
@@ -312,12 +313,17 @@ func parseToolOutput(output string) ([]harNameValue, string, string) {
 
 // ---------- 重放 ----------
 
-// handleTrafficReplay 重放一条 http_probe 采集记录并写入新的采集行。
+// handleTrafficReplay 重放一条 http_probe 采集记录，经 executor 策略门执行。
 //
-// 安全边界见文件头：当前直接调用 http_probe，不经过 executor 策略门/审批；
-// 仅允许同租户、tool=http_probe、请求参数为合法 JSON 的记录，重放结果落库可审计。
+// 返回 {policy_gated:true, output, traffic_id?, status?}；若 Options.Executor 未接线
+// 则 503（不允许绕过策略门直接调用工具）。执行被拒绝/待审批按 executor 语义映射：
+// 策略 deny → 403；人工拒绝 → 403；审批超时 → 409；其它执行失败 → 502。
 func (o Options) handleTrafficReplay(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
+		return
+	}
+	if o.Executor == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "executor_unavailable", "执行器未接线，禁止绕过策略门重放")
 		return
 	}
 	if o.Evidence == nil {
@@ -353,46 +359,63 @@ func (o Options) handleTrafficReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 直接执行 http_probe。注意：这里绕过 executor 的策略门与审批，属于本批
-	// 已知限制；重放结果写入 traffic_exchanges，保证事后可审计。
-	probe := tools.NewHTTPProbe()
-	result, execErr := probe.Execute(r.Context(), reqBody)
+	nodeID := int64(0)
+	if record.NodeID != nil {
+		nodeID = *record.NodeID
+	}
+	result, err := o.Executor.Execute(r.Context(), record.MissionID, nodeID, replayTool, reqBody)
+	if err != nil {
+		writeReplayExecutorError(w, r, err)
+		return
+	}
 	status := 0
 	if v, ok := result.Meta["status"]; ok {
 		if code, ok := v.(int); ok {
 			status = code
 		}
 	}
-	errText := ""
-	if execErr != nil {
-		errText = execErr.Error()
-	}
-	respPayload := []byte(result.Output)
-	if execErr != nil && len(respPayload) == 0 {
-		respPayload = []byte(errText)
-	}
-	respRef, err := o.Evidence.PutBlob(r.Context(), respPayload)
-	if err != nil {
-		writeStoreError(w, r, err)
-		return
-	}
-	reqRef := evidence.BlobRef{Hash: record.RequestHash, Size: record.RequestSize}
-	newID, err := o.Store.BeginTraffic(r.Context(), o.TenantID, record.MissionID, record.NodeID,
-		replayTool, reqRef, "replay")
-	if err != nil {
-		writeStoreError(w, r, err)
-		return
-	}
-	if err := o.Store.FinishTraffic(r.Context(), o.TenantID, newID, respRef, status, errText); err != nil {
-		writeStoreError(w, r, err)
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"traffic_id": newID,
-		"mission_id": record.MissionID,
-		"status":     status,
-		"error":      errText,
+		"policy_gated": true,
+		"traffic_id":   o.latestReplayTrafficID(r.Context(), record.MissionID),
+		"output":       result.Output,
+		"status":       status,
 	})
+}
+
+// writeReplayExecutorError 把 executor 的执行错误映射成 HTTP 语义。
+//
+// executor 当前以普通 error 文本表达裁决（策略/审批层没有导出哨兵错误），
+// 这里按稳定的中文前缀映射；后续 executor 提供 typed error 后应替换为 errors.Is。
+func writeReplayExecutorError(w http.ResponseWriter, r *http.Request, err error) {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "策略拒绝执行"):
+		writeError(w, r, http.StatusForbidden, "policy_denied", message)
+	case strings.Contains(message, "未获人工批准"):
+		writeError(w, r, http.StatusForbidden, "approval_rejected", message)
+	case strings.Contains(message, "审批超时"):
+		writeError(w, r, http.StatusConflict, "approval_timeout", message)
+	case strings.Contains(message, "未知工具"):
+		writeError(w, r, http.StatusBadGateway, "executor_unavailable", "执行器未注册 http_probe 工具")
+	default:
+		writeError(w, r, http.StatusBadGateway, "replay_failed", "重放失败："+message)
+	}
+}
+
+// latestReplayTrafficID 返回任务最近一条 http_probe 采集行 ID。
+//
+// executor 在自己的采集流程里写 traffic_exchanges；这里只做 best-effort 查询，
+// 查不到时返回 0（响应里的 traffic_id 是提示字段，不作为执行成功依据）。
+func (o Options) latestReplayTrafficID(ctx context.Context, missionID int64) int64 {
+	list, err := o.Store.ListTrafficPage(ctx, o.TenantID, pg.TrafficPageFilter{
+		MissionID: missionID,
+		Tool:      replayTool,
+		Limit:     1,
+	})
+	if err != nil || len(list) == 0 {
+		return 0
+	}
+	return list[0].ID
 }
 
 // ---------- 任务级流量清理 ----------

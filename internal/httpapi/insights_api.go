@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
@@ -152,6 +153,12 @@ func (o Options) handleTrafficBody(w http.ResponseWriter, r *http.Request, kind 
 		}
 		writeStoreError(w, r, err)
 		return
+	}
+	// 若这段正文同时被某条证据快照引用，把本次读取记到该快照的访问审计上
+	// （best-effort；不属于任何证据的普通流量读取不产生审计）。审计覆盖后，
+	// 证据详情页可以解释「谁在何时读过这份证据正文」。
+	if snapshotID, found, lookupErr := o.Store.EvidenceSnapshotIDByBlobHash(r.Context(), o.TenantID, ref.Hash); lookupErr == nil && found {
+		o.logEvidenceAccess(r, snapshotID, "read", "traffic")
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -341,6 +348,15 @@ func (o Options) handleLLMUsageSummary(w http.ResponseWriter, r *http.Request) {
 // ---------- Dashboard ----------
 
 // handleDashboard 返回首页聚合计数。
+// dashboardResponse 在 DashboardStats 之外追加「最近 24 小时」趋势。
+//
+// 用匿名嵌入保持既有字段在 JSON 顶层完全不变（新增字段只有 hourly），
+// 这样 B3 的旧客户端与测试无需改动。
+type dashboardResponse struct {
+	pg.DashboardStats
+	Hourly []pg.DashboardHour `json:"hourly"`
+}
+
 func (o Options) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
 		return
@@ -350,7 +366,12 @@ func (o Options) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, stats)
+	hourly, err := o.Store.DashboardHourly(r.Context(), o.TenantID, time.Now())
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dashboardResponse{DashboardStats: stats, Hourly: hourly})
 }
 
 // ---------- 参数小工具 ----------

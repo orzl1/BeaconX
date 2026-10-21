@@ -27,7 +27,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,7 +51,37 @@ const (
 	maxInputSchemaBytes = 64 << 10
 	maxBodyBytes        = 4 << 20
 	maxErrorBodySnippet = 200
+	// maxStdioOutputBytes 是 stdio 子进程 stdout 的读取上限：超过即终止发现，
+	// 防止实现异常的服务器用无限输出拖垮客户端。
+	maxStdioOutputBytes int64 = 1 << 20
 )
+
+// stdioDirEnv 是「允许执行哪些目录下的 stdio 命令」的配置键（逗号分隔绝对目录）。
+const stdioDirEnv = "BEACONX_MCP_STDIO_DIR"
+
+// stdioEnvAllowlist 是允许从父进程透传给 stdio 子进程的环境变量名。
+//
+// 默认只放行「运行一个普通 CLI 必需」的变量；其它变量（尤其是 *_KEY、
+// *_TOKEN、AWS_*、代理凭据等）一律不继承，避免 MCP 子进程读走平台凭据。
+// 端点自身配置的 env 会全部显式透传（那是运营者有意提供的，例如 MCP 自身的
+// API Key）。
+var stdioEnvAllowlist = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "LOGNAME": true, "SHELL": true,
+	"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TERM": true,
+	"TMPDIR": true, "TEMP": true, "TMP": true, "PWD": true,
+}
+
+// stdioSupported 报告当前平台是否支持 stdio 传输。
+//
+// Windows 上不支持：进程创建、管道与信号语义差异较大，最小实现不做适配；
+// 声明为变量是为了让单测能在非 Windows 上覆盖「不支持」分支。
+var stdioSupported = runtime.GOOS != "windows"
+
+// StdioSupported 报告当前平台是否支持 MCP stdio（HTTP 层据此返回 400）。
+func StdioSupported() bool { return stdioSupported }
+
+// ErrStdioUnsupported 表示平台不支持 stdio 传输。
+var ErrStdioUnsupported = errors.New("当前平台不支持 MCP stdio 传输")
 
 // 传输类型，与迁移 0010 的 CHECK 约束保持一致。
 const (
@@ -89,6 +122,9 @@ type Options struct {
 	// StdioAllowlist 非空时，command 必须精确命中其中一项；为空表示不额外限制
 	// （是否允许 stdio 仍由 AllowStdio 决定）。
 	StdioAllowlist []string
+	// StdioDirs 覆盖允许执行命令的目录列表；nil 表示读环境变量
+	// BEACONX_MCP_STDIO_DIR（逗号分隔）。空列表 = 只接受精确白名单命令。
+	StdioDirs []string
 }
 
 func (o Options) timeout() time.Duration {
@@ -113,24 +149,127 @@ func Discover(ctx context.Context, srv Server, opts Options) ([]Tool, error) {
 	}
 }
 
-// stdioAllowed 判断本次是否允许 stdio，以及命令是否在白名单内。
+// stdioAllowed 判断本次是否允许 stdio，以及命令是否命中策略。
+//
+// 策略（从宽到严）：
+//  1. 平台支持（Windows 直接拒绝）；
+//  2. 显式开启 AllowStdio（默认 false）；
+//  3. 命令非空，且满足下列之一：
+//     a) 精确命中 StdioAllowlist；
+//     b) 是绝对路径，且位于 BEACONX_MCP_STDIO_DIR / Options.StdioDirs 列出的目录内。
+//     两者都不满足时拒绝；目录列表为空则只接受精确白名单。
 func stdioAllowed(srv Server, opts Options) error {
+	if !stdioSupported {
+		return ErrStdioUnsupported
+	}
 	if !opts.AllowStdio {
 		return ErrStdioDisabled
 	}
+	_, err := resolveStdioCommand(srv, opts)
+	return err
+}
+
+// resolveStdioCommand 按白名单策略解析要执行的命令，返回可直接交给 exec 的路径。
+func resolveStdioCommand(srv Server, opts Options) (string, error) {
 	command := strings.TrimSpace(srv.Command)
 	if command == "" {
-		return errors.New("stdio 端点缺少 command")
-	}
-	if len(opts.StdioAllowlist) == 0 {
-		return nil
+		return "", errors.New("stdio 端点缺少 command")
 	}
 	for _, allowed := range opts.StdioAllowlist {
 		if strings.TrimSpace(allowed) == command {
-			return nil
+			return command, nil
 		}
 	}
-	return fmt.Errorf("%w：%s", ErrCommandNotAllowed, command)
+	if !filepath.IsAbs(command) {
+		return "", fmt.Errorf("%w：命令必须是绝对路径或精确命中白名单（%s）", ErrCommandNotAllowed, command)
+	}
+	dirs := stdioDirs(opts)
+	if len(dirs) == 0 {
+		return "", fmt.Errorf("%w：未配置 %s，仅允许精确白名单命令", ErrCommandNotAllowed, stdioDirEnv)
+	}
+	realCommand := command
+	if resolved, err := filepath.EvalSymlinks(command); err == nil {
+		realCommand = resolved
+	}
+	for _, dir := range dirs {
+		realDir := dir
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			realDir = resolved
+		}
+		if withinDir(realDir, realCommand) {
+			return command, nil
+		}
+	}
+	return "", fmt.Errorf("%w：命令不在允许目录内", ErrCommandNotAllowed)
+}
+
+// stdioDirs 返回允许执行命令的目录列表：Options.StdioDirs 优先，否则读环境变量。
+func stdioDirs(opts Options) []string {
+	if opts.StdioDirs != nil {
+		return opts.StdioDirs
+	}
+	raw := strings.TrimSpace(os.Getenv(stdioDirEnv))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" || !filepath.IsAbs(trimmed) {
+			continue
+		}
+		out = append(out, filepath.Clean(trimmed))
+	}
+	return out
+}
+
+// withinDir 报告 target 是否位于 dir 之下（两者都应是绝对路径）。
+func withinDir(dir, target string) bool {
+	cleanDir := filepath.Clean(dir)
+	cleanTarget := filepath.Clean(target)
+	if cleanTarget == cleanDir {
+		return true
+	}
+	prefix := cleanDir
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(cleanTarget, prefix)
+}
+
+// sandboxEnv 构造 stdio 子进程的环境变量：父进程白名单 + 端点显式配置。
+func sandboxEnv(configured map[string]string) []string {
+	out := make([]string, 0, len(stdioEnvAllowlist)+len(configured))
+	for _, kv := range os.Environ() {
+		key, _, found := strings.Cut(kv, "=")
+		if !found {
+			continue
+		}
+		if stdioEnvAllowlist[key] {
+			out = append(out, kv)
+		}
+	}
+	for key, value := range configured {
+		name := strings.TrimSpace(key)
+		if name == "" || strings.ContainsAny(name, "=\x00") || strings.ContainsRune(value, 0) {
+			continue
+		}
+		out = append(out, name+"="+value)
+	}
+	return out
+}
+
+// countingReader 统计已读取字节数，用于 stdio 输出上限。
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.reader.Read(p)
+	c.read += int64(n)
+	return n, err
 }
 
 // ---------- JSON-RPC 信封 ----------
@@ -405,17 +544,34 @@ func readSSEResponse(r io.Reader, wantID int) (*rpcResponse, error) {
 
 // discoverStdio 以行协议与子进程完成 initialize + tools/list。
 //
-// 安全：默认禁用；是否允许由 Options 决定（见 stdioAllowed）。子进程继承当前
-// 进程环境，再叠加端点配置的 env；任何 env 值都不会出现在错误文本中。
+// 沙箱约束：
+//   - 平台不支持（Windows）→ ErrStdioUnsupported；
+//   - 默认禁用，需显式开启；命令须命中精确白名单或位于允许目录；
+//   - 子进程工作目录是独立临时目录（退出即删），不继承平台工作目录；
+//   - 环境变量只透传白名单变量 + 端点显式配置，父进程密钥不外泄；
+//   - stdout 读取上限 1MiB，超限终止；超时由 context 终止（子进程被 Kill）。
 func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error) {
+	// 先过策略门（平台/开关/命令白名单），再解析可执行路径。
 	if err := stdioAllowed(srv, opts); err != nil {
+		return nil, err
+	}
+	command, err := resolveStdioCommand(srv, opts)
+	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, opts.timeout())
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, strings.TrimSpace(srv.Command), srv.Args...)
-	cmd.Env = append(os.Environ(), envPairs(srv.Env)...)
+	// 独立工作目录：避免把平台 CWD（可能是仓库/配置目录）暴露给子进程。
+	workDir, err := os.MkdirTemp("", "beaconx-mcp-stdio-*")
+	if err != nil {
+		return nil, fmt.Errorf("创建 stdio 沙箱目录失败：%w", err)
+	}
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	cmd := exec.CommandContext(ctx, command, srv.Args...)
+	cmd.Dir = workDir
+	cmd.Env = sandboxEnv(srv.Env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("创建子进程输入管道失败：%w", err)
@@ -427,19 +583,48 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 	// stderr 只保留尾部少量字节用于诊断；同样不回显 env。
 	var stderr limitedBuffer
 	cmd.Stderr = &stderr
+	// 独立进程组：超时可整组终止，防止子进程继续持有 stdout 管道。
+	configureProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("启动 stdio MCP 失败：%w", err)
 	}
+	// 取消/超时时主动断开管道并杀掉进程组，保证 Read 立即返回而不是等到
+	// 目标进程自然退出（否则一个 sleep 子进程就能拖住整个发现流程）。
+	stopWatcher := make(chan struct{})
+	defer close(stopWatcher)
+	go func() {
+		select {
+		case <-ctx.Done():
+			killProcessGroup(cmd)
+			_ = stdin.Close()
+			_ = stdout.Close()
+		case <-stopWatcher:
+		}
+	}()
 	defer func() {
 		cancel()
 		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = stdout.Close()
+		killProcessGroup(cmd)
 		_ = cmd.Wait()
 	}()
 
-	reader := bufio.NewReaderSize(stdout, 64<<10)
+	counter := &countingReader{reader: io.LimitReader(stdout, maxStdioOutputBytes+1)}
+	reader := bufio.NewReaderSize(counter, 64<<10)
+	// readError 统一把「超时 / 输出超限 / EOF」翻译成可读错误。
+	readError := func(err error) error {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("stdio 发现超时（%s）", opts.timeout())
+		}
+		if counter.read > maxStdioOutputBytes {
+			return fmt.Errorf("stdio 输出超过 %d 字节上限，已终止", maxStdioOutputBytes)
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return fmt.Errorf("读取子进程输出失败：%w（stderr：%s）", err, msg)
+		}
+		return fmt.Errorf("读取子进程输出失败：%w", err)
+	}
 	write := func(body rpcRequest) error {
 		raw, err := json.Marshal(body)
 		if err != nil {
@@ -447,6 +632,9 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 		}
 		raw = append(raw, '\n')
 		if _, err := stdin.Write(raw); err != nil {
+			if ctx.Err() != nil {
+				return readError(err)
+			}
 			return fmt.Errorf("写入子进程失败：%w", err)
 		}
 		return nil
@@ -456,11 +644,7 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 		for {
 			line, err := reader.ReadBytes('\n')
 			if err != nil {
-				msg := strings.TrimSpace(stderr.String())
-				if msg != "" {
-					return nil, fmt.Errorf("读取子进程输出失败：%w（stderr：%s）", err, msg)
-				}
-				return nil, fmt.Errorf("读取子进程输出失败：%w", err)
+				return nil, readError(err)
 			}
 			trimmed := bytes.TrimSpace(line)
 			if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -545,12 +729,17 @@ func envPairs(env map[string]string) []string {
 }
 
 // limitedBuffer 是只保留尾部 maxBytes 的 io.Writer，用于子进程 stderr。
+// 子进程 stdout/stderr 由 os/exec 的独立 goroutine 写入，而超时/取消路径会并发
+// 读取 String()，因此必须加锁。
 type limitedBuffer struct {
+	mu       sync.Mutex
 	buf      bytes.Buffer
 	maxBytes int
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	limit := b.maxBytes
 	if limit <= 0 {
 		limit = 512
@@ -567,5 +756,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return strings.TrimSpace(b.buf.String())
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,26 @@ const (
 	skillHomeEnv     = "BEACONX_HOME"
 	skillHomeDefault = "data"
 )
+
+// 版本历史（最小实现）：快照落在技能目录内的 .versions/<timestamp>/。
+//
+//   - 每次 PUT 文件、每次上传覆盖前都会先给当前技能目录打一份快照；
+//   - 只保留最近 skillMaxVersions 份，更旧的自动清理；
+//   - .versions 目录自身不参与文件列表与文件数统计，避免污染用户视图；
+//   - timestamp 用 UTC 固定宽度格式（无分隔符），既可排序也可安全用于路径。
+const (
+	// skillVersionsDirName 是版本快照在技能目录内的子目录名。
+	skillVersionsDirName = ".versions"
+	// skillMaxVersions 是保留的版本数上限。
+	skillMaxVersions = 5
+	// skillVersionTimestampFormat 是版本目录名格式（UTC，精确到纳秒）。
+	// 注意：Go 的纳秒占位必须跟在「秒 + 小数点」后面，否则 000 是字面量，
+	// 会让同一秒内的多次快照重名并互相覆盖。
+	skillVersionTimestampFormat = "20060102T150405.000000000"
+)
+
+// skillVersionTimestampPattern 校验版本目录名/URL 参数，防止路径穿越。
+var skillVersionTimestampPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{9}$`)
 
 // skillAllowedExtensions 是可读写的文本扩展名（上传与 PUT 都校验）。
 var skillAllowedExtensions = map[string]bool{
@@ -109,6 +130,16 @@ func init() {
 			Summary: "删除技能文件",
 			Build:   func(o Options) http.HandlerFunc { return o.handleDeleteSkillFile },
 		},
+		FeatureRoute{
+			Method: http.MethodGet, Pattern: "/api/v1/skills/{name}/versions",
+			Summary: "技能版本历史",
+			Build:   func(o Options) http.HandlerFunc { return o.handleListSkillVersions },
+		},
+		FeatureRoute{
+			Method: http.MethodPost, Pattern: "/api/v1/skills/{name}/versions/{timestamp}/restore",
+			Summary: "恢复技能到指定版本",
+			Build:   func(o Options) http.HandlerFunc { return o.handleRestoreSkillVersion },
+		},
 	)
 }
 
@@ -117,6 +148,13 @@ type skillFileEntry struct {
 	Path      string    `json:"path"`
 	Size      int64     `json:"size"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// skillVersionView 是一条版本快照的展示项。
+type skillVersionView struct {
+	Timestamp string `json:"timestamp"`
+	Files     int    `json:"files"`
+	Size      int64  `json:"size"`
 }
 
 // skillView 是对外技能视图；files 是磁盘实际文件数，missing 是
@@ -165,11 +203,18 @@ func (o Options) skillPathName(w http.ResponseWriter, r *http.Request) (string, 
 }
 
 // skillPathFromRequest 解析 /files/{path...} 并做安全校验。
+//
+// 版本目录 .versions 属于内部历史，不允许经文件接口直接读写/删除，避免绕过
+// 版本接口改坏快照。
 func skillPathFromRequest(r *http.Request) (string, error) {
 	raw := r.PathValue("path")
 	rel, err := sanitizeSkillRelPath(raw)
 	if err != nil {
 		return "", err
+	}
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	if len(segments) > 0 && segments[0] == skillVersionsDirName {
+		return "", fmt.Errorf("%w：%s 目录属于版本历史，不能通过文件接口访问", pg.ErrInvalidInput, skillVersionsDirName)
 	}
 	return rel, nil
 }
@@ -273,6 +318,10 @@ func listSkillFiles(dir string) ([]skillFileEntry, error) {
 			return walkErr
 		}
 		if entry.IsDir() {
+			// 版本快照不是技能内容：既不展示也不计数。
+			if entry.Name() == skillVersionsDirName {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(dir, current)
@@ -298,6 +347,252 @@ func listSkillFiles(dir string) ([]skillFileEntry, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, nil
+}
+
+// skillVersionsRoot 返回技能目录内的版本根目录。
+func skillVersionsRoot(skillDir string) string {
+	return filepath.Join(skillDir, skillVersionsDirName)
+}
+
+// copySkillTree 把 src 内容复制到 dst（自动建父目录），跳过 .versions 与符号链接。
+//
+// 返回复制的文件数与字节数；src 不存在时返回 ErrNotFound 语义由调用方处理。
+func copySkillTree(src, dst string) (int, int64, error) {
+	files := 0
+	var size int64
+	err := filepath.WalkDir(src, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == src {
+			return nil
+		}
+		if entry.IsDir() {
+			if entry.Name() == skillVersionsDirName {
+				return filepath.SkipDir
+			}
+			rel, err := filepath.Rel(src, current)
+			if err != nil {
+				return err
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0o700)
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil // 快照不复制符号链接，避免把逃逸入口带进新版本
+		}
+		rel, err := filepath.Rel(src, current)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		written, err := copySkillFile(current, target)
+		if err != nil {
+			return err
+		}
+		files++
+		size += written
+		return nil
+	})
+	return files, size, err
+}
+
+// copySkillFile 以流式方式复制单个文件（避免把大文件一次性读进内存）。
+func copySkillFile(src, dst string) (int64, error) {
+	source, err := os.Open(src)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+	info, err := source.Stat()
+	if err != nil {
+		return 0, err
+	}
+	target, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	written, copyErr := io.Copy(target, source)
+	closeErr := target.Close()
+	if copyErr != nil {
+		return written, copyErr
+	}
+	if closeErr != nil {
+		return written, closeErr
+	}
+	if written != info.Size() {
+		return written, fmt.Errorf("复制文件不完整：%s", filepath.Base(src))
+	}
+	return written, nil
+}
+
+// snapshotSkillVersion 给技能目录打一份快照（内部调用；prune 控制是否清理旧版本）。
+//
+// 目录不存在时返回空时间戳且不报错（新建技能还没内容可快照）。
+func snapshotSkillVersion(tenantID int64, name string, prune bool) (string, error) {
+	dir := skillDirFor(tenantID, name)
+	if !dirExists(dir) {
+		return "", nil
+	}
+	root := skillVersionsRoot(dir)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return "", fmt.Errorf("创建版本目录失败：%w", err)
+	}
+	// 时间戳精确到纳秒；极端情况下同纳秒重复时顺延，保证目录唯一。
+	var stamp string
+	var dst string
+	for attempt := 0; attempt < 100; attempt++ {
+		stamp = time.Now().UTC().Format(skillVersionTimestampFormat)
+		dst = filepath.Join(root, stamp)
+		if !dirExists(dst) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return "", fmt.Errorf("创建版本快照失败：%w", err)
+	}
+	if _, _, err := copySkillTree(dir, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return "", fmt.Errorf("写入版本快照失败：%w", err)
+	}
+	if prune {
+		pruneSkillVersions(tenantID, name)
+	}
+	return stamp, nil
+}
+
+// pruneSkillVersions 只保留最近 skillMaxVersions 份快照（按时间戳升序删最旧）。
+func pruneSkillVersions(tenantID int64, name string) {
+	root := skillVersionsRoot(skillDirFor(tenantID, name))
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	stamps := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && skillVersionTimestampPattern.MatchString(entry.Name()) {
+			stamps = append(stamps, entry.Name())
+		}
+	}
+	sort.Strings(stamps)
+	for len(stamps) > skillMaxVersions {
+		_ = os.RemoveAll(filepath.Join(root, stamps[0]))
+		stamps = stamps[1:]
+	}
+}
+
+// listSkillVersions 返回版本快照（时间戳降序）。
+func listSkillVersions(tenantID int64, name string) ([]skillVersionView, error) {
+	root := skillVersionsRoot(skillDirFor(tenantID, name))
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return []skillVersionView{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]skillVersionView, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() || !skillVersionTimestampPattern.MatchString(entry.Name()) {
+			continue
+		}
+		versionDir := filepath.Join(root, entry.Name())
+		files, size := countVersionFiles(versionDir)
+		out = append(out, skillVersionView{Timestamp: entry.Name(), Files: files, Size: size})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp > out[j].Timestamp })
+	return out, nil
+}
+
+// countVersionFiles 统计快照目录下的文件数与总字节数。
+func countVersionFiles(dir string) (int, int64) {
+	files := 0
+	var size int64
+	_ = filepath.WalkDir(dir, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil
+		}
+		files++
+		size += info.Size()
+		return nil
+	})
+	return files, size
+}
+
+// restoreSkillVersion 把技能恢复成某个快照。
+//
+// 顺序：先给当前状态打快照（恢复本身可回滚）→ 清空除 .versions 外的内容 →
+// 把目标快照复制回来 → 清理旧版本。目标版本在快照之后复制，避免被 prune 删掉。
+func restoreSkillVersion(tenantID int64, name, stamp string) error {
+	dir := skillDirFor(tenantID, name)
+	source := filepath.Join(skillVersionsRoot(dir), stamp)
+	if !dirExists(source) {
+		return fmt.Errorf("%w：版本 %q 不存在", pg.ErrNotFound, stamp)
+	}
+	// 先把目标版本复制到临时目录：后续快照可能触发 prune，不能直接引用原路径。
+	tmpRoot := filepath.Join(skillTenantDir(tenantID), "."+name+".restore."+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err := os.MkdirAll(tmpRoot, 0o700); err != nil {
+		return fmt.Errorf("创建恢复临时目录失败：%w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpRoot) }()
+	if _, _, err := copySkillTree(source, tmpRoot); err != nil {
+		return fmt.Errorf("读取版本快照失败：%w", err)
+	}
+	// 当前状态先入历史（不 prune，避免把要恢复的那份挤掉）。
+	if _, err := snapshotSkillVersion(tenantID, name, false); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("读取技能目录失败：%w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == skillVersionsDirName {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			return fmt.Errorf("清理当前内容失败：%w", err)
+		}
+	}
+	if _, _, err := copySkillTree(tmpRoot, dir); err != nil {
+		return fmt.Errorf("恢复版本内容失败：%w", err)
+	}
+	pruneSkillVersions(tenantID, name)
+	return nil
+}
+
+// snapshotBeforeReplace 在整体替换技能目录（上传覆盖）前打快照。
+//
+// 返回 carry：把 .versions 目录挪到技能目录之外的暂存路径——随后的
+// os.RemoveAll(target) 会把技能目录连同 .versions 一起删掉。替换完成后按
+// carryMoveBack 放回新的技能目录。
+func snapshotBeforeReplace(tenantID int64, name string) (carry string, err error) {
+	dir := skillDirFor(tenantID, name)
+	if !dirExists(dir) {
+		return "", nil
+	}
+	if _, err := snapshotSkillVersion(tenantID, name, true); err != nil {
+		return "", err
+	}
+	versions := skillVersionsRoot(dir)
+	if !dirExists(versions) {
+		return "", nil
+	}
+	carry = filepath.Join(skillTenantDir(tenantID), "."+name+".versions."+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err := os.Rename(versions, carry); err != nil {
+		return "", fmt.Errorf("暂存版本目录失败：%w", err)
+	}
+	return carry, nil
 }
 
 // skillToView 把元数据行 + 磁盘实际情况投影成视图。
@@ -482,6 +777,58 @@ func (o Options) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleListSkillVersions 列出技能的版本快照（时间戳降序）。
+func (o Options) handleListSkillVersions(w http.ResponseWriter, r *http.Request) {
+	if !o.storeReady(w, r) {
+		return
+	}
+	name, ok := o.skillPathName(w, r)
+	if !ok {
+		return
+	}
+	if _, err := o.Store.GetSkill(r.Context(), o.TenantID, name); err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	versions, err := listSkillVersions(o.TenantID, name)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "读取技能版本失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
+// handleRestoreSkillVersion 把技能恢复成指定版本，并把当前状态记入历史。
+func (o Options) handleRestoreSkillVersion(w http.ResponseWriter, r *http.Request) {
+	if !o.storeReady(w, r) {
+		return
+	}
+	name, ok := o.skillPathName(w, r)
+	if !ok {
+		return
+	}
+	if _, err := o.Store.GetSkill(r.Context(), o.TenantID, name); err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	timestamp := strings.TrimSpace(r.PathValue("timestamp"))
+	if !skillVersionTimestampPattern.MatchString(timestamp) {
+		writeStoreError(w, r, fmt.Errorf("%w：版本时间戳格式不合法", pg.ErrInvalidInput))
+		return
+	}
+	if err := restoreSkillVersion(o.TenantID, name, timestamp); err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	o.syncSkillFileCount(r, name)
+	skill, err := o.Store.GetSkill(r.Context(), o.TenantID, name)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, skillToView(skill))
+}
+
 // handleListSkillFiles 文件列表。
 func (o Options) handleListSkillFiles(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
@@ -613,6 +960,11 @@ func (o Options) handleWriteSkillFile(w http.ResponseWriter, r *http.Request) {
 	if err := skillRejectSymlink(full); err != nil {
 		writeStoreError(w, r, err)
 		return
+	}
+	// 写入前给旧内容打一份版本快照；快照失败不阻塞写入（版本历史是增强能力），
+	// 但会记日志，便于运维发现磁盘问题。
+	if _, snapErr := snapshotSkillVersion(o.TenantID, name, true); snapErr != nil {
+		o.Logger.Warn("技能版本快照失败", "skill", name, "error", snapErr)
 	}
 	if err := os.WriteFile(full, content, 0o600); err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "写入技能文件失败")
@@ -761,19 +1113,40 @@ func (o Options) handleUploadSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "创建租户技能目录失败")
 		return
 	}
+	// 覆盖前把旧目录打成版本快照；.versions 必须暂存到目标之外，因为随后的
+	// RemoveAll(target) 会连同它一起删掉。
+	carry := ""
 	if exists || dirExists(target) {
 		if !overwrite {
 			writeError(w, r, http.StatusConflict, "conflict", "技能目录 "+name+" 已存在（可用 ?overwrite=true 覆盖）")
 			return
 		}
+		snapshotCarry, snapErr := snapshotBeforeReplace(o.TenantID, name)
+		if snapErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "internal_error", "创建版本快照失败")
+			return
+		}
+		carry = snapshotCarry
 		if err := os.RemoveAll(target); err != nil {
+			if carry != "" {
+				_ = os.RemoveAll(carry)
+			}
 			writeError(w, r, http.StatusInternalServerError, "internal_error", "清理旧技能目录失败")
 			return
 		}
 	}
 	if err := os.Rename(contentRoot, target); err != nil {
+		if carry != "" {
+			_ = os.RemoveAll(carry)
+		}
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "安装技能目录失败")
 		return
+	}
+	if carry != "" {
+		if moveErr := os.Rename(carry, skillVersionsRoot(target)); moveErr != nil {
+			o.Logger.Warn("恢复技能版本目录失败", "skill", name, "error", moveErr)
+			_ = os.RemoveAll(carry)
+		}
 	}
 	skill, err := o.Store.UpsertSkill(r.Context(), o.TenantID, pg.SkillInput{
 		Name:        name,

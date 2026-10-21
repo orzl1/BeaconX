@@ -3,10 +3,14 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
+	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
 
@@ -16,8 +20,9 @@ import (
 // Bearer 鉴权（统一中间件）；导出时记录一条 action=export 的访问审计；正文
 // 只经 evidence.Store 解密，密钥不进入日志/响应。
 //
-// 已知限制：既有 GET /api/v1/evidence/{id}/verify 与流量正文读取接口不在本批
-// 可改文件范围内，尚未写入 evidence_access_log；后续接线后可补齐 read/verify。
+// 审计覆盖：export 由本文件写入；verify 由 evidence_api.go 记录；流量正文读取
+// 在 insights_api.go 中按 blob 哈希反查证据快照后记录 read（读的不是证据正文时
+// 没有可归属的快照，不产生记录）。
 
 const (
 	// evidenceExportLimit 是证据导出包允许的最大正文总量（请求+响应，解码后）。
@@ -153,13 +158,58 @@ func (o Options) handleEvidenceExport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(archive.Bytes())
 }
 
-// handleEvidenceRotate 处理证据密钥轮换。
+// evidenceRotateRequest 是密钥轮换请求体。
+type evidenceRotateRequest struct {
+	// NewKeyHex 是新的 32 字节主密钥（64 位十六进制字符串）。
+	NewKeyHex string `json:"new_key_hex"`
+}
+
+// handleEvidenceRotate 用新主密钥重新加密全部证据 blob，并切换当前进程的内存密钥。
 //
-// 当前明确返回 501（未实现）：现有加密方案没有 key-id 前缀，轮换必须重写全部
-// blob 并原子切换密钥文件，任何半途失败都会造成不可恢复的证据损坏；且 HTTP 层
-// 无法安全访问 evidence.Store 的密钥/目录。推荐的上线路径见 docs/evidence.md：
-// 离线双密钥窗口（旧密钥解密 + 新密钥重加密）+ 备份校验后切换。
+// 安全语义：
+//   - 新密钥只在本次内存切换中使用，**不落盘、不写日志、不回显**；运维必须自行
+//     更新 BEACONX_EVIDENCE_KEY / evidence.key 并重启，否则重启后会回到旧密钥；
+//   - 轮换成功后签名子密钥同步变化，**存量 Snapshot 的 HMAC 签名会失效**（Verify
+//     返回 ErrTampered），需要配套离线重签流程；轮换前必须备份 PostgreSQL 与
+//     evidence 目录；
+//   - 失败时 store 层尝试回滚已替换文件（best-effort）；若返回错误，必须停机并从
+//     备份恢复，不能继续读写混合密钥状态。
 func (o Options) handleEvidenceRotate(w http.ResponseWriter, r *http.Request) {
-	writeError(w, r, http.StatusNotImplemented, "not_implemented",
-		"证据密钥轮换尚未实现：当前方案无 key-id，重写全部 blob 需要离线双密钥窗口与备份校验；请按 docs/evidence.md 的轮换方案操作，勿在运行中直接替换密钥文件")
+	if !o.storeReady(w, r) {
+		return
+	}
+	if o.Evidence == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "evidence_unavailable", "证据存储未就绪")
+		return
+	}
+	var req evidenceRotateRequest
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	raw := strings.TrimSpace(req.NewKeyHex)
+	if len(raw) != 64 {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "new_key_hex 必须是 64 位十六进制字符串（32 字节）")
+		return
+	}
+	newKey, err := hex.DecodeString(raw)
+	if err != nil || len(newKey) != 32 {
+		writeError(w, r, http.StatusBadRequest, "bad_request", "new_key_hex 必须是合法的 64 位十六进制字符串")
+		return
+	}
+	rotated, err := o.Evidence.RotateKey(r.Context(), newKey)
+	if err != nil {
+		if errors.Is(err, evidence.ErrTampered) {
+			writeError(w, r, http.StatusConflict, "tampered", fmt.Sprintf("证据密钥轮换失败（已完成 %d 个，已尝试回滚）：%v", rotated, err))
+			return
+		}
+		writeError(w, r, http.StatusInternalServerError, "rotate_failed",
+			fmt.Sprintf("证据密钥轮换失败（已完成 %d 个，请停机并从备份恢复）：%v", rotated, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rotated":                rotated,
+		"new_key_hex_not_stored": true,
+		"notice": "新密钥仅用于本次进程；请更新 BEACONX_EVIDENCE_KEY 或 evidence.key 并重启；" +
+			"存量证据快照的签名需重签后才能通过 Verify",
+	})
 }

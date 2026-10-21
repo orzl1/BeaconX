@@ -207,12 +207,24 @@ func (o Options) handleMissionGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := graphLimitParam(r)
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
 	// 过滤在内存做：有过滤条件时尽量多取（store 上限 1000），否则按请求条数取。
 	fetchLimit := limit
 	if kindFilter != nil || stateFilter != nil || fetchLimit > storeNodeListMax {
 		fetchLimit = storeNodeListMax
 	}
-	nodes, err := o.Store.ListNodes(r.Context(), o.TenantID, missionID, fetchLimit)
+	var nodes []pg.Node
+	var err error
+	if afterID > 0 {
+		// 游标模式沿用既有升序（id 升序），因此 after_id 表示「取 id 更大的节点」，
+		// 与响应里 next_after_id=本页最后一条 id 配合即可向前翻页。
+		nodes, err = o.Store.ListNodesPage(r.Context(), o.TenantID, missionID, afterID, fetchLimit)
+	} else {
+		nodes, err = o.Store.ListNodes(r.Context(), o.TenantID, missionID, fetchLimit)
+	}
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
@@ -247,10 +259,16 @@ func (o Options) handleMissionGraph(w http.ResponseWriter, r *http.Request) {
 	if anchors == nil {
 		anchors = []pg.Anchor{}
 	}
+	// 本页取满才继续翻页；next_after_id 即最后一条节点 id。
+	var nextAfterID int64
+	if len(filtered) >= limit && len(filtered) > 0 {
+		nextAfterID = filtered[len(filtered)-1].ID
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"nodes":   filtered,
-		"edges":   edges,
-		"anchors": anchors,
+		"nodes":         filtered,
+		"edges":         edges,
+		"anchors":       anchors,
+		"next_after_id": nextAfterID,
 	})
 }
 

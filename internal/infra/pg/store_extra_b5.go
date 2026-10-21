@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -252,4 +253,31 @@ func (s *Store) ListRetestEvidence(ctx context.Context, tenantID, retestID int64
 		return nil, fmt.Errorf("遍历复测证据失败: %w", err)
 	}
 	return out, nil
+}
+
+// EvidenceSnapshotIDByBlobHash 按 blob 明文哈希反查引用它的证据快照（取最新一条）。
+//
+// 用途：流量正文读取接口在成功解密后，如果该正文同时被某条证据快照引用，
+// 就把这次读取记到对应快照的访问审计上；没有快照引用时返回 (0,false,nil)，
+// 表示这次读取不属于任何证据对象。
+func (s *Store) EvidenceSnapshotIDByBlobHash(ctx context.Context, tenantID int64, hash string) (int64, bool, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return 0, false, err
+	}
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return 0, false, fmt.Errorf("%w：blob 哈希不能为空", ErrInvalidInput)
+	}
+	var id int64
+	err := s.db.pool.QueryRow(ctx, `
+		SELECT id FROM evidence_snapshots
+		WHERE tenant_id = $1 AND (request_hash = $2 OR response_hash = $2)
+		ORDER BY id DESC LIMIT 1`, tenantID, hash).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("按哈希查询证据快照失败: %w", err)
+	}
+	return id, true, nil
 }

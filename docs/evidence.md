@@ -169,6 +169,13 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 
 - **导出**：`POST /api/v1/evidence/{id}/export` 返回 zip（snapshot.json + 请求/响应正文），成功后写 `evidence_access_log`（action=export）；导出前会校验 blob 哈希/签名。
 - **审计**：`GET /api/v1/evidence/{id}/audit` 读取 `evidence_access_log`（动作 read/verify/export）；当前只有 export/verify 部分路径埋点，正文读取与既有 `GET /evidence/{id}/verify` 尚未全量记录（🟡）。
-- **密钥轮换（⬜ 未实现）**：`POST /api/v1/evidence/rotate` 当前返回 **501**；原因是 blob 没有 key-id 前缀，无法区分新旧密钥并安全重写，需要先做密钥版本化。
+- **密钥轮换（✅ 已实现，🟡 重签未做）**：`POST /api/v1/evidence/rotate` 在写锁下逐文件旧解密/新加密，返回 200 `{rotated,new_key_hex_not_stored,notice}`；失败 best-effort 回滚（409/500）。新密钥不落盘，需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；**存量 Snapshot HMAC 签名失效（Verify→ErrTampered），当前无自动重签**，生产轮换须备份并走离线重签。
 - **复测执行**：`POST /api/v1/retests/{id}/run` 会重算快照签名并解密校验关联证据（不是重跑 exploit），成功→passed、失败→failed、无证据→error。
 - **风险提示**：流量重放（`/traffic/{id}/replay`）绕过 executor 的策略/审批，属于 🟡 高风险能力；HAR 导出是合成格式（不是真实 pcap）。
+
+## 12. B6 密钥轮换与审计（M6.2-B6）
+
+- **轮换已实现**：`POST /api/v1/evidence/rotate` body `{"new_key_hex":"<64 hex>"}`；Store 在写锁下逐文件旧密钥解密、新密钥加密，返回 `{"rotated":N,"new_key_hex_not_stored":true,"notice":"…"}`；失败 best-effort 回滚，返回 409 `tampered` 或 500 `rotate_failed`。
+- **必须警示**：新密钥不落盘；运维需更新 `BEACONX_EVIDENCE_KEY` 或 `<state>/evidence.key` 并重启。主密钥切换会同时改变签名子密钥，**存量 Snapshot 的 HMAC 签名失效（Verify 返回 ErrTampered）**；当前没有自动重签流程，生产轮换须先备份 PostgreSQL+证据目录，并按离线重签流程处理（🟡）。
+- **审计覆盖**：`GET /evidence/{id}/audit` 读 `evidence_access_log`；B6 起 `GET /evidence/{id}/verify` 成功/失败均记 verify，流量正文读取且 blob 被快照引用时记 read；均 best-effort，仍有路径未埋点（🟡）。
+- **复测/重放**：复测 run 只做签名/解密证据校验（不重跑 exploit）；流量重放已走 executor（策略门/审批），旧文档中的“绕过策略”已失效（B6 修正）。

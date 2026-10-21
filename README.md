@@ -11,7 +11,7 @@
 
 - **[docs/project-map.md](docs/project-map.md) 是项目代码功能结构的唯一真源**：代码地图、数据模型、API 全表、状态机、运行时机制、配置、前端对接指南与缺口路线。
 - **任何改动都必须同步更新它**（对应章节 + 文末「变更记录」），并在提交前运行 `make docs-check`；规则见 [AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- 文档当前含：**已实现 140 条 API（基础 70 + feature 70；✅）**，以及 B4/B5 的 🟡/⬜ 缺口标注（settings 热生效、证据轮换、Agents 执行接入等）。
+- 文档当前含：**已实现 143 条 API（基础 70 + feature 73；✅）**，以及 B4/B5/B6 的 🟡/⬜ 缺口标注（settings 热生效、通知推送/SSRF、Agents 执行接入、轮换后重签、LLM 正文采集等）。
 - 前端设计请以该文档的「API 全表」「前端对接指南」「原版页面映射与缺口」三章为依据。
 
 ## 快速开始
@@ -111,7 +111,7 @@ make docker-build  # 构建含前端的镜像
 
 token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
 
-## HTTP 接口（M6.2-B4/B5）
+## HTTP 接口（M6.2-B4/B5/B6）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -191,12 +191,12 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | PATCH | `/api/v1/settings` | 更新运行时设置（白名单键；🟡 运行时未热生效）（🟡 部分实现） |
 | GET | `/api/v1/evidence/{id}/audit` | 证据读取审计（🟡 仅部分动作埋点）（🟡 部分实现） |
 | POST | `/api/v1/evidence/{id}/export` | 导出证据 zip（snapshot.json + 正文） |
-| POST | `/api/v1/evidence/rotate` | 密钥轮换（⬜ 未实现，返回 501）（⬜ 未实现） |
+| POST | `/api/v1/evidence/rotate` | 证据密钥轮换（200；新密钥不落盘，存量快照签名失效需离线重签） |
 | GET | `/api/v1/findings` | 跨任务发现列表（?mission_id=&severity=&status=&asset_id=&after_id=&limit=） |
 | GET | `/api/v1/findings/export` | 导出发现为 CSV（≤10000 行，防公式注入） |
 | POST | `/api/v1/retests/{id}/run` | 执行复测（校验证据签名与解密，非重跑 exploit） |
 | GET | `/api/v1/retests/{id}/evidence` | 复测关联证据列表 |
-| POST | `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（🟡 无唯一约束，可能重复）（🟡 部分实现） |
+| POST | `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（0016 部分唯一索引防重复；已绑定→409） |
 | GET | `/api/v1/mcp/servers` | MCP 端点列表 |
 | POST | `/api/v1/mcp/servers` | 新建 MCP 端点 |
 | GET | `/api/v1/mcp/servers/{id}` | MCP 端点详情 |
@@ -210,7 +210,7 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | POST | `/api/v1/workspace/upload` | 上传文件到工作区（≤10MB） |
 | DELETE | `/api/v1/workspace/files/{path...}` | 删除工作区文件/目录（非空目录需 recursive） |
 | GET | `/api/v1/traffic/{id}/export` | 导出流量为合成 HAR 1.2 |
-| POST | `/api/v1/traffic/{id}/replay` | 重放请求（🟡 直接调 http_probe，绕过策略/审批）（🟡 部分实现） |
+| POST | `/api/v1/traffic/{id}/replay` | 重放请求（走 executor 策略门/审批/审计/证据；traffic_id best-effort） |
 | DELETE | `/api/v1/missions/{id}/traffic` | 批量清理任务采集行（保留证据快照/正文） |
 | GET | `/api/v1/notifications/channels` | 通知渠道列表 |
 | POST | `/api/v1/notifications/channels` | 新建通知渠道 |
@@ -255,6 +255,9 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | GET | `/api/v1/skills/{name}/files/{path...}` | 读取技能文本文件（≤1MB） |
 | PUT | `/api/v1/skills/{name}/files/{path...}` | 写入技能文本文件 |
 | DELETE | `/api/v1/skills/{name}/files/{path...}` | 删除技能文件 |
+| GET | `/api/v1/activity` | 全局活动流（`?limit=&before_id=&mission_id=&type=`，mission_events 倒序，默认 50/上限 200） |
+| GET | `/api/v1/skills/{name}/versions` | 技能版本历史（保留最近 5 份快照） |
+| POST | `/api/v1/skills/{name}/versions/{timestamp}/restore` | 恢复技能文件到指定版本（先给当前状态打快照） |
 
 除 `/healthz`、`/readyz`、`/api/v1/system/*` 外，所有接口都需要 `Authorization: Bearer <BEACONX_ADMIN_TOKEN>`；浏览器 EventSource 无法自定义请求头，SSE 端点也可用 `?token=<token>` 携带令牌。未配置令牌时，进程启动会生成临时令牌并打印到日志（仅当前进程有效）。`/api/v1/system/update/*` 虽然属于 system 前缀，但仍需要令牌（`Routes()` 中未标记为 Public）。
 
@@ -351,7 +354,8 @@ docs/                   项目真源（project-map）、术语、配置、路线
 - **B4/B5 分页**：assets/findings/traffic/commands/llm-records 支持 `after_id`/`next_after_id`（assets 升序 id>，其余倒序 id<）；不传时旧行为不变。
 - **日志与通知**：日志为进程级环形缓冲（2000）且无 after_id；通知 test 一律 200 + delivery（webhook 真发、email/generic skipped），无真实事件推送/SSRF 白名单（🟡）。
 - **文件与同步**：Skills/Workspace 走沙箱路径校验与大小上限；Sync 默认拒私网、异步 ≤60s、逐条容错 skipped。
-- **高风险能力**：流量重放绕过策略/审批（🟡）；证据密钥轮换返回 501（⬜）；报告 PDF 依赖阅读器 CJK 字体。
+- **高风险能力**：流量重放已改走 executor（策略门/审批/审计/证据采集）；证据密钥轮换已实现但**存量快照签名会失效**，需离线重签；报告 PDF 依赖阅读器 CJK 字体。
+- **B6 硬化**：证据轮换需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；Workspace 默认 100MB 配额（`BEACONX_WORKSPACE_QUOTA_MB`）；MCP stdio 默认禁用、命令白名单/`BEACONX_MCP_STDIO_DIR`；Skills 版本保留最近 5 份，restore 不回滚元数据。
 - **品牌门禁**：`scripts/check-brand.sh` 在 CI 中阻止第三方项目标识进入代码、依赖与二进制。
 
 ## 文档

@@ -311,6 +311,7 @@ func serve(args []string) int {
 		Store:          store,
 		Engine:         engine,
 		Evidence:       evStore,
+		Executor:       exec,
 		Updater:        updater,
 		WebUI:          webui.Handler(),
 		Broker:         broker,

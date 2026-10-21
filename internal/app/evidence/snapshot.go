@@ -99,6 +99,8 @@ func snapshotDocOf(id string, snap Snapshot) snapshotDoc {
 // CreatedAt 为零值时取当前时间；非零值统一转换为 UTC。相同输入重复 Seal 结果
 // 相同，因此可以从数据库读回快照后重新计算签名来检测篡改。
 func (s *Store) Seal(snap Snapshot) (Snapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if snap.CreatedAt.IsZero() {
 		snap.CreatedAt = time.Now()
 	}
@@ -124,6 +126,8 @@ func (s *Store) Seal(snap Snapshot) (Snapshot, error) {
 // Verify 不信任快照里的任何字段：ID 由元数据重算，签名由「重算出的 ID +
 // 元数据」重算，因此 ID、元数据、签名任一被改动（或换了一把密钥）都会失败。
 func (s *Store) Verify(snap Snapshot) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if snap.ID == "" || snap.Signature == "" {
 		return fmt.Errorf("%w：快照缺少 ID 或签名", ErrTampered)
 	}

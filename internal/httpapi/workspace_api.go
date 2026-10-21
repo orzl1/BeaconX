@@ -115,9 +115,16 @@ func (o Options) handleWorkspaceList(w http.ResponseWriter, r *http.Request) {
 	if len(entries) > limit {
 		entries = entries[:limit]
 	}
+	// 配额信息是 additive 字段：前端可据此展示进度条；统计失败时降级为 0。
+	used, usageErr := svc.Usage(o.TenantID, missionID)
+	if usageErr != nil {
+		used = 0
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"files": entries,
-		"root":  workspace.RootLabel(missionID),
+		"files":       entries,
+		"root":        workspace.RootLabel(missionID),
+		"quota_bytes": svc.QuotaBytes(),
+		"used_bytes":  used,
 	})
 }
 
@@ -282,6 +289,8 @@ func writeWorkspaceError(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, r, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, workspace.ErrDirNotEmpty):
 		writeError(w, r, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, workspace.ErrQuota):
+		writeError(w, r, http.StatusRequestEntityTooLarge, "quota_exceeded", err.Error())
 	case errors.Is(err, workspace.ErrTooLarge):
 		writeError(w, r, http.StatusRequestEntityTooLarge, "too_large", err.Error())
 	default:

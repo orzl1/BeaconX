@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
     流量采集与证据校验、自更新、SSE 事件流；M6.2 已补齐 B1–B5：企业/资产/任务资产/
     覆盖率、任务范围/计划/作战图、发现/复测/报告、流量/命令/LLM/用量/Dashboard，以及
-    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强。
+    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强，以及 B6 的活动流、技能版本、重放策略门、证据轮换、graph after_id、Dashboard hourly 与 stdio/配额硬化。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -62,6 +62,8 @@ tags:
     description: 外部数据源同步（需要令牌）
   - name: traffic
     description: 流量导出/重放/任务级清理（需要令牌）
+  - name: activity
+    description: 全局活动流（需要令牌）
 paths:
   /healthz:
     get:
@@ -1102,13 +1104,21 @@ paths:
       - $ref: "#/components/parameters/GraphKindQuery"
       - $ref: "#/components/parameters/GraphStateQuery"
       - $ref: "#/components/parameters/GraphLimitQuery"
+      - name: after_id
+        in: query
+        required: false
+        description: 节点游标；取 id > after_id（升序），响应 next_after_id；edges/anchors 仍全量。
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
     get:
       tags: [missions, graph]
       summary: 任务作战图
       description: |
         一次性返回任务的节点、边与锚点；`kind`/`state` 过滤只作用于节点
         （边与锚点返回该任务全量，按 id 排序）。非法 kind/state 返回 400；
-        limit 缺省 500、上限 2000；空数组返回 `[]`。任务不存在返回 404。
+        limit 缺省 500、上限 2000；支持 `after_id`/`next_after_id`（节点升序 id>）；空数组返回 `[]`。任务不存在返回 404。
       operationId: getMissionGraph
       responses:
         "200":
@@ -2033,9 +2043,11 @@ paths:
   /api/v1/evidence/rotate:
     post:
       tags: [evidence]
-      summary: 密钥轮换（⬜ 未实现，返回 501）
+      summary: 证据密钥轮换
       description: |
-        密钥轮换（⬜ 未实现，返回 501）。（部分实现/风险见 project-map §5.6）
+        用新主密钥重新加密全部证据 blob（写锁、逐文件、失败 best-effort 回滚）。
+        新密钥不落盘，需更新 BEACONX_EVIDENCE_KEY/evidence.key 并重启；存量 Snapshot
+        的 HMAC 签名会失效（Verify→ErrTampered），当前无自动重签（🟡）。
       operationId: rotateEvidence
       requestBody:
         required: true
@@ -2045,12 +2057,25 @@ paths:
               $ref: "#/components/schemas/EvidenceRotateRequest"
       responses:
         "200":
-          description: OK
+          description: 轮换结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceRotateResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Tampered"
+        "500":
+          description: 轮换失败（需停机并从备份恢复）
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
-
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/v1/findings:
     get:
       tags: [findings]
@@ -2395,18 +2420,37 @@ paths:
           format: int64
     post:
       tags: [traffic]
-      summary: 重放请求（🟡 直接调 http_probe，绕过策略/审批）
+      summary: 重放 http_probe 采集记录（走 executor 策略门）
       description: |
-        重放请求（🟡 直接调 http_probe，绕过策略/审批）。（部分实现/风险见 project-map §5.6）
+        重放经 Options.Executor 执行 http_probe：策略门/审批/审计/证据采集。
+        未接线 503 executor_unavailable；deny/审批拒绝 403；超时 409；未知工具/其它 502。
+        响应 policy_gated=true，traffic_id 为 best-effort（可为 0）。
       operationId: replayTraffic
       responses:
         "200":
-          description: OK
+          description: 重放结果
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TrafficReplayResult"
-
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 策略拒绝或审批拒绝
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
   /api/v1/notifications/channels:
     get:
       tags: [notifications]
@@ -3181,6 +3225,118 @@ paths:
         "200":
           description: OK
           description: 无内容
+  /api/v1/activity:
+    get:
+      tags: [insights, activity]
+      summary: 全局活动流
+      description: |
+        mission_events 跨任务倒序；支持 before_id 游标、mission_id/type 过滤；
+        limit 缺省 50、上限 200；不存在的 mission_id 返回空数组。
+      operationId: listActivity
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: mission_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 活动流
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/skills/{name}/versions:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 技能名
+        schema:
+          type: string
+    get:
+      tags: [skills]
+      summary: 技能版本历史
+      description: 版本快照（.versions/<timestamp>/），保留最近 5 份，timestamp 降序；技能不存在 404。
+      operationId: listSkillVersions
+      responses:
+        "200":
+          description: 版本列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillVersionList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/skills/{name}/versions/{timestamp}/restore:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 技能名
+        schema:
+          type: string
+      - name: timestamp
+        in: path
+        required: true
+        description: 版本时间戳（YYYYMMDDTHHMMSS.<nanos>）
+        schema:
+          type: string
+    post:
+      tags: [skills]
+      summary: 恢复技能到指定版本
+      description: 先把当前状态打快照，再恢复指定版本的文件内容；不回滚 DB 元数据（🟡）。
+      operationId: restoreSkillVersion
+      responses:
+        "200":
+          description: 恢复后的技能视图
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillRestore"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -4338,6 +4494,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/OperationAnchor"
+        next_after_id:
+          type: integer
+          format: int64
+          description: 本页最后一条节点 id；无更多为 0。
     NodeStatePatchRequest:
       type: object
       required: [state]
@@ -4791,6 +4951,11 @@ components:
           description: 最近任务，按 id 倒序最多 5 条。
           items:
             $ref: "#/components/schemas/DashboardRecentMission"
+        hourly:
+          type: array
+          description: 最近 24 小时 UTC 整点桶（缺失补 0）。
+          items:
+            $ref: "#/components/schemas/DashboardHour"
     LogEntry:
       type: object
       required: [id, time, level, msg]
@@ -5010,9 +5175,17 @@ components:
       required: [files]
       properties:
         files:
-          $ref: "#/components/schemas/WorkspaceEntry"
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkspaceEntry"
         root:
           type: string
+        quota_bytes:
+          type: integer
+          format: int64
+        used_bytes:
+          type: integer
+          format: int64
     WorkspaceFileContent:
       type: object
       required: [path]
@@ -5053,18 +5226,21 @@ components:
           description: HAR 1.2 log 对象
     TrafficReplayResult:
       type: object
-      required: [traffic_id]
+      required: [policy_gated, output, status]
       properties:
-        traffic_id:
-          type: integer
-          description: 新采集记录 ID
-        mission_id:
-          type: integer
+        policy_gated:
+          type: boolean
+          description: 已经过 executor 策略门（B6 起恒为 true）
+        output:
+          type: string
+          description: 工具输出文本
         status:
           type: integer
-          description: HTTP 状态码
-        error:
-          type: string
+          description: 工具返回的 HTTP 状态码（无则 0）
+        traffic_id:
+          type: integer
+          format: int64
+          description: 新采集记录 ID（best-effort，可为 0）
     NotificationChannel:
       type: object
       properties:
@@ -5591,3 +5767,104 @@ components:
       properties:
         content:
           type: string
+    ActivityItem:
+      type: object
+      required: [id, mission_id, type, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+    ActivityList:
+      type: object
+      required: [activity, next_before_id]
+      properties:
+        activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityItem"
+        next_before_id:
+          type: integer
+          format: int64
+    SkillVersion:
+      type: object
+      required: [timestamp, files, size]
+      properties:
+        timestamp:
+          type: string
+        files:
+          type: integer
+        size:
+          type: integer
+          format: int64
+    SkillVersionList:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillVersion"
+    SkillRestore:
+      type: object
+      required: [name, version, files, file_count]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+        files:
+          type: integer
+        file_count:
+          type: integer
+        missing:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DashboardHour:
+      type: object
+      required: [hour, missions_created, missions_done, tokens, approvals_requested]
+      properties:
+        hour:
+          type: string
+          description: UTC 整点 RFC3339
+        missions_created:
+          type: integer
+          format: int64
+        missions_done:
+          type: integer
+          format: int64
+        tokens:
+          type: integer
+          format: int64
+        approvals_requested:
+          type: integer
+          format: int64
+    EvidenceRotateResult:
+      type: object
+      required: [rotated, new_key_hex_not_stored, notice]
+      properties:
+        rotated:
+          type: integer
+          description: 已重加密的 blob 数
+        new_key_hex_not_stored:
+          type: boolean
+        notice:
+          type: string
+

@@ -181,6 +181,12 @@ func (s *Store) CreateFinding(ctx context.Context, tenantID, missionID int64, in
 		Scan(&f.TenantID, &f.ID, &f.MissionID, &f.AssetID, &f.NodeID, &f.Title,
 			&sevRaw, &staRaw, &f.Detail, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
+		// 0016 的 uq_findings_node 保证同一节点最多关联一条发现；并发请求下
+		// 由数据库唯一索引兜底，这里映射为 ErrConflict（HTTP 409），避免把
+		// 竞态泄漏成 500。
+		if isUniqueViolation(err) {
+			return Finding{}, fmt.Errorf("%w：该节点已关联发现", ErrConflict)
+		}
 		return Finding{}, fmt.Errorf("创建发现失败: %w", err)
 	}
 	f.Severity = finding.Severity(sevRaw)

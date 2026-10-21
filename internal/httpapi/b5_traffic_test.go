@@ -235,6 +235,8 @@ func TestB5TrafficHARAndCleanup(t *testing.T) {
 func TestB5TrafficReplay(t *testing.T) {
 	store, ev, tenantID := b5trafficSetup(t)
 	opts := b5trafficOptions(store, ev, tenantID)
+	// B6 起重放必须经过 executor 策略门；这里接线一个默认 allow 的执行器。
+	opts.Executor = b6Executor(t, store, ev, tenantID)
 	mission := mustMission(t, store, tenantID, "重放任务")
 
 	received := make(chan *http.Request, 1)
@@ -253,16 +255,16 @@ func TestB5TrafficReplay(t *testing.T) {
 		"/api/v1/traffic/"+recordPath["id"]+"/replay", "", recordPath)
 	requireStatus(t, rec, http.StatusOK)
 	var replay struct {
-		TrafficID int64  `json:"traffic_id"`
-		MissionID int64  `json:"mission_id"`
-		Status    int    `json:"status"`
-		Error     string `json:"error"`
+		TrafficID   int64  `json:"traffic_id"`
+		PolicyGated bool   `json:"policy_gated"`
+		Output      string `json:"output"`
+		Status      int    `json:"status"`
 	}
 	b5trafficDecodeInto(t, rec, &replay)
 	if replay.TrafficID == 0 || replay.TrafficID == record.ID {
 		t.Fatalf("重放未生成新的 traffic id: %+v", replay)
 	}
-	if replay.Status != http.StatusCreated || replay.MissionID != mission.ID {
+	if !replay.PolicyGated || replay.Status != http.StatusCreated || !strings.Contains(replay.Output, "created") {
 		t.Fatalf("重放结果不符合预期: %+v", replay)
 	}
 	select {
@@ -373,11 +375,18 @@ func TestB5EvidenceAuditExportRotate(t *testing.T) {
 		t.Fatalf("证据审计不符合预期: %+v", audit.Audit)
 	}
 
-	// 轮换：明确 501，不产生半完成状态。
+	// 轮换：B6 起使用真实轮换（200 + rotated），不再返回 501。
+	rotateBody := `{"new_key_hex":"` + strings.Repeat("11", 32) + `"}`
 	rec = invokeHandler(t, opts.handleEvidenceRotate, http.MethodPost,
-		"/api/v1/evidence/rotate", `{"new_key_hex":"00"}`, nil)
-	requireStatus(t, rec, http.StatusNotImplemented)
-	requireErrorCode(t, rec, "not_implemented")
+		"/api/v1/evidence/rotate", rotateBody, nil)
+	requireStatus(t, rec, http.StatusOK)
+	rotated := decodeResponse[struct {
+		Rotated   int  `json:"rotated"`
+		NotStored bool `json:"new_key_hex_not_stored"`
+	}](t, rec)
+	if rotated.Rotated <= 0 || !rotated.NotStored {
+		t.Fatalf("轮换结果不符合预期: %+v", rotated)
+	}
 
 	// 不存在 / 非法 id / 跨租户。
 	rec = invokeHandler(t, opts.handleEvidenceAudit, http.MethodGet,

@@ -1,8 +1,8 @@
-# 数据模型（M1–M6.2-B5）
+# 数据模型（M1–M6.2-B6）
 
-本文描述 BeaconX M1–M6.2-B5 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）、B4/B5 的设置/通知/MCP/Skills/Agents/证据审计/Sync（0008–0015）。
+本文描述 BeaconX M1–M6.2-B6 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）、B4/B5 的设置/通知/MCP/Skills/Agents/证据审计/Sync（0008–0015）、B6 的发现节点唯一索引（0016）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0015_sync.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0016_findings_node_unique.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -49,6 +49,7 @@
 | 0015 | `sync_sources` | 同步数据源（manual/http_json） |
 | 0015 | `sync_projects` | 外部项目（幂等 upsert） |
 | 0015 | `sync_runs` | 同步运行记录（pending→running→终态） |
+| 0016 | 索引 `uq_findings_node` | 同一作战图节点最多一条发现（node_id IS NOT NULL 部分唯一） |
 
 ### 2.1 租户根表（0001）
 
@@ -79,7 +80,7 @@
 
 ### 2.6 索引与触发器
 
-所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引（合计 37 个）。
+所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引，0016 新增 1 个部分唯一索引（合计 38 个）。
 
 ### 2.7 运行时变更（0003）
 
@@ -155,9 +156,10 @@
 | 0015 | `sync_runs` | PK(tenant,id)；`status` CHECK pending/running/succeeded/failed；`stats JSONB`；source/status 索引；`project_id` 无 FK（应用层校验） | 运行记录只追加 |
 
 - **资产/节点为什么不做复合 FK**（沿用 findings）：`ON DELETE SET NULL` 会把复合键的 `tenant_id` 置空，违反 `NOT NULL`；`findings.asset_id/node_id`、`sync_runs.project_id` 等由应用层校验同租户/同任务。
-- **文件沙箱**：Skills/Workspace 不建文件表，正文在状态目录；路径 Clean+前缀校验、拒绝符号链接/穿越、大小限制（Skills zip≤10MB/≤200 文件；Workspace 单文件≤1MB、上传≤10MB）。
+- **文件沙箱**：Skills/Workspace 不建文件表，正文在状态目录；路径 Clean+前缀校验、拒绝符号链接/穿越、大小限制（Skills zip≤10MB/≤200 文件；Workspace 单文件≤1MB、上传≤10MB、默认总配额 100MB，超限 413 quota_exceeded）。
+- **Skills 版本**：快照在技能目录 `.versions/<timestamp>/`，保留最近 5 份；`.versions` 对文件列表/文件接口隐藏（直接访问 400）；restore 只回滚文件内容，不回滚 DB 元数据（🟡）。
 - **SSRF**：Sync 保存/解析/拨号三层校验，默认拒绝 loopback/私网；仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开。
-- 0008–0015 共新增 11 张表（0013 空操作）；索引共 37 个、`updated_at` 触发器共 13 个。
+- 0008–0015 共新增 11 张表（0013 空操作）；索引共 38 个（0016 追加 `uq_findings_node` 部分唯一索引）、`updated_at` 触发器共 13 个。
 
 ## 3. 资产身份与归一化
 

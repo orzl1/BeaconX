@@ -18,6 +18,7 @@ import (
 
 	"github.com/orzl1/BeaconX/internal/app/events"
 	"github.com/orzl1/BeaconX/internal/app/evidence"
+	"github.com/orzl1/BeaconX/internal/app/executor"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 	"github.com/orzl1/BeaconX/internal/infra/selfupdate"
@@ -69,6 +70,9 @@ type Options struct {
 	Engine   *runner.Engine
 	Broker   *events.Broker
 	Evidence *evidence.Store
+	// Executor 是工具调用的唯一执行入口（策略门 + 审批 + 审计 + 采集）。
+	// 依赖它的接口（如流量重放）在未接线时必须返回 503，不能静默旁路。
+	Executor *executor.Executor
 	Updater  *selfupdate.Updater
 	WebUI    http.Handler
 	TenantID int64

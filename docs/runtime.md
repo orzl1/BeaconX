@@ -153,5 +153,14 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 - **文件沙箱**：Skills/Workspace 用状态目录 + 路径 Clean/前缀校验/符号链接拒绝 + 大小限制；非空目录删除需 recursive。
 - **Sync**：异步运行 ≤60s、manual/http_json、SSRF 三层校验默认拒私网、逐条容错 skipped；无崩溃恢复/保留策略（🟡）。
 - **流量重放（高风险 🟡）**：`POST /traffic/{id}/replay` 直接调用 http_probe，**绕过 executor 的政策门/审批**，仅受 Bearer+租户+http_probe 限制；接入前不应开放给普通使用。
-- **证据**：`GET /evidence/{id}/audit` 只覆盖部分动作；`POST /evidence/rotate` 返回 501（无 key-id，无法安全重写）；正文读取/verify 未全量埋点（🟡）。
+- **证据**：`GET /evidence/{id}/audit` 覆盖 verify 与部分正文 read（best-effort）；`POST /evidence/rotate` 已实现（200，重加密全部 blob；新密钥不落盘，存量签名失效需离线重签 🟡）。
 - **Agents**：仅定义 CRUD/test，**未接入 engine 装配（🟡）**；test 不调用 LLM，未知工具以 200+warnings 返回。
+
+## 11. B6 硬化（M6.2-B6）
+
+- **流量重放走 executor**：`POST /traffic/{id}/replay` 现在通过 `Options.Executor` 执行 `http_probe`，经策略门/审批/审计/证据采集；未接线 503 `executor_unavailable`，策略 deny/审批拒绝 403，审批超时 409，未知工具/其它 502；响应 `{policy_gated:true,output,status,traffic_id?}`，traffic_id 为 best-effort（可为 0）。不再旁路直调。
+- **证据轮换**：`POST /evidence/rotate` 在 Store 写锁下逐 blob 旧解密→新加密，失败 best-effort 回滚；新密钥不落盘，需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；**存量 Snapshot HMAC 签名随主密钥切换失效，Verify→ErrTampered，当前无自动重签（🟡）**，生产轮换必须备份 PG+证据目录并走离线重签。
+- **证据审计**：verify 成功/失败都写 `evidence_access_log`；流量正文读取在 blob 被证据快照引用时写 read（hash 反查）；均为 best-effort，仍有路径未埋点（🟡）。
+- **可观测**：新增全局活动流 `GET /activity`（mission_events 跨任务倒序，before_id 游标）；Dashboard 新增 `hourly` 最近 24 小时 UTC 桶；`GET /missions/{id}/graph` 增加 `after_id`/`next_after_id`（节点升序，取 id>after_id；edges/anchors 全量，过滤仍受 ListNodes 1000 上限 🟡）。
+- **MCP/Workspace/Skills 硬化**：stdio 默认禁用、env 白名单、独立临时工作目录、stdout≤1MiB、超时 kill 进程组、命令白名单/`BEACONX_MCP_STDIO_DIR`、Windows 400；Workspace 默认 100MB 配额（`BEACONX_WORKSPACE_QUOTA_MB`），PUT/上传预检+复核，超限 413 quota_exceeded，per-mission 锁仅进程内；Skills `.versions` 保留 5 份，restore 先快照当前状态，restore 不回滚 DB 元数据（🟡）。
+- **from-node 唯一性**：0016 `uq_findings_node` 部分唯一索引兜底，并发重复→409。
