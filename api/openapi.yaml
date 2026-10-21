@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.9.0
+  version: 1.0.0
   description: |
     BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
-    流量采集与证据校验、自更新、SSE 事件流；M6.2 补齐企业/资产/任务资产/覆盖率，
-    任务范围、计划、作战图、发现、复测、Markdown 报告，以及流量详情/正文、命令历史、
-    LLM 记录、任务用量、用量聚合与 Dashboard。
+    流量采集与证据校验、自更新、SSE 事件流；M6.2 已补齐 B1–B5：企业/资产/任务资产/
+    覆盖率、任务范围/计划/作战图、发现/复测/报告、流量/命令/LLM/用量/Dashboard，以及
+    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -42,6 +42,26 @@ tags:
     description: 流量详情/正文、命令历史、LLM 记录与用量聚合（需要令牌）
   - name: dashboard
     description: 首页 Dashboard 聚合计数（需要令牌）
+  - name: logs
+    description: 应用日志查询与实时流（需要令牌）
+  - name: settings
+    description: 运行时设置（🟡 仅持久化+可读，未热生效）
+  - name: policy
+    description: 策略规则与裁决试算（需要令牌）
+  - name: notifications
+    description: 通知渠道与投递记录（需要令牌）
+  - name: mcp
+    description: MCP 端点与工具清单（需要令牌）
+  - name: skills
+    description: 技能包与文件（需要令牌）
+  - name: agents
+    description: Agent 定义（🟡 未接入运行时装配）
+  - name: workspace
+    description: 任务工作区文件（需要令牌）
+  - name: sync
+    description: 外部数据源同步（需要令牌）
+  - name: traffic
+    description: 流量导出/重放/任务级清理（需要令牌）
 paths:
   /healthz:
     get:
@@ -413,6 +433,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TrafficList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [missions, traffic]
+      summary: 批量清理任务采集行（保留证据快照/正文）
+      description: 删除该任务全部 traffic_exchanges 行；已冻结证据与正文 blob 保留。成功 204。
+      operationId: deleteMissionTraffic
+      responses:
+        "204":
+          description: 已删除
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -845,6 +881,34 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      tags: [assets]
+      summary: 新增资产身份键（归一化后写入）
+      description: 身份键先经 domain/asset.Normalize 归一化；重复/被占用返回 409。
+      operationId: addAssetIdentity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssetIdentityCreateRequest"
+      responses:
+        "201":
+          description: 已创建的身份键
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetIdentity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
   /api/v1/missions/{id}/assets:
@@ -1463,18 +1527,38 @@ paths:
       - $ref: "#/components/parameters/MissionID"
     get:
       tags: [missions, report]
-      summary: 生成任务 Markdown 报告
+      summary: 生成任务报告（markdown/html/docx/pdf）
       description: |
         只读投影：任务元信息、发现（最多 500）、计划步骤、fact 节点（最多展示 100 条并标注总数）、
-        证据统计（traffic/快照）。任务不存在返回 404。响应固定为 text/markdown; charset=utf-8。
+        证据统计。`format` 缺省 markdown；html 直接渲染；docx 为最小合法 Word；pdf 为零依赖
+        STSong-Light 方案（CJK 依赖阅读器字体，不嵌入）。任务不存在 404。
       operationId: getMissionReport
+      parameters:
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [markdown, html, docx, pdf]
+            default: markdown
       responses:
         "200":
-          description: Markdown 报告
+          description: 报告内容（按 format 返回不同 Content-Type）
           content:
             text/markdown:
               schema:
                 type: string
+            text/html:
+              schema:
+                type: string
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+            application/pdf:
+              schema:
+                type: string
+                format: binary
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1835,6 +1919,1268 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /api/v1/logs:
+    get:
+      tags: [logs]
+      summary: 应用日志查询（?level=&limit=）
+      description: |
+        应用日志查询（?level=&limit=）。
+      operationId: listLogs
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogEntryList"
+
+  /api/v1/logs/stream:
+    get:
+      tags: [logs]
+      summary: "应用日志实时流（SSE，event: log）"
+      description: |
+        应用日志实时流（SSE，event: log）。
+      operationId: streamLogs
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/settings:
+    get:
+      tags: [settings]
+      summary: 运行时设置（持久化+可读，未热生效）
+      description: |
+        运行时设置（持久化+可读，未热生效）。（部分实现/风险见 project-map §5.6）
+      operationId: getSettings
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+    patch:
+      tags: [settings]
+      summary: 更新运行时设置（白名单键；🟡 运行时未热生效）
+      description: |
+        更新运行时设置（白名单键；🟡 运行时未热生效）。（部分实现/风险见 project-map §5.6）
+      operationId: patchSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsPatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+
+  /api/v1/evidence/{id}/audit:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [evidence]
+      summary: 证据读取审计（🟡 仅部分动作埋点）
+      description: |
+        证据读取审计（🟡 仅部分动作埋点）。（部分实现/风险见 project-map §5.6）
+      operationId: getEvidenceAudit
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceAuditList"
+
+  /api/v1/evidence/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [evidence]
+      summary: 导出证据 zip（snapshot.json + 正文）
+      description: |
+        导出证据 zip（snapshot.json + 正文）。
+      operationId: exportEvidence
+      responses:
+        "200":
+          description: OK
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+
+  /api/v1/evidence/rotate:
+    post:
+      tags: [evidence]
+      summary: 密钥轮换（⬜ 未实现，返回 501）
+      description: |
+        密钥轮换（⬜ 未实现，返回 501）。（部分实现/风险见 project-map §5.6）
+      operationId: rotateEvidence
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceRotateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/findings:
+    get:
+      tags: [findings]
+      summary: 跨任务发现列表（?mission_id=&severity=&status=&asset_id=&after_id=&limit=）
+      description: |
+        跨任务发现列表（?mission_id=&severity=&status=&asset_id=&after_id=&limit=）。
+      operationId: listFindingsCross
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingList"
+
+  /api/v1/findings/export:
+    get:
+      tags: [findings]
+      summary: 导出发现为 CSV（≤10000 行，防公式注入）
+      description: |
+        导出发现为 CSV（≤10000 行，防公式注入）。
+      operationId: exportFindings
+      responses:
+        "200":
+          description: OK
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  /api/v1/retests/{id}/run:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [retests]
+      summary: 执行复测（校验证据签名与解密，非重跑 exploit）
+      description: |
+        执行复测（校验证据签名与解密，非重跑 exploit）。
+      operationId: runRetest
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Retest"
+
+  /api/v1/retests/{id}/evidence:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [retests]
+      summary: 复测关联证据列表
+      description: |
+        复测关联证据列表。
+      operationId: getRetestEvidence
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingEvidenceList"
+
+  /api/v1/missions/{id}/findings/from-node:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [findings]
+      summary: 从 fact/finding 节点创建发现（🟡 无唯一约束，可能重复）
+      description: |
+        从 fact/finding 节点创建发现（🟡 无唯一约束，可能重复）。（部分实现/风险见 project-map §5.6）
+      operationId: createFindingFromNode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingFromNodeRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Finding"
+
+  /api/v1/mcp/servers:
+    get:
+      tags: [mcp]
+      summary: MCP 端点列表
+      description: |
+        MCP 端点列表。
+      operationId: listMcpServers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServerList"
+    post:
+      tags: [mcp]
+      summary: 新建 MCP 端点
+      description: |
+        新建 MCP 端点。
+      operationId: createMcpServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpServerCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+
+  /api/v1/mcp/servers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [mcp]
+      summary: MCP 端点详情
+      description: |
+        MCP 端点详情。
+      operationId: getMcpServer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+    patch:
+      tags: [mcp]
+      summary: 更新 MCP 端点
+      description: |
+        更新 MCP 端点。
+      operationId: patchMcpServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/McpServerPatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpServer"
+    delete:
+      tags: [mcp]
+      summary: 删除 MCP 端点
+      description: |
+        删除 MCP 端点。
+      operationId: deleteMcpServer
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/mcp/servers/{id}/refresh:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [mcp]
+      summary: 刷新 MCP 工具清单（http/stdio；失败保留旧清单）
+      description: |
+        刷新 MCP 工具清单（http/stdio；失败保留旧清单）。
+      operationId: refreshMcpServer
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpToolList"
+
+  /api/v1/mcp/tools:
+    get:
+      tags: [mcp]
+      summary: MCP 工具列表（?server_id=）
+      description: |
+        MCP 工具列表（?server_id=）。
+      operationId: listMcpTools
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/McpToolList"
+
+  /api/v1/workspace/files:
+    get:
+      tags: [workspace]
+      summary: 工作区文件列表（?mission_id=&path=&limit=）
+      description: |
+        工作区文件列表（?mission_id=&path=&limit=）。
+      operationId: listWorkspaceFiles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceEntryList"
+
+  /api/v1/workspace/files/{path}:
+    parameters:
+      - name: path
+        in: path
+        required: true
+        description: 文件相对路径
+        schema:
+          type: string
+    get:
+      tags: [workspace]
+      summary: 读取工作区文本文件（≤1MB UTF-8）
+      description: |
+        读取工作区文本文件（≤1MB UTF-8）。
+      operationId: readWorkspaceFile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceFileContent"
+    put:
+      tags: [workspace]
+      summary: 写入工作区文本文件（≤1MB）
+      description: |
+        写入工作区文本文件（≤1MB）。
+      operationId: writeWorkspaceFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceWriteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceWriteResult"
+    delete:
+      tags: [workspace]
+      summary: 删除工作区文件/目录（非空目录需 recursive）
+      description: |
+        删除工作区文件/目录（非空目录需 recursive）。
+      operationId: deleteWorkspaceFile
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/workspace/upload:
+    post:
+      tags: [workspace]
+      summary: 上传文件到工作区（≤10MB）
+      description: |
+        上传文件到工作区（≤10MB）。
+      operationId: uploadWorkspaceFile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceWriteResult"
+
+  /api/v1/traffic/{id}/export:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [traffic]
+      summary: 导出流量为合成 HAR 1.2
+      description: |
+        导出流量为合成 HAR 1.2。
+      operationId: exportTrafficHar
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HarArchive"
+
+  /api/v1/traffic/{id}/replay:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [traffic]
+      summary: 重放请求（🟡 直接调 http_probe，绕过策略/审批）
+      description: |
+        重放请求（🟡 直接调 http_probe，绕过策略/审批）。（部分实现/风险见 project-map §5.6）
+      operationId: replayTraffic
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficReplayResult"
+
+  /api/v1/notifications/channels:
+    get:
+      tags: [notifications]
+      summary: 通知渠道列表
+      description: |
+        通知渠道列表。
+      operationId: listNotificationChannels
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannelList"
+    post:
+      tags: [notifications]
+      summary: 新建通知渠道
+      description: |
+        新建通知渠道。
+      operationId: createNotificationChannel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannel"
+
+  /api/v1/notifications/channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [notifications]
+      summary: 通知渠道详情
+      description: |
+        通知渠道详情。
+      operationId: getNotificationChannel
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannel"
+    patch:
+      tags: [notifications]
+      summary: 更新通知渠道（type 不可改）
+      description: |
+        更新通知渠道（type 不可改）。
+      operationId: patchNotificationChannel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelPatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannel"
+    delete:
+      tags: [notifications]
+      summary: 删除通知渠道（级联投递记录）
+      description: |
+        删除通知渠道（级联投递记录）。
+      operationId: deleteNotificationChannel
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/notifications/channels/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [notifications]
+      summary: 测试渠道（一律 200 + delivery；webhook 真发，email/generic skipped）
+      description: |
+        测试渠道（一律 200 + delivery；webhook 真发，email/generic skipped）。（部分实现/风险见 project-map §5.6）
+      operationId: testNotificationChannel
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationTestResult"
+
+  /api/v1/notifications/deliveries:
+    get:
+      tags: [notifications]
+      summary: 投递记录（?channel_id=&status=&limit=）
+      description: |
+        投递记录（?channel_id=&status=&limit=）。
+      operationId: listNotificationDeliveries
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationDeliveryList"
+
+  /api/v1/sync/sources:
+    get:
+      tags: [sync]
+      summary: 同步数据源列表
+      description: |
+        同步数据源列表。
+      operationId: listSyncSources
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSourceList"
+    post:
+      tags: [sync]
+      summary: 新建同步数据源
+      description: |
+        新建同步数据源。
+      operationId: createSyncSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncSourceCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSource"
+
+  /api/v1/sync/sources/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [sync]
+      summary: 数据源详情
+      description: |
+        数据源详情。
+      operationId: getSyncSource
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSource"
+    patch:
+      tags: [sync]
+      summary: 更新数据源
+      description: |
+        更新数据源。
+      operationId: patchSyncSource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncSourcePatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncSource"
+    delete:
+      tags: [sync]
+      summary: 删除数据源
+      description: |
+        删除数据源。
+      operationId: deleteSyncSource
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/sync/projects:
+    get:
+      tags: [sync]
+      summary: 外部项目列表（?source_id=）
+      description: |
+        外部项目列表（?source_id=）。
+      operationId: listSyncProjects
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncProjectList"
+    post:
+      tags: [sync]
+      summary: 新建/更新外部项目
+      description: |
+        新建/更新外部项目。
+      operationId: createSyncProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncProjectCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncProject"
+
+  /api/v1/sync/run:
+    post:
+      tags: [sync]
+      summary: 触发同步（202 + running，异步 ≤60s）
+      description: |
+        触发同步（202 + running，异步 ≤60s）。
+      operationId: runSync
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRunRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRun"
+
+  /api/v1/sync/runs:
+    get:
+      tags: [sync]
+      summary: 同步运行记录（?source_id=&status=&limit=）
+      description: |
+        同步运行记录（?source_id=&status=&limit=）。
+      operationId: listSyncRuns
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRunList"
+
+  /api/v1/assets/{id}/identities/{kind}/{key}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+      - name: kind
+        in: path
+        required: true
+        description: 身份类型
+        schema:
+          type: integer
+          format: int64
+      - name: key
+        in: path
+        required: true
+        description: 稳定键
+        schema:
+          type: string
+    delete:
+      tags: [assets]
+      summary: 删除资产身份键（允许删到 0 条）
+      description: |
+        删除资产身份键（允许删到 0 条）。
+      operationId: deleteAssetIdentity
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/missions/{id}/scope/compile:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [missions]
+      summary: 把任务范围编译为策略草案（纯预览，不落库）
+      description: |
+        把任务范围编译为策略草案（纯预览，不落库）。
+      operationId: compileMissionScope
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopeCompileResult"
+
+  /api/v1/policy/rules:
+    get:
+      tags: [policy]
+      summary: 策略规则列表（含停用；priority DESC,id ASC）
+      description: |
+        策略规则列表（含停用；priority DESC,id ASC）。
+      operationId: listPolicyRules
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRuleList"
+    post:
+      tags: [policy]
+      summary: 创建策略规则（不可创建 immutable）
+      description: |
+        创建策略规则（不可创建 immutable）。
+      operationId: createPolicyRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRuleCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRule"
+
+  /api/v1/policy/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [policy]
+      summary: 策略规则详情
+      description: |
+        策略规则详情。
+      operationId: getPolicyRule
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRule"
+    patch:
+      tags: [policy]
+      summary: 更新策略规则（immutable 限制；arg_pattern 仍可改 🟡）
+      description: |
+        更新策略规则（immutable 限制；arg_pattern 仍可改 🟡）。（部分实现/风险见 project-map §5.6）
+      operationId: patchPolicyRule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRulePatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRule"
+    delete:
+      tags: [policy]
+      summary: 删除策略规则（immutable 拒绝）
+      description: |
+        删除策略规则（immutable 拒绝）。
+      operationId: deletePolicyRule
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/policy/simulate:
+    post:
+      tags: [policy]
+      summary: 策略裁决试算（启用规则前 200）
+      description: |
+        策略裁决试算（启用规则前 200）。
+      operationId: simulatePolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicySimulateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicySimulateResult"
+
+  /api/v1/approvals/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [approvals]
+      summary: 审批详情与上下文回放
+      description: |
+        审批详情与上下文回放。
+      operationId: getApprovalDetail
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDetail"
+
+  /api/v1/approvals/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: 资源标识
+        schema:
+          type: integer
+          format: int64
+    post:
+      tags: [approvals]
+      summary: 取消待审批项（仅 pending）
+      description: |
+        取消待审批项（仅 pending）。
+      operationId: cancelApproval
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+
+  /api/v1/agents:
+    get:
+      tags: [agents]
+      summary: Agent 定义列表
+      description: |
+        Agent 定义列表。
+      operationId: listAgents
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentList"
+    post:
+      tags: [agents]
+      summary: 创建 Agent 定义
+      description: |
+        创建 Agent 定义。
+      operationId: createAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+
+  /api/v1/agents/{key}:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: 稳定键
+        schema:
+          type: string
+    get:
+      tags: [agents]
+      summary: Agent 详情
+      description: |
+        Agent 详情。
+      operationId: getAgent
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+    patch:
+      tags: [agents]
+      summary: 更新 Agent 定义
+      description: |
+        更新 Agent 定义。
+      operationId: patchAgent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentPatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+    delete:
+      tags: [agents]
+      summary: 删除 Agent 定义
+      description: |
+        删除 Agent 定义。
+      operationId: deleteAgent
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/agents/{key}/test:
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: 稳定键
+        schema:
+          type: string
+    post:
+      tags: [agents]
+      summary: 校验 Agent 工具/提示词（不调 LLM；🟡 未接入 engine）
+      description: |
+        校验 Agent 工具/提示词（不调 LLM；🟡 未接入 engine）。（部分实现/风险见 project-map §5.6）
+      operationId: testAgent
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTestResult"
+
+  /api/v1/skills:
+    get:
+      tags: [skills]
+      summary: 技能列表（含缺失统计）
+      description: |
+        技能列表（含缺失统计）。
+      operationId: listSkills
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillList"
+    post:
+      tags: [skills]
+      summary: 创建技能元数据
+      description: |
+        创建技能元数据。
+      operationId: createSkill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillCreateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+
+  /api/v1/skills/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 名称
+        schema:
+          type: string
+    get:
+      tags: [skills]
+      summary: 技能详情
+      description: |
+        技能详情。
+      operationId: getSkill
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+    patch:
+      tags: [skills]
+      summary: 更新技能元数据
+      description: |
+        更新技能元数据。
+      operationId: patchSkill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillPatchRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+    delete:
+      tags: [skills]
+      summary: 删除技能（含磁盘文件）
+      description: |
+        删除技能（含磁盘文件）。
+      operationId: deleteSkill
+      responses:
+        "200":
+          description: OK
+          description: 无内容
+
+  /api/v1/skills/upload:
+    post:
+      tags: [skills]
+      summary: 上传技能 zip（≤10MB/≤200 文件/仅文本）
+      description: |
+        上传技能 zip（≤10MB/≤200 文件/仅文本）。
+      operationId: uploadSkill
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Skill"
+
+  /api/v1/skills/{name}/files:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 名称
+        schema:
+          type: string
+    get:
+      tags: [skills]
+      summary: 技能文件树
+      description: |
+        技能文件树。
+      operationId: listSkillFiles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFileList"
+
+  /api/v1/skills/{name}/files/{path}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        description: 名称
+        schema:
+          type: string
+      - name: path
+        in: path
+        required: true
+        description: 文件相对路径
+        schema:
+          type: string
+    get:
+      tags: [skills]
+      summary: 读取技能文本文件（≤1MB）
+      description: |
+        读取技能文本文件（≤1MB）。
+      operationId: readSkillFile
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFileContent"
+    put:
+      tags: [skills]
+      summary: 写入技能文本文件
+      description: |
+        写入技能文本文件。
+      operationId: writeSkillFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillWriteRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillFileContent"
+    delete:
+      tags: [skills]
+      summary: 删除技能文件
+      description: |
+        删除技能文件。
+      operationId: deleteSkillFile
+      responses:
+        "200":
+          description: OK
+          description: 无内容
 components:
   securitySchemes:
     bearerAuth:
@@ -3445,3 +4791,803 @@ components:
           description: 最近任务，按 id 倒序最多 5 条。
           items:
             $ref: "#/components/schemas/DashboardRecentMission"
+    LogEntry:
+      type: object
+      required: [id, time, level, msg]
+      properties:
+        id:
+          type: integer
+          description: 日志 ID
+        time:
+          type: string
+          format: date-time
+          description: RFC3339 时间
+        level:
+          type: string
+          description: debug/info/warn/error
+        msg:
+          type: string
+          description: 消息
+        attrs:
+          type: object
+          additionalProperties: true
+          description: 结构化属性
+    LogEntryList:
+      type: object
+      required: [logs]
+      properties:
+        logs:
+          $ref: "#/components/schemas/LogEntry"
+          description: 日志数组
+    Settings:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          type: object
+          additionalProperties: true
+          description: 嵌套设置视图
+    SettingsPatchRequest:
+      type: object
+      properties:
+        settings:
+          type: object
+          additionalProperties: true
+          description: 要更新的设置（白名单键/点号键）
+    EvidenceAudit:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        snapshot_id:
+          type: integer
+        action:
+          type: string
+          description: read/verify/export
+        actor:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    EvidenceAuditList:
+      type: object
+      required: [audit]
+      properties:
+        audit:
+          $ref: "#/components/schemas/EvidenceAudit"
+          description: 审计记录
+    EvidenceRotateRequest:
+      type: object
+      properties:
+        new_key_hex:
+          type: string
+          description: 新主密钥（64 hex）
+    FindingFromNodeRequest:
+      type: object
+      required: [node_id]
+      properties:
+        node_id:
+          type: integer
+          description: fact/finding 节点
+        title:
+          type: string
+        severity:
+          type: string
+    McpServer:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        name:
+          type: string
+        transport:
+          type: string
+          description: http/stdio
+        url:
+          type: string
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+          additionalProperties: true
+        headers:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+        last_status:
+          type: string
+          description: unknown/ok/error
+        last_error:
+          type: string
+        last_refreshed_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    McpServerList:
+      type: object
+      required: [servers]
+      properties:
+        servers:
+          $ref: "#/components/schemas/McpServer"
+    McpServerCreateRequest:
+      type: object
+      required: [name, transport]
+      properties:
+        name:
+          type: string
+        transport:
+          type: string
+        url:
+          type: string
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+          additionalProperties: true
+        headers:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    McpServerPatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+          additionalProperties: true
+        headers:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    McpTool:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        server_id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        input_schema:
+          type: object
+          additionalProperties: true
+        discovered_at:
+          type: string
+          format: date-time
+    McpToolList:
+      type: object
+      required: [tools]
+      properties:
+        tools:
+          $ref: "#/components/schemas/McpTool"
+    WorkspaceEntry:
+      type: object
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+        is_dir:
+          type: boolean
+        modified_at:
+          type: string
+          format: date-time
+    WorkspaceEntryList:
+      type: object
+      required: [files]
+      properties:
+        files:
+          $ref: "#/components/schemas/WorkspaceEntry"
+        root:
+          type: string
+    WorkspaceFileContent:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+    WorkspaceWriteRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+    WorkspaceWriteResult:
+      type: object
+      required: [path, size]
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+    WorkspaceUploadResult:
+      type: object
+      required: [path, size]
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+    HarArchive:
+      type: object
+      required: [log]
+      properties:
+        log:
+          type: object
+          additionalProperties: true
+          description: HAR 1.2 log 对象
+    TrafficReplayResult:
+      type: object
+      required: [traffic_id]
+      properties:
+        traffic_id:
+          type: integer
+          description: 新采集记录 ID
+        mission_id:
+          type: integer
+        status:
+          type: integer
+          description: HTTP 状态码
+        error:
+          type: string
+    NotificationChannel:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          description: webhook/email/generic
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    NotificationChannelList:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          $ref: "#/components/schemas/NotificationChannel"
+    NotificationChannelCreateRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    NotificationChannelPatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    NotificationDelivery:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        channel_id:
+          type: integer
+        event:
+          type: string
+        status:
+          type: string
+          description: pending/sent/failed/skipped
+        detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    NotificationDeliveryList:
+      type: object
+      required: [deliveries]
+      properties:
+        deliveries:
+          $ref: "#/components/schemas/NotificationDelivery"
+    NotificationTestResult:
+      type: object
+      required: [sent, channel_id]
+      properties:
+        sent:
+          type: boolean
+        channel_id:
+          type: integer
+        delivery:
+          $ref: "#/components/schemas/NotificationDelivery"
+    SyncSource:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          description: manual/http_json
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SyncSourceList:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          $ref: "#/components/schemas/SyncSource"
+    SyncSourceCreateRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    SyncSourcePatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    SyncProject:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        source_id:
+          type: integer
+        external_id:
+          type: string
+        name:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SyncProjectList:
+      type: object
+      required: [projects]
+      properties:
+        projects:
+          $ref: "#/components/schemas/SyncProject"
+    SyncProjectCreateRequest:
+      type: object
+      required: [source_id, external_id]
+      properties:
+        source_id:
+          type: integer
+        external_id:
+          type: string
+        name:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+    SyncRun:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        source_id:
+          type: integer
+        project_id:
+          type: integer
+        status:
+          type: string
+          description: pending/running/succeeded/failed
+        stats:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    SyncRunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          $ref: "#/components/schemas/SyncRun"
+    SyncRunRequest:
+      type: object
+      properties:
+        source_id:
+          type: integer
+        project_id:
+          type: integer
+        mode:
+          type: string
+    AssetIdentityCreateRequest:
+      type: object
+      required: [kind, key]
+      properties:
+        kind:
+          type: string
+        key:
+          type: string
+    ScopeCompileResult:
+      type: object
+      required: [mission_id]
+      properties:
+        mission_id:
+          type: integer
+        compiled_rules:
+          type: array
+          items:
+            type: string
+        notes:
+          type: array
+          items:
+            type: string
+    PolicyRule:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        name:
+          type: string
+        tool:
+          type: string
+        arg_pattern:
+          type: string
+        action:
+          type: string
+          description: allow/ask/deny
+        priority:
+          type: integer
+        timeout_seconds:
+          type: integer
+        enabled:
+          type: boolean
+        immutable:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PolicyRuleList:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          $ref: "#/components/schemas/PolicyRule"
+    PolicyRuleCreateRequest:
+      type: object
+      required: [name, tool, action]
+      properties:
+        name:
+          type: string
+        tool:
+          type: string
+        arg_pattern:
+          type: string
+        action:
+          type: string
+        priority:
+          type: integer
+        timeout_seconds:
+          type: integer
+        enabled:
+          type: boolean
+    PolicyRulePatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        tool:
+          type: string
+        arg_pattern:
+          type: string
+        action:
+          type: string
+        priority:
+          type: integer
+        timeout_seconds:
+          type: integer
+        enabled:
+          type: boolean
+    PolicySimulateRequest:
+      type: object
+      required: [tool, args]
+      properties:
+        tool:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+    PolicySimulateResult:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+        rule_id:
+          type: integer
+        rule_name:
+          type: string
+        reason:
+          type: string
+    ApprovalDetail:
+      type: object
+      required: [approval]
+      properties:
+        approval:
+          type: object
+          additionalProperties: true
+        node:
+          type: object
+          additionalProperties: true
+        mission:
+          type: object
+          additionalProperties: true
+        tool:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+    Agent:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        id:
+          type: integer
+        key:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          description: planner/worker/retester/main
+        system_prompt:
+          type: string
+        tools:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    AgentList:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          $ref: "#/components/schemas/Agent"
+    AgentCreateRequest:
+      type: object
+      required: [key, role]
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        system_prompt:
+          type: string
+        tools:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        enabled:
+          type: boolean
+    AgentPatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        system_prompt:
+          type: string
+        tools:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        enabled:
+          type: boolean
+    AgentTestResult:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+        valid_tools:
+          type: array
+          items:
+            type: string
+        unknown_tools:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    Skill:
+      type: object
+      properties:
+        tenant_id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+        files:
+          type: integer
+        file_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SkillList:
+      type: object
+      required: [skills]
+      properties:
+        skills:
+          $ref: "#/components/schemas/Skill"
+    SkillCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+    SkillPatchRequest:
+      type: object
+      properties:
+        description:
+          type: string
+        version:
+          type: string
+    SkillFile:
+      type: object
+      properties:
+        path:
+          type: string
+        size:
+          type: integer
+        updated_at:
+          type: string
+          format: date-time
+    SkillFileList:
+      type: object
+      required: [files]
+      properties:
+        files:
+          $ref: "#/components/schemas/SkillFile"
+    SkillFileContent:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        size:
+          type: integer
+    SkillWriteRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string

@@ -13,12 +13,6 @@ type companyCreateRequest struct {
 	Slug string `json:"slug"`
 }
 
-// companyPatchRequest 是更新企业的请求体；空串表示保持原值。
-type companyPatchRequest struct {
-	Name string `json:"name"`
-	Slug string `json:"slug"`
-}
-
 // companyScopeCreateRequest 是新增企业范围条目的请求体。
 type companyScopeCreateRequest struct {
 	Kind   string `json:"kind"`
@@ -74,7 +68,7 @@ func (o Options) handleGetCompany(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, company)
 }
 
-// handleUpdateCompany 局部更新企业：只更新传了非空值的字段。
+// handleUpdateCompany 局部更新企业：name/slug 非空才更新，attrs 支持整体替换/清空。
 func (o Options) handleUpdateCompany(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
 		return
@@ -83,11 +77,11 @@ func (o Options) handleUpdateCompany(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req companyPatchRequest
-	if !decodeJSONBody(w, r, &req) {
+	patch, ok := parseCompanyPatch(w, r)
+	if !ok {
 		return
 	}
-	company, err := o.Store.UpdateCompany(r.Context(), o.TenantID, companyID, req.Name, req.Slug)
+	company, err := o.Store.PatchCompany(r.Context(), o.TenantID, companyID, patch)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return

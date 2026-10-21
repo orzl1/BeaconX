@@ -163,7 +163,11 @@ func (o Options) handleListAssets(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
 		return
 	}
-	filter := pg.AssetSearch{Limit: listLimitParam(r), Query: r.URL.Query().Get("q")}
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
+	filter := pg.AssetSearch{Limit: listLimitParam(r), Query: r.URL.Query().Get("q"), AfterID: afterID}
 	if rawType := strings.TrimSpace(r.URL.Query().Get("type")); rawType != "" {
 		kind := asset.Kind(rawType)
 		if !kind.Valid() {
@@ -177,7 +181,15 @@ func (o Options) handleListAssets(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assets": assets})
+	// 资产按 id 升序，next_after_id 即本页最后一条的 id（取满才继续）。
+	var lastID int64
+	if len(assets) > 0 {
+		lastID = assets[len(assets)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"assets":        assets,
+		"next_after_id": cursorNext(len(assets), filter.Limit, lastID),
+	})
 }
 
 // handleCreateAsset 创建资产：带身份键时走 upsert，省略身份键时创建裸资产。

@@ -38,6 +38,12 @@ func (o Options) handleMissionReport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// B5：多格式导出（html/docx/pdf）由 report_extra.go 接管；缺省或
+	// format=markdown 时保持原有 Markdown 行为不变。
+	if format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format"))); format != "" && format != "markdown" {
+		o.handleMissionReportFormat(w, r, missionID, format)
+		return
+	}
 	mission, err := o.Store.GetMission(r.Context(), o.TenantID, missionID)
 	if err != nil {
 		writeStoreError(w, r, err)

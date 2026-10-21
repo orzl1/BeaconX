@@ -70,7 +70,9 @@ type AssetUpdate struct {
 type AssetSearch struct {
 	Type  *asset.Kind
 	Query string
-	Limit int
+	// AfterID 是 id 升序游标：>0 时只返回 id > AfterID 的资产（0 表示首页）。
+	AfterID int64
+	Limit   int
 }
 
 // companyScopeKinds 与 company_scope.kind 的 CHECK 约束保持一致。
@@ -393,6 +395,10 @@ func (s *Store) SearchAssets(ctx context.Context, tenantID int64, f AssetSearch)
 	if q := strings.TrimSpace(f.Query); q != "" {
 		args = append(args, "%"+escapeLike(q)+"%")
 		conds = append(conds, fmt.Sprintf(`label ILIKE $%d ESCAPE '\'`, len(args)))
+	}
+	if f.AfterID > 0 {
+		args = append(args, f.AfterID)
+		conds = append(conds, fmt.Sprintf("id > $%d", len(args)))
 	}
 	args = append(args, limit)
 

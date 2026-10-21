@@ -164,3 +164,11 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 - 证据密钥轮换与多密钥并存。
 - 纯文本输出与 HTTP 头的脱敏接入（`RedactHeaders` 目前仅提供工具函数）。
 - 证据保留策略/GC 与批量导出（未在本里程碑实现）。
+
+## 11. B4/B5 证据增强与风险
+
+- **导出**：`POST /api/v1/evidence/{id}/export` 返回 zip（snapshot.json + 请求/响应正文），成功后写 `evidence_access_log`（action=export）；导出前会校验 blob 哈希/签名。
+- **审计**：`GET /api/v1/evidence/{id}/audit` 读取 `evidence_access_log`（动作 read/verify/export）；当前只有 export/verify 部分路径埋点，正文读取与既有 `GET /evidence/{id}/verify` 尚未全量记录（🟡）。
+- **密钥轮换（⬜ 未实现）**：`POST /api/v1/evidence/rotate` 当前返回 **501**；原因是 blob 没有 key-id 前缀，无法区分新旧密钥并安全重写，需要先做密钥版本化。
+- **复测执行**：`POST /api/v1/retests/{id}/run` 会重算快照签名并解密校验关联证据（不是重跑 exploit），成功→passed、失败→failed、无证据→error。
+- **风险提示**：流量重放（`/traffic/{id}/replay`）绕过 executor 的策略/审批，属于 🟡 高风险能力；HAR 导出是合成格式（不是真实 pcap）。

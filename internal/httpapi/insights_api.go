@@ -49,17 +49,29 @@ func (o Options) handleTrafficList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := o.Store.ListTrafficFilter(r.Context(), o.TenantID, pg.TrafficFilter{
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
+	list, err := o.Store.ListTrafficPage(r.Context(), o.TenantID, pg.TrafficPageFilter{
 		MissionID: missionID,
 		Tool:      strings.TrimSpace(query.Get("tool")),
 		Phase:     phase,
+		AfterID:   afterID,
 		Limit:     limit,
 	})
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"traffic": list})
+	var lastTrafficID int64
+	if len(list) > 0 {
+		lastTrafficID = list[len(list)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"traffic":       list,
+		"next_after_id": cursorNext(len(list), limit, lastTrafficID),
+	})
 }
 
 // handleTrafficGet 返回单条流量采集记录（平铺，不含正文）。
@@ -179,17 +191,29 @@ func (o Options) handleCommandList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := o.Store.ListAuditFilter(r.Context(), o.TenantID, pg.AuditFilter{
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
+	list, err := o.Store.ListAuditPage(r.Context(), o.TenantID, pg.AuditPageFilter{
 		MissionID: missionID,
 		Tool:      strings.TrimSpace(query.Get("tool")),
 		Outcome:   strings.TrimSpace(query.Get("outcome")),
+		AfterID:   afterID,
 		Limit:     limit,
 	})
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"commands": list})
+	var lastCommandID int64
+	if len(list) > 0 {
+		lastCommandID = list[len(list)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"commands":      list,
+		"next_after_id": cursorNext(len(list), limit, lastCommandID),
+	})
 }
 
 // handleCommandGet 返回单条命令执行记录（AuditEvent 平铺）。
@@ -226,17 +250,29 @@ func (o Options) handleLLMRecordList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	records, err := o.Store.ListLLMRecords(r.Context(), o.TenantID, pg.LLMRecordFilter{
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
+	records, err := o.Store.ListLLMPage(r.Context(), o.TenantID, pg.LLMPageFilter{
 		MissionID: missionID,
 		Role:      strings.TrimSpace(query.Get("role")),
 		Model:     strings.TrimSpace(query.Get("model")),
+		AfterID:   afterID,
 		Limit:     limit,
 	})
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"records": records})
+	var lastRecordID int64
+	if len(records) > 0 {
+		lastRecordID = records[len(records)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"records":       records,
+		"next_after_id": cursorNext(len(records), limit, lastRecordID),
+	})
 }
 
 // ---------- 任务用量 ----------

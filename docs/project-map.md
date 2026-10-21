@@ -4,13 +4,13 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 文档版本 | v1.3 |
-| 更新日期 | 2026-10-21 |
+| 文档版本 | v2.0 |
+| 更新日期 | 2026-10-22 |
 | 适用 commit | 本次提交（当前工作区，未提交） |
-| 文档状态 | **含已实现 70 条路由 + 计划接口 73 条（⬜ 未实现，供前端设计）** |
-| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付）+ M6.2-B1/B2/B3（已实现）+ M6.2-B4/B5（⬜ 计划） |
-| 路由数量 | 已实现 70 条（M0–M6 21 + B1 18 + B2 20 + B3 11）；计划接口 73 条（B4 26 + B5 47，均未实现） |
-| 校验命令 | `make docs-check`（只校验已实现的 70 条路由是否被记录） |
+| 文档状态 | **已实现 140 条路由 + 计划剩余（⬜/🟡，见 §5.6）** |
+| 覆盖里程碑 | M0–M6（后端 + 前端 + 交付）+ M6.2-B1/B2/B3/B4/B5（已实现/部分，见状态列） |
+| 路由数量 | 已实现 140 条 = 基础 70（M0–M6/B1–B3）+ feature 70（B4 24 + B5 46；B5 报告多格式为既有 `/report` 扩展，不新增 pattern） |
+| 校验命令 | `make docs-check`（校验 Routes()+featureRouteSpecs() 共 140 条已实现路由是否被记录） |
 | 文档语言 | 中文；标识符、JSON 字段、错误码、环境变量、SQL、路径保留英文 |
 
 **状态图例（全文通用）**：
@@ -21,7 +21,7 @@
 | 🟡 | 部分实现：已有 API/数据，但存在明确缺口 | 缺口在 §5.6/§9 标注，**不得**把缺口写成已实现 |
 | ⬜ | 计划/未开始（草案） | 只出现在 §5.6/§10 计划接口与 §9 映射；路径/字段均为**设计草案**，后端未实现 |
 
-> 约定：计划接口统一用编号 `P-B4-xx` / `P-B5-xx` 引用；它们**不计入**已实现的 70 条路由，`make docs-check` 也不会校验这些路径。任何计划接口在落地时必须先实现、再更新 §5.2 与 OpenAPI，然后才能去掉 ⬜。
+> 约定：B4/B5 接口统一用编号 `P-B4-xx` / `P-B5-xx` 引用；仍为 ⬜/🟡 的条目不得当作已实现。任何条目落地时必须先实现、再更新 §5.2 与 OpenAPI，然后才能去掉 ⬜/🟡。
 
 ## 1. 文档定位与强制更新规则
 
@@ -165,7 +165,7 @@ cmd/beaconx
 | `internal/logging` | 结构化日志 | `New(Log)`（slog） | `logging.go` |
 | `internal/platform` | 状态目录 | `New`、`Ensure`、`EnsureTenant`、`TenantDir` | `state.go` |
 | `internal/tenant` | 租户上下文 | `ID`、`With`、`From`、`MustFrom`、`DefaultID=1` | `tenant.go` |
-| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`（70 条）、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产/范围/计划/作战图/节点/发现/复测/报告/洞察处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go`、`graph_api.go`、`findings_api.go`、`report_api.go`、`insights_api.go` |
+| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`（基础 70 条）+ `featureRouteSpecs()`（feature 70 条）、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产/范围/计划/作战图/节点/发现/复测/报告/洞察处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go`、`graph_api.go`、`findings_api.go`、`report_api.go`、`insights_api.go` |
 | `internal/app/runner` | 任务运行时 | `Engine`、`Config`、`Planner`/`Worker` 接口、`IdlePlanner`、`NoopWorker`、`EventSink`；调度/租约/暂停/恢复/取消/删除/恢复对账/预算暂停 | `engine.go` |
 | `internal/app/ai` | LLM 规划与执行 | `Planner.Plan`、`Worker.Execute`、`Worker.SetTools`、`runToolLoop`、`parseObservation`、`Config`、`LLM` 接口 | `ai.go`、`planner.go`、`worker.go` |
 | `internal/app/executor` | 工具调用唯一入口 | `Executor.Execute/ExecuteText`、`beginCapture/finishCapture`、`waitApproval`、`audit`、`Config` | `executor.go` |
@@ -183,6 +183,11 @@ cmd/beaconx
 | `internal/domain/graph` | 作战图枚举 | `NodeKind`（7）、`NodeState`（5）、`EdgeRel`（5）、`AnchorRole`（4）、`ValidateNode/Edge/Anchor`、`ErrNotFound` | `graph.go` |
 | `internal/domain/asset` | 资产身份归一化 | `Kind`（6）、`Identity`、`Normalize`、`NormalizeDomain/IP/CIDR/Service/URL` | `asset.go` |
 | `internal/domain/finding` | 发现/复测领域模型 | `Severity`（5）、`Status`（6）、`RetestStatus`（5）、`ValidateTransition`、`ValidateRetestTransition`、`Terminal()`、错误 `ErrInvalidStatus/ErrIllegalTransition/ErrTerminalStatus/ErrInvalidRetestStatus/ErrIllegalRetestTransition/ErrRetestTerminal` | `finding.go`、`retest.go` |
+| `internal/app/mcp` | MCP 客户端（JSON-RPC initialize/tools/list、stdio/http、掩码） | `internal/app/mcp/` |
+| `internal/app/report` | 报告渲染（markdown/html/docx/pdf） | `internal/app/report/` |
+| `internal/app/syncdata` | 同步适配器（manual/http_json、SSRF 校验、异步运行） | `internal/app/syncdata/` |
+| `internal/app/workspace` | 工作区文件沙箱（列表/读写/上传/删除、路径安全） | `internal/app/workspace/` |
+| `internal/httpapi`（feature） | `RegisterFeatureRoutes` 注册的 B4/B5 路由（70 条） | `feature_routes.go` + `{policy,settings,logs,notifications,mcp,skills,agents,workspace,sync,assets_extra,findings_extra,evidence_extra,retest_extra,traffic_extra,report_extra}_*.go` |
 | `internal/webui` | 前端托管 | `Handler()`：静态文件、`index.html` 回退、`/api/` JSON 404 | `webui.go` |
 | `web/` | 前端源码 | `src/app/page.tsx`、`components/*`、`lib/api.ts`/`types.ts`/`format.ts`/`hooks.ts` | 见 §8 |
 
@@ -219,7 +224,7 @@ HTTP 请求
 
 ## 4. 数据模型全表
 
-迁移文件 `migrations/0001_init.sql` – `0007_findings.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
+迁移文件 `migrations/0001_init.sql` – `0015_sync.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
 
 ### 4.1 迁移清单
 
@@ -232,6 +237,14 @@ HTTP 请求
 | `0005_policy` | 策略规则/审批/审计 | 3 表 |
 | `0006_evidence` | 流量采集（两阶段）/证据快照 | 2 表 |
 | `0007_findings` | 发现 / 发现证据关联 / 复测 + 索引 + 触发器 | 3 表 |
+| `0008_settings` | 运行时设置（租户级键值 + updated_at 触发器） | 1 表 |
+| `0009_notifications` | 通知渠道 / 投递记录 + 索引 + 触发器 | 2 表 |
+| `0010_mcp` | MCP 端点 / 工具清单 + 索引 + 触发器 | 2 表 |
+| `0011_skills` | 技能元数据（文件在磁盘） + 索引 + 触发器 | 1 表 |
+| `0012_agents` | Agent 定义 + 索引 + 触发器 | 1 表 |
+| `0013_workspace` | 空操作占位迁移（工作区以文件系统为准） | 0 表 |
+| `0014_b5_evidence` | 证据读取/校验/导出审计 + 2 索引 | 1 表 |
+| `0015_sync` | 同步数据源 / 外部项目 / 运行记录 + 索引 + 触发器 | 3 表 |
 
 ### 4.2 表清单与关键约束
 
@@ -327,15 +340,41 @@ HTTP 请求
 | `mission_scope.kind` | root_domain / subdomain / ip / cidr / url / keyword | 任务范围（无 icp） |
 | `findings.severity` | info / low / medium / high / critical | 发现严重级别 |
 | `findings.status` | open / confirmed / fixed / retest / closed / false_positive | 发现状态机（§6.10） |
+| `notification_channels.type` | webhook / email / generic | 通知渠道类型 |
+| `notification_deliveries.status` | pending / sent / failed / skipped | 投递状态 |
+| `mcp_servers.transport` / `last_status` | http / stdio；unknown / ok / error | MCP 端点与刷新状态 |
+| `agents.role` | planner / worker / retester / main | Agent 角色 |
+| `evidence_access_log.action` | read / verify / export | 证据审计动作 |
+| `sync_sources.type` | manual / http_json | 同步数据源类型 |
+| `sync_runs.status` | pending / running / succeeded / failed | 同步运行状态 |
 | `retests.status` | pending / running / passed / failed / error | 复测状态机（§6.10） |
 
 ### 4.5 触发器与索引汇总
 
-- `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings` 六张表（0002/0007 创建）。
-- 索引共 24 个（见各表行）：B1 的 20 个 + 0007 的 `idx_findings_mission`/`idx_findings_asset`/`idx_finding_evidence_snapshot`/`idx_retests_mission`。
+- `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 **13** 张表（0002/0007/0008–0015 创建）。
+- 索引共 **37** 个：0002+0006 的 20 个、0007 的 4 个、0008–0015 的 13 个（settings 无索引、0013 空操作）。
 - 查询路径约定：所有查询带 `tenant_id`；任务/审批/流量/审计/发现/复测按 `id` 或 `created_at DESC`；B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
 
-## 5. API 全表（当前 70 条）
+### 4.6 B4/B5 新增表（0008–0015）
+
+| 迁移 | 表 | 关键列 / 约束 / 索引 | 语义 |
+| --- | --- | --- | --- |
+| 0008 | `settings` | `tenant_id,key` PK；`value JSONB`；`updated_at` + 触发器；FK tenants CASCADE | 租户级运行时设置（点号键）；当前只持久化+可读，运行时未热生效（🟡） |
+| 0009 | `notification_channels` | PK(tenant_id,id)；UNIQUE(tenant_id,name)；`type` CHECK webhook/email/generic；`config JSONB`；FK tenants CASCADE；`idx_notification_channels_tenant` | 通知渠道；webhook 真发、email/generic 测试 skipped |
+| 0009 | `notification_deliveries` | PK(tenant_id,id)；FK channel CASCADE；`status` CHECK pending/sent/failed/skipped；索引 `idx_notification_deliveries_channel`/`_status` | 投递事实台账（只追加） |
+| 0010 | `mcp_servers` | PK(tenant_id,id)；UNIQUE(tenant_id,name)；`transport` CHECK http/stdio；`args/env/headers JSONB`；`last_status` CHECK unknown/ok/error；索引 + 触发器 | MCP 端点；env/headers 响应掩码、stdio 默认禁用 |
+| 0010 | `mcp_tools` | PK(tenant_id,id)；UNIQUE(tenant_id,server_id,name)；FK server CASCADE；`input_schema JSONB`；索引 `idx_mcp_tools_server` | 刷新发现到的工具（整体替换） |
+| 0011 | `skills` | PK(tenant_id,name)；`file_count>=0`；`version` 展示用；索引 `idx_skills_tenant`；触发器 | 技能元数据；正文在 `<state>/skills/<tenant>/<name>/`，无 skill_files 表 |
+| 0012 | `agents` | PK(tenant_id,id)；UNIQUE(tenant_id,key)；`key` 正则 CHECK；`role` CHECK planner/worker/retester/main；`tools JSONB array`；索引 + 触发器 | Agent 定义；**尚未接入 engine 装配（🟡）** |
+| 0013 | 无表 | 空操作 `SELECT 1` | 工作区文件系统能力，仅记录迁移版本 |
+| 0014 | `evidence_access_log` | PK(tenant_id,id)；FK snapshot CASCADE；`action` CHECK read/verify/export；索引 snapshot/time | 证据审计；当前仅 export/部分动作埋点（🟡） |
+| 0015 | `sync_sources` | PK(tenant_id,id)；UNIQUE(tenant_id,name)；`type` CHECK manual/http_json；`config JSONB`；索引 + 触发器 | 同步数据源；SSRF 三层防护、默认拒私网 |
+| 0015 | `sync_projects` | PK(tenant_id,id)；UNIQUE(tenant_id,source_id,external_id)；`data JSONB`；FK source CASCADE；索引 + 触发器 | 外部项目（幂等 upsert） |
+| 0015 | `sync_runs` | PK(tenant_id,id)；`status` CHECK pending/running/succeeded/failed；`stats JSONB`；索引 source/status；project_id 无 FK（应用层校验） | 一次同步运行记录（只追加） |
+
+> 0008–0015 共新增 **11 张表**（0008 1 +0009 2 +0010 2 +0011 1 +0012 1 +0014 1 +0015 3；0013 为空操作）；新表索引与触发器见各迁移文件。B4/B5 的部分实现项（settings 热生效、通知真实事件推送/SSRF 白名单/配置加密、Agents 执行接入、sync 崩溃恢复/保留策略、证据轮换）仍为 🟡/⬜。
+
+## 5. API 全表（当前 140 条）
 
 ### 5.1 通用约定
 
@@ -349,12 +388,12 @@ HTTP 请求
 | 超时 | 全局 `server.request_timeout`（默认 30s）；超时且未写响应头 → 504 `timeout`；SSE 长连接同样受该超时约束（到期服务端结束流，EventSource 自动重连） |
 | 租户 | 单租户 v1；`StaticTenant(DefaultID)` 注入上下文，所有查询带 `tenant_id` |
 | 请求 ID | `X-Request-ID` 透传或生成，响应头回传并写入错误信封 |
-| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`severity`/`q`/`type`/`phase`/`outcome`/`role`/`model`/`mission_id` 过滤）；任务/审批/流量/命令/LLM 记录按 `id DESC`，发现/复测按 `created_at DESC, id DESC`，B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；B1 limit 非法静默回默认，**B3 的 traffic/commands/llm-records limit 非法（非数字/≤0）返回 400**，超上限钳制（traffic/commands 200、llm-records 500）；`/missions/{id}/usage` 的 records 不分页（单任务量级可控） |
+| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`severity`/`q`/`type`/`phase`/`outcome`/`role`/`model`/`mission_id` 过滤）；任务/审批/流量/命令/LLM 记录按 `id DESC`，发现/复测按 `created_at DESC, id DESC`，B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；B1 limit 非法静默回默认，**B3 的 traffic/commands/llm-records limit 非法（非数字/≤0）返回 400**，超上限钳制（traffic/commands 200、llm-records 500）；B4 为 assets/findings/traffic/commands/llm-records 增加 `after_id`（assets 升序 id>，其余倒序 id<），响应带 `next_after_id`；`/missions/{id}/usage` 的 records 不分页 |
 | 内容类型 | 请求/响应 `application/json`（SSE 为 `text/event-stream`） |
 | 幂等 | 创建任务非幂等；审批决策用 CAS（仅 pending）；删除任务 204 且重复删除 404；B1 资产按身份键 upsert、任务资产重复登记 409 |
 | 方法/路径不匹配 | 路径存在但方法不支持 → 405 `method_not_allowed` + `Allow` 头；路径完全不存在 → JSON 404 `not_found` |
 
-### 5.2 路由总表（当前 70 条）
+### 5.2 路由总表（当前 140 条）
 
 | # | 状态 | 方法 | 路径 | 鉴权 | 处理函数（文件） | 请求 | 成功响应 | 主要错误 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -428,6 +467,76 @@ HTTP 请求
 | 68 | ✅ | GET | `/api/v1/missions/{id}/usage` | Bearer | `handleMissionUsage` | — | `MissionUsage`（预算+records+by_role/by_model） | 400/401/404/503 |
 | 69 | ✅ | GET | `/api/v1/llm-usage/summary` | Bearer | `handleLLMUsageSummary` | `?group_by=model/role/day&mission_id=&days=` | `{"group_by":"…","groups":[LLMUsageGroup]}` | 400/401/503 |
 | 70 | ✅ | GET | `/api/v1/dashboard` | Bearer | `handleDashboard` | — | `DashboardStats` | 401/503 |
+| 71 | ✅ | GET | `/api/v1/logs` | Bearer | `logs_api.go` | `?level=&limit=` | `{"logs":[]}` | 400/401/503 |
+| 72 | ✅ | GET | `/api/v1/logs/stream` | Bearer | `logs_api.go` | `?level=`；SSE | `text/event-stream` | 401/503 |
+| 73 | 🟡 | GET | `/api/v1/settings` | Bearer | `settings_api.go` | — | `{"settings":{…}}` | 401/503 |
+| 74 | 🟡 | PATCH | `/api/v1/settings` | Bearer | `settings_api.go` | `{settings:{…}}` | 200 Settings | 400/401/503 |
+| 75 | 🟡 | GET | `/api/v1/evidence/{id}/audit` | Bearer | `evidence_extra.go` | — | `{"audit":[]}` | 400/401/404/503 |
+| 76 | ✅ | POST | `/api/v1/evidence/{id}/export` | Bearer | `evidence_extra.go` | — | `application/zip` | 400/401/404/409/503 |
+| 77 | ⬜ | POST | `/api/v1/evidence/rotate` | Bearer | `evidence_extra.go` | `{new_key_hex?}` | 501 Error | 400/401/501/503 |
+| 78 | ✅ | GET | `/api/v1/findings` | Bearer | `findings_extra.go` | `?mission_id=&severity=&status=&asset_id=&after_id=&limit=` | `{"findings":[]}` | 400/401/503 |
+| 79 | ✅ | GET | `/api/v1/findings/export` | Bearer | `findings_extra.go` | `?format=csv&mission_id=&severity=&status=&asset_id=` | `text/csv` | 400/401/503 |
+| 80 | ✅ | POST | `/api/v1/retests/{id}/run` | Bearer | `retest_extra.go` | — | `Retest` | 400/401/404/409/503 |
+| 81 | ✅ | GET | `/api/v1/retests/{id}/evidence` | Bearer | `retest_extra.go` | — | `{"evidence":[]}` | 400/401/404/503 |
+| 82 | 🟡 | POST | `/api/v1/missions/{id}/findings/from-node` | Bearer | `retest_extra.go` | `{node_id,title?,severity?}` | 201 Finding | 400/401/404/409/503 |
+| 83 | ✅ | GET | `/api/v1/mcp/servers` | Bearer | `mcp_api.go` | `?limit=` | `{"servers":[]}` | 401/503 |
+| 84 | ✅ | POST | `/api/v1/mcp/servers` | Bearer | `mcp_api.go` | `{name,transport,url/command,…}` | 201 McpServer | 400/401/409/503 |
+| 85 | ✅ | GET | `/api/v1/mcp/servers/{id}` | Bearer | `mcp_api.go` | — | McpServer | 400/401/404/503 |
+| 86 | ✅ | PATCH | `/api/v1/mcp/servers/{id}` | Bearer | `mcp_api.go` | 局部字段 | 200 McpServer | 400/401/404/503 |
+| 87 | ✅ | DELETE | `/api/v1/mcp/servers/{id}` | Bearer | `mcp_api.go` | — | 204 | 400/401/404/503 |
+| 88 | ✅ | POST | `/api/v1/mcp/servers/{id}/refresh` | Bearer | `mcp_api.go` | — | `{"tools":[]}` | 400/401/404/502/503 |
+| 89 | ✅ | GET | `/api/v1/mcp/tools` | Bearer | `mcp_api.go` | `?server_id=` | `{"tools":[]}` | 400/401/503 |
+| 90 | ✅ | GET | `/api/v1/workspace/files` | Bearer | `workspace_api.go` | `?mission_id=&path=&limit=` | `{"files":[]}` | 400/401/404/503 |
+| 91 | ✅ | GET | `/api/v1/workspace/files/{path...}` | Bearer | `workspace_api.go` | — | `{"path":…,"content":…}` | 400/401/404/503 |
+| 92 | ✅ | PUT | `/api/v1/workspace/files/{path...}` | Bearer | `workspace_api.go` | `{content}` | `{path,size}` | 400/401/404/413/503 |
+| 93 | ✅ | POST | `/api/v1/workspace/upload` | Bearer | `workspace_api.go` | multipart/form-data | `{path,size}` | 400/401/404/413/503 |
+| 94 | ✅ | DELETE | `/api/v1/workspace/files/{path...}` | Bearer | `workspace_api.go` | `?recursive=` | 204 | 400/401/404/409/503 |
+| 95 | ✅ | GET | `/api/v1/traffic/{id}/export` | Bearer | `traffic_extra.go` | `?format=har` | `application/json`（HAR） | 400/401/404/409/503 |
+| 96 | 🟡 | POST | `/api/v1/traffic/{id}/replay` | Bearer | `traffic_extra.go` | — | `{replayed,traffic_id,status_code}` | 400/401/404/409/503 |
+| 97 | ✅ | DELETE | `/api/v1/missions/{id}/traffic` | Bearer | `traffic_extra.go` | — | 204 | 400/401/404/503 |
+| 98 | ✅ | GET | `/api/v1/notifications/channels` | Bearer | `notifications_api.go` | `?limit=` | `{"channels":[]}` | 401/503 |
+| 99 | ✅ | POST | `/api/v1/notifications/channels` | Bearer | `notifications_api.go` | `{name,type,config,enabled}` | 201 NotificationChannel | 400/401/409/503 |
+| 100 | ✅ | GET | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | — | NotificationChannel | 400/401/404/503 |
+| 101 | ✅ | PATCH | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | 局部字段；config 三态 | 200 NotificationChannel | 400/401/404/503 |
+| 102 | ✅ | DELETE | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | — | 204 | 400/401/404/503 |
+| 103 | 🟡 | POST | `/api/v1/notifications/channels/{id}/test` | Bearer | `notifications_api.go` | — | `{sent,channel_id,delivery}` | 400/401/404/502/503 |
+| 104 | ✅ | GET | `/api/v1/notifications/deliveries` | Bearer | `notifications_api.go` | `?channel_id=&status=&limit=` | `{"deliveries":[]}` | 400/401/503 |
+| 105 | ✅ | GET | `/api/v1/sync/sources` | Bearer | `sync_api.go` | `?limit=` | `{"sources":[]}` | 401/503 |
+| 106 | ✅ | POST | `/api/v1/sync/sources` | Bearer | `sync_api.go` | `{name,type,config,enabled}` | 201 SyncSource | 400/401/409/503 |
+| 107 | ✅ | GET | `/api/v1/sync/sources/{id}` | Bearer | `sync_api.go` | — | SyncSource | 400/401/404/503 |
+| 108 | ✅ | PATCH | `/api/v1/sync/sources/{id}` | Bearer | `sync_api.go` | 局部字段 | 200 SyncSource | 400/401/404/503 |
+| 109 | ✅ | DELETE | `/api/v1/sync/sources/{id}` | Bearer | `sync_api.go` | — | 204 | 400/401/404/503 |
+| 110 | ✅ | GET | `/api/v1/sync/projects` | Bearer | `sync_api.go` | `?source_id=&limit=` | `{"projects":[]}` | 400/401/503 |
+| 111 | ✅ | POST | `/api/v1/sync/projects` | Bearer | `sync_api.go` | `{source_id,external_id,name,data}` | 201 SyncProject | 400/401/404/409/503 |
+| 112 | ✅ | POST | `/api/v1/sync/run` | Bearer | `sync_api.go` | `{source_id?,project_id?,mode?}` | 202 SyncRun | 400/401/404/409/503 |
+| 113 | ✅ | GET | `/api/v1/sync/runs` | Bearer | `sync_api.go` | `?source_id=&status=&limit=` | `{"runs":[]}` | 400/401/503 |
+| 114 | ✅ | POST | `/api/v1/assets/{id}/identities` | Bearer | `assets_extra.go` | `{kind,key}` | 201 AssetIdentity | 400/401/404/409/503 |
+| 115 | ✅ | DELETE | `/api/v1/assets/{id}/identities/{kind}/{key...}` | Bearer | `assets_extra.go` | — | 204 | 400/401/404/503 |
+| 116 | ✅ | POST | `/api/v1/missions/{id}/scope/compile` | Bearer | `assets_extra.go` | — | `{mission_id,compiled_rules,notes}` | 400/401/404/503 |
+| 117 | ✅ | GET | `/api/v1/policy/rules` | Bearer | `policy_api.go` | `?enabled=&tool=&limit=` | `{"rules":[]}` | 400/401/503 |
+| 118 | ✅ | POST | `/api/v1/policy/rules` | Bearer | `policy_api.go` | `{name,tool,arg_pattern,action,priority,timeout_seconds,enabled}` | 201 PolicyRule | 400/401/409/503 |
+| 119 | ✅ | GET | `/api/v1/policy/rules/{id}` | Bearer | `policy_api.go` | — | PolicyRule | 400/401/404/503 |
+| 120 | 🟡 | PATCH | `/api/v1/policy/rules/{id}` | Bearer | `policy_api.go` | 局部字段 | 200 PolicyRule | 400/401/404/409/503 |
+| 121 | ✅ | DELETE | `/api/v1/policy/rules/{id}` | Bearer | `policy_api.go` | — | 204 | 400/401/404/409/503 |
+| 122 | ✅ | POST | `/api/v1/policy/simulate` | Bearer | `policy_api.go` | `{tool,args}` | `{action,rule_id,rule_name,reason}` | 400/401/503 |
+| 123 | ✅ | GET | `/api/v1/approvals/{id}` | Bearer | `policy_api.go` | — | ApprovalDetail | 400/401/404/503 |
+| 124 | ✅ | POST | `/api/v1/approvals/{id}/cancel` | Bearer | `policy_api.go` | — | 200 Approval | 400/401/404/409/503 |
+| 125 | ✅ | GET | `/api/v1/agents` | Bearer | `agents_api.go` | `?role=&enabled=&limit=` | `{"agents":[]}` | 400/401/503 |
+| 126 | ✅ | POST | `/api/v1/agents` | Bearer | `agents_api.go` | `{key,name,role,tools,system_prompt,model,enabled}` | 201 Agent | 400/401/409/503 |
+| 127 | ✅ | GET | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | — | Agent | 400/401/404/503 |
+| 128 | ✅ | PATCH | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | 局部字段；key 不可改 | 200 Agent | 400/401/404/503 |
+| 129 | ✅ | DELETE | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | — | 204 | 400/401/404/503 |
+| 130 | 🟡 | POST | `/api/v1/agents/{key}/test` | Bearer | `agents_api.go` | — | `{key,valid_tools,unknown_tools,warnings}` | 400/401/404/503 |
+| 131 | ✅ | GET | `/api/v1/skills` | Bearer | `skills_api.go` | `?limit=` | `{"skills":[]}` | 401/503 |
+| 132 | ✅ | POST | `/api/v1/skills` | Bearer | `skills_api.go` | `{name,description,version}` | 201 Skill | 400/401/409/503 |
+| 133 | ✅ | GET | `/api/v1/skills/{name}` | Bearer | `skills_api.go` | — | Skill | 400/401/404/503 |
+| 134 | ✅ | PATCH | `/api/v1/skills/{name}` | Bearer | `skills_api.go` | `{description,version}` | 200 Skill | 400/401/404/503 |
+| 135 | ✅ | DELETE | `/api/v1/skills/{name}` | Bearer | `skills_api.go` | — | 204 | 400/401/404/503 |
+| 136 | ✅ | POST | `/api/v1/skills/upload` | Bearer | `skills_api.go` | multipart/form-data（file） | 201 Skill | 400/401/409/413/503 |
+| 137 | ✅ | GET | `/api/v1/skills/{name}/files` | Bearer | `skills_api.go` | — | `{"files":[]}` | 400/401/404/503 |
+| 138 | ✅ | GET | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | — | `{path,content}` | 400/401/404/503 |
+| 139 | ✅ | PUT | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | `{content}` | `{path,size}` | 400/401/404/413/503 |
+| 140 | ✅ | DELETE | `/api/v1/skills/{name}/files/{path...}` | Bearer | `skills_api.go` | — | 204 | 400/401/404/503 |
 
 > 前端页面 `/` 与 `/_next/*` 由 `internal/webui.Handler` 提供（公开，不经过 `Routes()`）；`/api/` 下未匹配路径由 WebUI 返回 JSON 404。
 
@@ -528,6 +637,8 @@ HTTP 请求
 | 409 | `conflict` | 当前状态不允许该操作（暂停/恢复/取消）；采集未完成冻结证据；审批已处理；企业 slug/范围条目/资产身份键/任务资产/任务范围重复；发现/复测非法状态迁移、证据重复绑定 |
 | 409 | `tampered` | 证据签名或正文哈希校验失败；流量正文 blob 缺失/被篡改/密钥不匹配统一返回该错误 |
 | 409 | `update_failed` / `rollback_failed` | 自更新/回滚失败 |
+| 413 | `payload_too_large` | Skills/Workspace 上传或写文件超过大小上限 |
+| 501 | `not_implemented` | 证据密钥轮换（`POST /evidence/rotate`）未实现 |
 | 500 | `internal_error` | 未分类服务端错误 |
 | 500 | `replay_failed` | SSE 回放失败（尚未开始流） |
 | 500 | `sse_not_configured` | SSE 未配置任务解析器（正常不会出现） |
@@ -552,113 +663,119 @@ HTTP 请求
 - 策略：`ListPolicyRules`（只读；没有 CRUD API）。
 - 内部维护：`ListQueuedMissions/TransitionMission/SetMissionStatus/ListMissionScope` 等引擎/内部方法。
 
-### 5.6 未实现接口规格（计划/草案，⬜ / 🟡）
+### 5.6 已实现/部分实现接口规格（✅ / 🟡 / ⬜）
 
-> **以下全部为设计草案，后端未实现，不计入已实现的 70 条路由。** 编号 `P-B4-xx` / `P-B5-xx` 供前端设计与后续开发引用；落地时必须先实现、更新 OpenAPI 与 §5.2，再移除 ⬜/🟡。通用约定：Bearer 鉴权、错误信封 `{"error":{"code","message","request_id"}}`、`/api/v1` 前缀、默认 `limit` 50/上限 200（特别说明除外）、写操作返回资源或 204。
+> **B4 已全部实现，B5 大部分已实现；仅少数条目仍为 🟡/⬜（见状态列）。** 未实现条目不按已实现宣传；落地时必须先实现、更新 OpenAPI 与 §5.2，再移除 ⬜/🟡。编号 `P-B4-xx` / `P-B5-xx` 供前端设计与后续开发引用。通用约定：Bearer 鉴权、错误信封 `{"error":{"code","message","request_id"}}`、`/api/v1` 前缀、默认 `limit` 50/上限 200（特别说明除外）、写操作返回资源或 204。
 
-#### 5.6.1 B4 计划接口（策略/审批/日志/通知/设置/资产补全，26 条）
-
-| 编号 | 状态 | 方法/路径 | 用途 / 请求 | 成功响应示例 | 错误码 | 依赖（计划） | 前端页面 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| P-B4-01 | ⬜ | GET `/api/v1/policy/rules` | 规则列表；`?enabled=&tool=&limit=`（默认 50/上限 200） | `{"rules":[{"id":1,"name":"允许 GET/HEAD 请求","tool":"http_probe","arg_pattern":"…","action":"allow","priority":100,"enabled":true,"immutable":true}]}` | 400/401/503 | `policy_rules` 已有 | /system/policy |
-| P-B4-02 | ⬜ | POST `/api/v1/policy/rules` | 新建规则；`{name*,tool,arg_pattern,action*,priority,timeout_seconds,enabled}` | 201 规则对象 | 400/401/409（name 重复）/503 | `policy_rules` | /system/policy |
-| P-B4-03 | ⬜ | GET `/api/v1/policy/rules/{id}` | 规则详情 | 规则对象 | 400/401/404/503 | 同上 | /system/policy |
-| P-B4-04 | ⬜ | PATCH `/api/v1/policy/rules/{id}` | 局部更新；`immutable=true` 时禁止改 name/tool/action（409） | 200 规则对象 | 400/401/404/409/503 | 同上 | /system/policy |
-| P-B4-05 | ⬜ | DELETE `/api/v1/policy/rules/{id}` | 删除规则；内置 immutable 规则禁止删除（409） | 204 | 400/401/404/409/503 | 同上 | /system/policy |
-| P-B4-06 | ⬜ | POST `/api/v1/policy/simulate` | 试算裁决；`{tool*,args*}`（args 为 JSON 对象） | `{"action":"allow","rule_id":1,"rule_name":"允许 GET/HEAD 请求","reason":"命中规则"}` | 400/401/503 | `policy.Evaluate`（已实现纯函数） | /system/policy |
-| P-B4-07 | ⬜ | POST `/api/v1/approvals/{id}/cancel` | 取消 pending 审批；无 body | 200 审批对象（status=cancelled） | 400/401/404/409（非 pending）/503 | `approvals.cancelled` 已存在、缺 Store/API | /approvals |
-| P-B4-08 | ⬜ | GET `/api/v1/approvals/{id}` | 审批详情与上下文回放（任务/节点/工具/args/过期时间） | 审批对象 + `node`/`mission` 摘要 | 400/401/404/503 | `approvals` + 节点读取 | /approvals |
-| P-B4-09 | ⬜ | GET `/api/v1/logs` | 应用日志查询；`?level=&limit=&after_id=` | `{"logs":[{"id":1,"level":"info","msg":"…","time":"…"}]}` | 400/401/503 | 新增环形日志缓冲 | /system/logs |
-| P-B4-10 | ⬜ | GET `/api/v1/logs/stream` | 日志 SSE；事件类型 `log`，帧 `id/event/data` | `text/event-stream` | 401/503 | 日志 sink + SSE | /system/logs |
-| P-B4-11 | ⬜ | GET `/api/v1/notifications/channels` | 通知渠道列表；`?limit=` | `{"channels":[]}` | 401/503 | 计划表 `notification_channels` | /system/notify |
-| P-B4-12 | ⬜ | POST `/api/v1/notifications/channels` | 新建渠道；`{name*,type*(webhook/im),config*,enabled}` | 201 渠道对象 | 400/401/409/503 | 同上 | /system/notify |
-| P-B4-13 | ⬜ | GET `/api/v1/notifications/channels/{id}` | 渠道详情 | 渠道对象 | 400/401/404/503 | 同上 | /system/notify |
-| P-B4-14 | ⬜ | PATCH `/api/v1/notifications/channels/{id}` | 更新渠道（name/config/enabled） | 200 渠道对象 | 400/401/404/503 | 同上 | /system/notify |
-| P-B4-15 | ⬜ | DELETE `/api/v1/notifications/channels/{id}` | 删除渠道 | 204 | 400/401/404/503 | 同上 | /system/notify |
-| P-B4-16 | ⬜ | POST `/api/v1/notifications/channels/{id}/test` | 发送测试消息 | `{"sent":true,"channel_id":1}` | 400/401/404/502/503 | 发送器 | /system/notify |
-| P-B4-17 | ⬜ | GET `/api/v1/notifications/deliveries` | 投递记录；`?channel_id=&status=&limit=` | `{"deliveries":[]}` | 400/401/503 | 计划表 `notification_deliveries` | /system/notify |
-| P-B4-18 | ⬜ | GET `/api/v1/settings` | 运行时设置（并发/默认预算/默认策略动作/审批超时） | `{"settings":{"max_concurrent":2,"default_budget":{"max_tokens":0,"max_steps":0},"default_action":"ask","approval_timeout":"60s"}}` | 401/503 | 计划表 `settings`（与 config 优先级待定） | /system/settings |
-| P-B4-19 | ⬜ | PATCH `/api/v1/settings` | 更新设置（持久化与重启生效语义待定） | 200 设置对象 | 400/401/409/503 | 同上 | /system/settings |
-| P-B4-20 | ⬜ | POST `/api/v1/assets/{id}/identities` | 新增身份键；`{kind*,key*}`（Normalize 后写入） | 201 `{kind,key,created_at}` | 400/401/404/409（重复）/503 | `asset_identity` | /assets |
-| P-B4-21 | ⬜ | DELETE `/api/v1/assets/{id}/identities/{kind}/{key}` | 删除身份键（需保留至少一个身份或允许裸资产，待定） | 204 | 400/401/404/409/503 | `asset_identity` | /assets |
-| P-B4-22 | ⬜ | PATCH `/api/v1/companies/{id}` | 扩展现有接口支持 `attrs`（当前只接受 name/slug） | 200 企业对象 | 400/401/404/409/503 | `companies.attrs` 已有 | /assets |
-| P-B4-23 | ⬜ | PATCH `/api/v1/findings/{id}` | 扩展现有接口支持 `node_id` 三态（缺省/null/数字） | 200 Finding | 400/401/404/503 | `findings.node_id` 已有 | /findings |
-| P-B4-24 | ⬜ | GET `/api/v1/findings` | 跨任务发现列表/导出；`?mission_id=&severity=&status=&asset_id=&limit=` | `{"findings":[]}` | 400/401/503 | `findings` + 跨任务索引（新） | /findings |
-| P-B4-25 | ⬜ | POST `/api/v1/missions/{id}/scope/compile` | 把 `mission_scope` 编译为执行期策略（预览/落地两阶段待定） | `{"compiled":3,"rules":[{"kind":"url","value":"…","action":"allow"}]}` | 400/401/404/409/503 | `mission_scope` + policy 写入 | 任务概览 |
-| P-B4-26 | ⬜ | 列表分页扩展（横切） | 为 B1–B3 列表增加 `after_id`/`cursor`，保留 `limit` | `{"items":[],"next_cursor":"…"}` | 400/401 | 各 Store 查询加游标 | 列表页 |
-
-#### 5.6.2 B5 计划接口（MCP/Skills/Agents/Workspace/Sync/增强，47 条）
+#### 5.6.1 B4 接口规格（策略/审批/日志/通知/设置/资产补全，26 条）
 
 | 编号 | 状态 | 方法/路径 | 用途 / 请求 | 成功响应示例 | 错误码 | 依赖（计划） | 前端页面 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| P-B5-01 | ⬜ | GET `/api/v1/mcp/servers` | MCP 端点列表 | `{"servers":[]}` | 401/503 | 计划表 `mcp_servers` | /system/mcp |
-| P-B5-02 | ⬜ | POST `/api/v1/mcp/servers` | 新建 MCP 端点；`{name*,transport*(stdio/http),command/url*,enabled}` | 201 端点对象 | 400/401/409/503 | 同上 | /system/mcp |
-| P-B5-03 | ⬜ | GET `/api/v1/mcp/servers/{id}` | 端点详情 | 端点对象 | 400/401/404/503 | 同上 | /system/mcp |
-| P-B5-04 | ⬜ | PATCH `/api/v1/mcp/servers/{id}` | 更新端点（name/command/url/enabled） | 200 端点对象 | 400/401/404/503 | 同上 | /system/mcp |
-| P-B5-05 | ⬜ | DELETE `/api/v1/mcp/servers/{id}` | 删除端点 | 204 | 400/401/404/503 | 同上 | /system/mcp |
-| P-B5-06 | ⬜ | POST `/api/v1/mcp/servers/{id}/refresh` | 刷新工具清单 | `{"tools":[{"name":"…","description":"…"}]}` | 400/401/404/502/503 | MCP 客户端 | /system/mcp |
-| P-B5-07 | ⬜ | GET `/api/v1/mcp/tools` | 工具列表；`?server_id=` | `{"tools":[]}` | 400/401/503 | `mcp_tools` | /system/mcp |
-| P-B5-08 | ⬜ | GET `/api/v1/skills` | 技能列表（含缺失统计） | `{"skills":[{"name":"…","version":"…","files":3,"missing":0}]}` | 401/503 | 计划表 `skills`/`skill_files` | /system/skills |
-| P-B5-09 | ⬜ | POST `/api/v1/skills` | 新建技能；`{name*,description}` | 201 技能对象 | 400/401/409/503 | 同上 | /system/skills |
-| P-B5-10 | ⬜ | GET `/api/v1/skills/{name}` | 技能详情 | 技能对象 | 400/401/404/503 | 同上 | /system/skills |
-| P-B5-11 | ⬜ | PATCH `/api/v1/skills/{name}` | 更新技能元数据 | 200 技能对象 | 400/401/404/503 | 同上 | /system/skills |
-| P-B5-12 | ⬜ | DELETE `/api/v1/skills/{name}` | 删除技能 | 204 | 400/401/404/503 | 同上 | /system/skills |
-| P-B5-13 | ⬜ | POST `/api/v1/skills/upload` | 上传技能 zip（大小/文件数/路径校验） | `{"name":"…","files":5}` | 400/401/409/413/503 | 文件存储+校验 | /system/skills |
-| P-B5-14 | ⬜ | GET `/api/v1/skills/{name}/files` | 文件树 | `{"files":[{"path":"SKILL.md","size":123}]}` | 400/401/404/503 | `skill_files` | /system/skills |
-| P-B5-15 | ⬜ | GET `/api/v1/skills/{name}/files/{path}` | 读文件 | `{"path":"…","content":"…"}` | 400/401/404/503 | 文件存储 | /system/skills |
-| P-B5-16 | ⬜ | PUT `/api/v1/skills/{name}/files/{path}` | 写文件（大小上限） | 200 `{path,size}` | 400/401/404/413/503 | 文件存储 | /system/skills |
-| P-B5-17 | ⬜ | DELETE `/api/v1/skills/{name}/files/{path}` | 删除文件 | 204 | 400/401/404/503 | 文件存储 | /system/skills |
-| P-B5-18 | ⬜ | GET `/api/v1/agents` | Agent 定义列表 | `{"agents":[]}` | 401/503 | 计划表 `agents` | /system/agents |
-| P-B5-19 | ⬜ | POST `/api/v1/agents` | 新建 Agent；`{key*,name,model,tools[],system_prompt}` | 201 Agent | 400/401/409/503 | 同上 | /system/agents |
-| P-B5-20 | ⬜ | GET `/api/v1/agents/{key}` | Agent 详情 | Agent | 400/401/404/503 | 同上 | /system/agents |
-| P-B5-21 | ⬜ | PATCH `/api/v1/agents/{key}` | 更新 Agent | 200 Agent | 400/401/404/503 | 同上 | /system/agents |
-| P-B5-22 | ⬜ | DELETE `/api/v1/agents/{key}` | 删除 Agent | 204 | 400/401/404/409/503 | 同上 | /system/agents |
-| P-B5-23 | ⬜ | POST `/api/v1/agents/{key}/test` | 用固定 prompt 试跑 Agent（草案） | `{"ok":true,"output":"…","tokens":123}` | 400/401/404/502/503 | LLM + 工具注册表 | /system/agents |
-| P-B5-24 | ⬜ | GET `/api/v1/workspace/files` | 工作目录列表；`?mission_id=&path=` | `{"entries":[{"name":"a.txt","type":"file","size":1}]}` | 400/401/404/503 | 沙箱目录（按租户/任务） | /workspace |
-| P-B5-25 | ⬜ | GET `/api/v1/workspace/files/{path}` | 读文件 | `{"path":"…","content":"…"}` | 400/401/404/503 | 沙箱/大小限制 | /workspace |
-| P-B5-26 | ⬜ | PUT `/api/v1/workspace/files/{path}` | 写文件 | 200 `{path,size}` | 400/401/404/413/503 | 同上 | /workspace |
-| P-B5-27 | ⬜ | POST `/api/v1/workspace/upload` | 上传文件 | 201 `{path,size}` | 400/401/404/413/503 | 同上 | /workspace |
-| P-B5-28 | ⬜ | DELETE `/api/v1/workspace/files/{path}` | 删除文件/目录 | 204 | 400/401/404/409/503 | 同上 | /workspace |
-| P-B5-29 | ⬜ | GET `/api/v1/sync/sources` | 数据源列表 | `{"sources":[]}` | 401/503 | 计划表 `sync_sources` | /sync |
-| P-B5-30 | ⬜ | POST `/api/v1/sync/sources` | 新建数据源；`{name*,type*,config*}` | 201 数据源 | 400/401/409/503 | 适配器 | /sync |
-| P-B5-31 | ⬜ | GET `/api/v1/sync/sources/{id}` | 数据源详情 | 数据源 | 400/401/404/503 | 同上 | /sync |
-| P-B5-32 | ⬜ | PATCH `/api/v1/sync/sources/{id}` | 更新数据源 | 200 数据源 | 400/401/404/503 | 同上 | /sync |
-| P-B5-33 | ⬜ | DELETE `/api/v1/sync/sources/{id}` | 删除数据源 | 204 | 400/401/404/503 | 同上 | /sync |
-| P-B5-34 | ⬜ | GET `/api/v1/sync/projects` | 外部项目列表 | `{"projects":[]}` | 401/503 | 计划表 `sync_projects` | /sync |
-| P-B5-35 | ⬜ | POST `/api/v1/sync/projects` | 关联合并项目；`{source_id*,remote_id*,mission_id}` | 201 项目 | 400/401/404/409/503 | 同上 | /sync |
-| P-B5-36 | ⬜ | POST `/api/v1/sync/run` | 触发同步；`{source_id*,project_id?}` | 202 `{"run_id":1,"status":"pending"}` | 400/401/404/409/503 | 同步执行器 | /sync |
-| P-B5-37 | ⬜ | GET `/api/v1/sync/runs` | 同步运行记录；`?source_id=&limit=` | `{"runs":[{"id":1,"status":"done","imported":10}]}` | 400/401/503 | 计划表 `sync_runs` | /sync |
-| P-B5-38 | ⬜ | POST `/api/v1/retests/{id}/run` | 执行复测（自动跑验证并回写结果） | 202 `{"retest_id":1,"status":"running"}` | 400/401/404/409/503 | 复测执行器（新） | 任务详情/复测 |
-| P-B5-39 | ⬜ | GET `/api/v1/retests/{id}/evidence` | 复测关联证据列表 | `{"evidence":[]}` | 400/401/404/503 | `retests` + 证据关联 | 任务详情/复测 |
-| P-B5-40 | ⬜ | GET `/api/v1/missions/{id}/report?format=` | 扩展现有报告支持 `markdown`（现状）/`pdf`/`docx` | `text/markdown` 或二进制附件 | 400/401/404/503 | 报告导出器（新） | 报告 |
-| P-B5-41 | ⬜ | GET `/api/v1/traffic/{id}/export?format=har/pcap` | 导出流量；har 可脱敏 JSON，pcap 需真实报文（当前无） | 二进制/JSON 附件 | 400/401/404/409/503 | 导出器/抓包能力 | 流量 |
-| P-B5-42 | ⬜ | POST `/api/v1/traffic/{id}/replay` | 重放请求（高危；需审批/策略） | 202 `{"replayed":true,"approval_id":1}` | 400/401/404/409/503 | executor/策略/审批 | 流量 |
-| P-B5-43 | ⬜ | DELETE `/api/v1/missions/{id}/traffic` | 批量清理任务采集行（保留证据需显式参数） | `{"deleted":10}` | 400/401/404/409/503 | 批量删除 Store | 流量 |
-| P-B5-44 | ⬜ | GET `/api/v1/evidence/{id}/audit` | 证据读取审计（谁在何时读过） | `{"audit":[]}` | 400/401/404/503 | 证据读取审计表（新） | 证据/流量 |
-| P-B5-45 | ⬜ | POST `/api/v1/evidence/rotate` | 密钥轮换（重加密存量 blob，草案） | `{"rotated":10}` | 400/401/409/503 | 证据密钥轮换（M5.1） | 系统设置 |
-| P-B5-46 | ⬜ | GET `/api/v1/evidence/{id}/export?format=zip` | 导出证据包（元数据+签名+正文，草案） | zip 附件 | 400/401/404/409/503 | 证据导出器 | 证据/报告 |
-| P-B5-47 | ⬜ | POST `/api/v1/missions/{id}/findings/from-node` | AI 自动写 finding 的草案入口（最终可能改为 Worker 自动写入，无最终 API） | 201 Finding | 400/401/404/409/503 | finding 域 + AI 集成（机制缺口） | 任务详情/发现 |
+| P-B4-01 | ✅ | GET `/api/v1/policy/rules` | 规则列表；`?enabled=&tool=&limit=`（默认 50/上限 200） | `{"rules":[{"id":1,"name":"允许 GET/HEAD 请求","tool":"http_probe","arg_pattern":"…","action":"allow","priority":100,"enabled":true,"immutable":true}]}` | 400/401/503 | `policy_rules` 已有 | /system/policy |
+| P-B4-02 | ✅ | POST `/api/v1/policy/rules` | 新建规则；`{name*,tool,arg_pattern,action*,priority,timeout_seconds,enabled}` | 201 规则对象 | 400/401/409（name 重复）/503 | `policy_rules` | /system/policy |
+| P-B4-03 | ✅ | GET `/api/v1/policy/rules/{id}` | 规则详情 | 规则对象 | 400/401/404/503 | 同上 | /system/policy |
+| P-B4-04 | ✅ | PATCH `/api/v1/policy/rules/{id}` | 局部更新；`immutable=true` 时禁止改 name/tool/action（409） | 200 规则对象 | 400/401/404/409/503 | 同上 | /system/policy |
+| P-B4-05 | ✅ | DELETE `/api/v1/policy/rules/{id}` | 删除规则；内置 immutable 规则禁止删除（409） | 204 | 400/401/404/409/503 | 同上 | /system/policy |
+| P-B4-06 | ✅ | POST `/api/v1/policy/simulate` | 试算裁决；`{tool*,args*}`（args 为 JSON 对象） | `{"action":"allow","rule_id":1,"rule_name":"允许 GET/HEAD 请求","reason":"命中规则"}` | 400/401/503 | `policy.Evaluate`（已实现纯函数） | /system/policy |
+| P-B4-07 | ✅ | POST `/api/v1/approvals/{id}/cancel` | 取消 pending 审批；无 body | 200 审批对象（status=cancelled） | 400/401/404/409（非 pending）/503 | `approvals.cancelled` 已存在、缺 Store/API | /approvals |
+| P-B4-08 | ✅ | GET `/api/v1/approvals/{id}` | 审批详情与上下文回放（任务/节点/工具/args/过期时间） | 审批对象 + `node`/`mission` 摘要 | 400/401/404/503 | `approvals` + 节点读取 | /approvals |
+| P-B4-09 | ✅ | GET `/api/v1/logs` | 应用日志查询；`?level=&limit=&after_id=` | `{"logs":[{"id":1,"level":"info","msg":"…","time":"…"}]}` | 400/401/503 | 新增环形日志缓冲 | /system/logs |
+| P-B4-10 | ✅ | GET `/api/v1/logs/stream` | 日志 SSE；事件类型 `log`，帧 `id/event/data` | `text/event-stream` | 401/503 | 日志 sink + SSE | /system/logs |
+| P-B4-11 | ✅ | GET `/api/v1/notifications/channels` | 通知渠道列表；`?limit=` | `{"channels":[]}` | 401/503 | 计划表 `notification_channels` | /system/notify |
+| P-B4-12 | ✅ | POST `/api/v1/notifications/channels` | 新建渠道；`{name*,type*(webhook/email/generic),config*,enabled}` | 201 渠道对象 | 400/401/409/503 | 同上 | /system/notify |
+| P-B4-13 | ✅ | GET `/api/v1/notifications/channels/{id}` | 渠道详情 | 渠道对象 | 400/401/404/503 | 同上 | /system/notify |
+| P-B4-14 | ✅ | PATCH `/api/v1/notifications/channels/{id}` | 更新渠道（name/config/enabled） | 200 渠道对象 | 400/401/404/503 | 同上 | /system/notify |
+| P-B4-15 | ✅ | DELETE `/api/v1/notifications/channels/{id}` | 删除渠道 | 204 | 400/401/404/503 | 同上 | /system/notify |
+| P-B4-16 | ✅ | POST `/api/v1/notifications/channels/{id}/test` | 测试渠道；webhook 真发，email/generic skipped；一律 200+delivery | `{"sent":true,"channel_id":1,"delivery":{…}}` | 400/401/404/503 | 发送器 | /system/notify |
+| P-B4-17 | ✅ | GET `/api/v1/notifications/deliveries` | 投递记录；`?channel_id=&status=&limit=` | `{"deliveries":[]}` | 400/401/503 | 计划表 `notification_deliveries` | /system/notify |
+| P-B4-18 | 🟡 | GET `/api/v1/settings` | 运行时设置（持久化+可读；🟡 运行时未热生效） | `{"settings":{"max_concurrent":2,"default_budget":{"max_tokens":0,"max_steps":0},"default_action":"ask","approval_timeout":"60s"}}` | 401/503 | `settings` 表（0008） | /system/settings |
+| P-B4-19 | 🟡 | PATCH `/api/v1/settings` | 更新白名单设置（仅持久化+可读，未热生效） | 200 设置对象 | 400/401/503 | 同上 | /system/settings |
+| P-B4-20 | ✅ | POST `/api/v1/assets/{id}/identities` | 新增身份键；`{kind*,key*}`（Normalize 后写入） | 201 `{kind,key,created_at}` | 400/401/404/409（重复）/503 | `asset_identity` | /assets |
+| P-B4-21 | ✅ | DELETE `/api/v1/assets/{id}/identities/{kind}/{key...}` | 删除身份键（允许删到 0 条；key 可含斜杠） | 204 | 400/401/404/503 | `asset_identity` | /assets |
+| P-B4-22 | ✅ | PATCH `/api/v1/companies/{id}` | 扩展现有接口支持 `attrs`（当前只接受 name/slug） | 200 企业对象 | 400/401/404/409/503 | `companies.attrs` 已有 | /assets |
+| P-B4-23 | ✅ | PATCH `/api/v1/findings/{id}` | 扩展现有接口支持 `node_id` 三态（缺省/null/数字） | 200 Finding | 400/401/404/503 | `findings.node_id` 已有 | /findings |
+| P-B4-24 | ✅ | GET `/api/v1/findings` | 跨任务发现列表；`?mission_id=&severity=&status=&asset_id=&after_id=&limit=` | `{"findings":[],"next_after_id":0}` | 400/401/503 | `findings` + 跨任务索引 | /findings |
+| P-B4-25 | ✅ | POST `/api/v1/missions/{id}/scope/compile` | 范围编译为策略草案（纯预览，不落库） | `{"mission_id":1,"compiled_rules":[],"notes":[]}` | 400/401/404/503 | `mission_scope` + policy 纯函数 | 任务概览 |
+| P-B4-26 | ✅ | 列表分页扩展（横切） | assets/findings/traffic/commands/llm-records 增加 `after_id`，响应 `next_after_id`；方向随列表 | `{"items":[],"next_after_id":0}` | 400/401 | 各 Store 查询加游标 | 列表页 |
 
-#### 5.6.3 B1/B2/B3 已知缺口（🟡）索引
+#### 5.6.2 B5 接口规格（MCP/Skills/Agents/Workspace/Sync/增强，47 条）
 
-| 缺口 | 状态 | 现有实现 | 计划接口/说明 |
+| 编号 | 状态 | 方法/路径 | 用途 / 请求 | 成功响应示例 | 错误码 | 依赖（计划） | 前端页面 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| P-B5-01 | ✅ | GET `/api/v1/mcp/servers` | MCP 端点列表 | `{"servers":[]}` | 401/503 | 计划表 `mcp_servers` | /system/mcp |
+| P-B5-02 | ✅ | POST `/api/v1/mcp/servers` | 新建 MCP 端点；`{name*,transport*(stdio/http),command/url*,enabled}` | 201 端点对象 | 400/401/409/503 | 同上 | /system/mcp |
+| P-B5-03 | ✅ | GET `/api/v1/mcp/servers/{id}` | 端点详情 | 端点对象 | 400/401/404/503 | 同上 | /system/mcp |
+| P-B5-04 | ✅ | PATCH `/api/v1/mcp/servers/{id}` | 更新端点（name/command/url/enabled） | 200 端点对象 | 400/401/404/503 | 同上 | /system/mcp |
+| P-B5-05 | ✅ | DELETE `/api/v1/mcp/servers/{id}` | 删除端点 | 204 | 400/401/404/503 | 同上 | /system/mcp |
+| P-B5-06 | ✅ | POST `/api/v1/mcp/servers/{id}/refresh` | 刷新工具清单 | `{"tools":[{"name":"…","description":"…"}]}` | 400/401/404/502/503 | MCP 客户端 | /system/mcp |
+| P-B5-07 | ✅ | GET `/api/v1/mcp/tools` | 工具列表；`?server_id=` | `{"tools":[]}` | 400/401/503 | `mcp_tools` | /system/mcp |
+| P-B5-08 | ✅ | GET `/api/v1/skills` | 技能列表（含缺失统计） | `{"skills":[{"name":"…","version":"…","files":3,"missing":0}]}` | 401/503 | 计划表 `skills`/`skill_files` | /system/skills |
+| P-B5-09 | ✅ | POST `/api/v1/skills` | 新建技能；`{name*,description}` | 201 技能对象 | 400/401/409/503 | 同上 | /system/skills |
+| P-B5-10 | ✅ | GET `/api/v1/skills/{name}` | 技能详情 | 技能对象 | 400/401/404/503 | 同上 | /system/skills |
+| P-B5-11 | ✅ | PATCH `/api/v1/skills/{name}` | 更新技能元数据 | 200 技能对象 | 400/401/404/503 | 同上 | /system/skills |
+| P-B5-12 | ✅ | DELETE `/api/v1/skills/{name}` | 删除技能 | 204 | 400/401/404/503 | 同上 | /system/skills |
+| P-B5-13 | ✅ | POST `/api/v1/skills/upload` | 上传技能 zip（大小/文件数/路径校验） | `{"name":"…","files":5}` | 400/401/409/413/503 | 文件存储+校验 | /system/skills |
+| P-B5-14 | ✅ | GET `/api/v1/skills/{name}/files` | 文件树 | `{"files":[{"path":"SKILL.md","size":123}]}` | 400/401/404/503 | `skill_files` | /system/skills |
+| P-B5-15 | ✅ | GET `/api/v1/skills/{name}/files/{path}` | 读文件 | `{"path":"…","content":"…"}` | 400/401/404/503 | 文件存储 | /system/skills |
+| P-B5-16 | ✅ | PUT `/api/v1/skills/{name}/files/{path}` | 写文件（大小上限） | 200 `{path,size}` | 400/401/404/413/503 | 文件存储 | /system/skills |
+| P-B5-17 | ✅ | DELETE `/api/v1/skills/{name}/files/{path}` | 删除文件 | 204 | 400/401/404/503 | 文件存储 | /system/skills |
+| P-B5-18 | ✅ | GET `/api/v1/agents` | Agent 定义列表 | `{"agents":[]}` | 401/503 | 计划表 `agents` | /system/agents |
+| P-B5-19 | ✅ | POST `/api/v1/agents` | 新建 Agent；`{key*,name,model,tools[],system_prompt}` | 201 Agent | 400/401/409/503 | 同上 | /system/agents |
+| P-B5-20 | ✅ | GET `/api/v1/agents/{key}` | Agent 详情 | Agent | 400/401/404/503 | 同上 | /system/agents |
+| P-B5-21 | ✅ | PATCH `/api/v1/agents/{key}` | 更新 Agent | 200 Agent | 400/401/404/503 | 同上 | /system/agents |
+| P-B5-22 | ✅ | DELETE `/api/v1/agents/{key}` | 删除 Agent | 204 | 400/401/404/409/503 | 同上 | /system/agents |
+| P-B5-23 | ✅ | POST `/api/v1/agents/{key}/test` | 用固定 prompt 试跑 Agent（草案） | `{"ok":true,"output":"…","tokens":123}` | 400/401/404/502/503 | LLM + 工具注册表 | /system/agents |
+| P-B5-24 | ✅ | GET `/api/v1/workspace/files` | 工作目录列表；`?mission_id=&path=` | `{"entries":[{"name":"a.txt","type":"file","size":1}]}` | 400/401/404/503 | 沙箱目录（按租户/任务） | /workspace |
+| P-B5-25 | ✅ | GET `/api/v1/workspace/files/{path}` | 读文件 | `{"path":"…","content":"…"}` | 400/401/404/503 | 沙箱/大小限制 | /workspace |
+| P-B5-26 | ✅ | PUT `/api/v1/workspace/files/{path}` | 写文件 | 200 `{path,size}` | 400/401/404/413/503 | 同上 | /workspace |
+| P-B5-27 | ✅ | POST `/api/v1/workspace/upload` | 上传文件 | 201 `{path,size}` | 400/401/404/413/503 | 同上 | /workspace |
+| P-B5-28 | ✅ | DELETE `/api/v1/workspace/files/{path}` | 删除文件/目录 | 204 | 400/401/404/409/503 | 同上 | /workspace |
+| P-B5-29 | ✅ | GET `/api/v1/sync/sources` | 数据源列表 | `{"sources":[]}` | 401/503 | 计划表 `sync_sources` | /sync |
+| P-B5-30 | ✅ | POST `/api/v1/sync/sources` | 新建数据源；`{name*,type*,config*}` | 201 数据源 | 400/401/409/503 | 适配器 | /sync |
+| P-B5-31 | ✅ | GET `/api/v1/sync/sources/{id}` | 数据源详情 | 数据源 | 400/401/404/503 | 同上 | /sync |
+| P-B5-32 | ✅ | PATCH `/api/v1/sync/sources/{id}` | 更新数据源 | 200 数据源 | 400/401/404/503 | 同上 | /sync |
+| P-B5-33 | ✅ | DELETE `/api/v1/sync/sources/{id}` | 删除数据源 | 204 | 400/401/404/503 | 同上 | /sync |
+| P-B5-34 | ✅ | GET `/api/v1/sync/projects` | 外部项目列表 | `{"projects":[]}` | 401/503 | 计划表 `sync_projects` | /sync |
+| P-B5-35 | ✅ | POST `/api/v1/sync/projects` | 关联合并项目；`{source_id*,remote_id*,mission_id}` | 201 项目 | 400/401/404/409/503 | 同上 | /sync |
+| P-B5-36 | ✅ | POST `/api/v1/sync/run` | 触发同步；`{source_id*,project_id?}` | 202 `{"run_id":1,"status":"pending"}` | 400/401/404/409/503 | 同步执行器 | /sync |
+| P-B5-37 | ✅ | GET `/api/v1/sync/runs` | 同步运行记录；`?source_id=&limit=` | `{"runs":[{"id":1,"status":"done","imported":10}]}` | 400/401/503 | 计划表 `sync_runs` | /sync |
+| P-B5-38 | ✅ | POST `/api/v1/retests/{id}/run` | 执行复测（自动跑验证并回写结果） | 202 `{"retest_id":1,"status":"running"}` | 400/401/404/409/503 | 复测执行器（新） | 任务详情/复测 |
+| P-B5-39 | ✅ | GET `/api/v1/retests/{id}/evidence` | 复测关联证据列表 | `{"evidence":[]}` | 400/401/404/503 | `retests` + 证据关联 | 任务详情/复测 |
+| P-B5-40 | ✅ | GET `/api/v1/missions/{id}/report?format=` | 报告格式 `markdown/html/docx/pdf`（既有 route 扩展，无新 pattern） | `text/markdown`/html/docx/pdf 附件 | 400/401/404/503 | `internal/app/report` | 报告 |
+| P-B5-41 | ✅ | GET `/api/v1/traffic/{id}/export?format=har/pcap` | 导出流量；har 可脱敏 JSON，pcap 需真实报文（当前无） | 二进制/JSON 附件 | 400/401/404/409/503 | 导出器/抓包能力 | 流量 |
+| P-B5-42 | 🟡 | POST `/api/v1/traffic/{id}/replay` | 重放请求；**绕过 executor 策略/审批（高风险）** | `{"traffic_id":2,"mission_id":1,"status":200,"error":""}` | 400/401/404/409/503 | 直接调 http_probe（未走 executor） | 流量 |
+| P-B5-43 | ✅ | DELETE `/api/v1/missions/{id}/traffic` | 批量清理任务采集行（保留证据快照/正文） | 204 | 400/401/404/503 | 批量删除 Store | 流量 |
+| P-B5-44 | 🟡 | GET `/api/v1/evidence/{id}/audit` | 证据审计（🟡 仅 export/verify 部分埋点） | `{"audit":[]}` | 400/401/404/503 | `evidence_access_log`（0014） | 证据/流量 |
+| P-B5-45 | ⬜ | POST `/api/v1/evidence/rotate` | 密钥轮换（⬜ 未实现，返回 501） | `{"error":{"code":"not_implemented"}}` | 400/401/501/503 | 无 key-id，无法安全重写 | 系统设置 |
+| P-B5-46 | ✅ | POST `/api/v1/evidence/{id}/export` | 导出证据 zip（snapshot.json + 正文，写 export 审计） | `application/zip` | 400/401/404/409/503 | 证据导出器 | 证据/报告 |
+| P-B5-47 | 🟡 | POST `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（🟡 无唯一约束，可能重复） | 201 Finding | 400/401/404/409/503 | finding 域 + 节点校验 | 任务详情/发现 |
+
+#### 5.6.3 B4/B5 仍存在的缺口与风险（🟡/⬜）
+
+> B1/B2/B3 的大部分缺口已由 B4/B5 补上；下表是**实现后仍存在**的部分实现/风险，前端设计必须按实际能力处理。
+
+| 缺口/风险 | 状态 | 现状 | 建议/未完成项 |
 | --- | --- | --- | --- |
-| graph limit 2000 vs ListNodes 1000、大图分页 | 🟡 | `GET /missions/{id}/graph`（#41） | P-B4-26 游标分页；或按 kind 分段拉取 |
-| 发现 PATCH node_id | 🟡 | PATCH 仅 title/severity/detail/asset_id（#47） | P-B4-23 |
-| 发现跨任务列表/导出 | 🟡 | 仅任务内列表（#44） | P-B4-24 |
-| AI 自动写 finding | 🟡 | 人工 API（#45） | P-B5-47（机制缺口） |
-| 复测执行器 | 🟡 | 人工创建/推进（#52–#55） | P-B5-38/39 |
-| 报告 PDF/Word 导出 | 🟡 | Markdown（#56） | P-B5-40 |
-| 任务范围编译策略 | 🟡 | 范围 CRUD（#37–#39） | P-B4-25 |
-| 身份键独立写、企业 attrs、游标分页 | 🟡 | 身份只读（#32）；企业 PATCH 仅 name/slug | P-B4-20/21/22/26 |
-| 审批取消/详情 | 🟡 | 列表/决策（#14/#15） | P-B4-07/08 |
-| 流量导出/重放/任务级清理 | 🟡 | 列表/详情/正文/删除单条（#60–#64） | P-B5-41/42/43 |
-| LLM 请求/响应正文记录 | 🟡 | 仅 token 用量（#67–#69） | 新表/新采集（无最终 API） |
-| usage records 分页 | 🟡 | 任务全部记录（#68） | P-B4-26 |
-| Dashboard 趋势按小时/活动流 | 🟡 | 实时聚合（#70） | 新聚合 API（未排期） |
-| 日志流/通知/设置/规则 CRUD | 🟡 | 无 | P-B4-01..19 |
+| settings 运行时热生效 | 🟡 | GET/PATCH 持久化+可读；runner/executor 仍读启动 config | 热加载/重启提示（未排期） |
+| 策略 immutable 的 arg_pattern 仍可改 | 🟡 | 仅禁止改 name/tool/action 与删除 | 规则 CRUD 收紧 + 审计 |
+| 通知真实事件推送 / SSRF 白名单 / config 加密 | 🟡 | test 支持 webhook 真发；email/generic skipped；config 明文返回、无出站白名单 | 事件触发、URL allowlist、敏感配置加密 |
+| Agents 接入 engine 装配 | 🟡 | 仅定义 CRUD/test，不改变运行时 | 引擎按 Agent 定义装配 |
+| 流量重放绕过策略/审批 | 🟡 | 直接 http_probe，仅 Bearer+tenant+工具限制 | 必须改走 executor（高风险） |
+| 证据轮换 | ⬜ | POST /evidence/rotate 返回 501（无 key-id，无法安全重写） | 密钥版本化后重加密 |
+| 证据读取审计覆盖 | 🟡 | 仅 export/verify 部分埋点；GET verify 与正文读取未全埋 | 全链路埋点 |
+| AI 自动写 finding 并发去重 | 🟡 | from-node 可创建，无唯一约束，可能重复 | 幂等键/唯一约束 |
+| sync 崩溃恢复/保留策略 | 🟡 | 异步运行、逐条容错 skipped；无崩溃恢复/清理 | 运行恢复 + 保留策略 |
+| LLM 请求/响应正文采集 | 🟡 | 仅 token 用量记录 | 新表/新采集（无最终 API） |
+| Dashboard 小时趋势/活动流 | 🟡 | 实时聚合，无小时粒度 | 新聚合 API（未排期） |
+| 日志 after_id / 跨进程 | 🟡 | 进程级环形 2000，无 after_id，多进程不聚合 | 持久化日志/游标 |
+| 报告图片/字体 | 🟡 | PDF 依赖阅读器 CJK 字体；DOCX 最小合法；无图片 | 字体嵌入/图片 |
+| MCP stdio 安全 | 🟡 | 默认禁用+白名单；命令仍由管理员配置 | 更强沙箱 |
+| Workspace 配额 | 🟡 | 单文件/上传大小限制；无租户配额 | 配额/清理 |
+| Skills 无版本历史 | 🟡 | version 仅展示用 | 版本化/回滚 |
+| 任务范围编译仅预览 | 🟡 | 不写 policy_rules | 落地编译 + 冲突处理 |
+| graph limit 2000 vs ListNodes 1000；after_id 仅部分列表 | 🟡 | 大图仍可能截断；after_id 未覆盖所有列表 | 全量游标分页 |
 
-## 6. 领域状态机与业务规则
+## 6. 领域状态机与业务规则## 6. 领域状态机与业务规则
 
 ### 6.1 任务状态（7）
 
@@ -812,6 +929,19 @@ HTTP 请求
 - **Dashboard 口径**：`missions.by_status` 固定 7 键（queued/running/paused/finalizing/done/failed/cancelled）且缺省补 0；`findings.by_severity` 固定 5 键（info/low/medium/high/critical）补 0；`tokens.spent_total=SUM(missions.spent_tokens)`、`tokens.calls=COUNT(llm_usage)`、`tokens.today=SUM(llm_usage.total_tokens) WHERE created_at >= date_trunc('day', now())`（DB 会话时区）；`recent_missions` 按 id 倒序最多 5 条。所有统计限定当前租户。
 - **聚合时间窗**：`/llm-usage/summary` 的 `days` 使用 UTC 截止时间；`group_by=day` 的分组键由 DB 的 `date_trunc('day', created_at)` 生成（DB 时区），与 UTC 截止时间可能跨日不一致——前端展示时以返回的 key 为准。
 
+### 6.13 B4/B5 规则与安全边界（摘要）
+
+- **策略规则**：列表含停用，priority DESC,id ASC；API 不可创建 immutable；immutable 仅禁止改 name/tool/action 与删除，arg_pattern 仍可 PATCH（🟡 风险）；simulate 取启用规则前 200，未知工具 400。
+- **审批**：GET 详情平铺 + 嵌套 approval + node/mission 摘要；cancel 仅 pending，重复/已决策 409。
+- **settings**：白名单键（engine.max_concurrent 1..64、policy.default_action、policy.approval_timeout 1..3600s、mission.default_max_tokens/steps），仅持久化+可读，**运行时未热生效（🟡）**；默认硬编码 2/ask/60s。
+- **日志**：进程级环形 2000，GET 默认 200/上限 1000、无 after_id；SSE event=log、20s 心跳、慢订阅丢帧。
+- **通知**：type webhook/email/generic；test webhook 真发 POST，2xx→sent、失败→failed、email/generic→skipped；一律 200 + {sent,channel_id,delivery}；config 明文返回、无出站白名单（🟡）。
+- **身份/分页**：身份新增/删除（`{kind}/{key...}`，Normalize，重复 409，可删到 0）；after_id 方向随列表（assets 升序 id>，其余倒序 id<），不传保持旧行为；任务内发现排序改 id DESC。
+- **跨任务发现/CSV**：支持过滤+after_id；CSV ≤10000 行、固定表头、防公式注入、空表仅表头。
+- **范围编译**：纯预览不落库；root/subdomain/ip/url→http_probe allow 草案（url 120 > subdomain/ip 110 > root 100），cidr/keyword/icp 仅 notes。
+- **MCP/Skills/Agents/Workspace/Sync**：MCP http JSON-RPC initialize+tools/list、stdio 默认禁用+白名单、失败保留旧工具；Skills 磁盘 `<state>/skills/<tenant>/<name>/`、zip 10MB/200 文件/文本扩展、无 skill_files 表；Agents 仅定义 CRUD/test，**未接入 engine（🟡）**；Workspace 文件系统为准、UTF-8≤1MB、上传≤10MB、拒绝路径穿越/符号链接、非空目录需 recursive；Sync manual/http_json、SSRF 三层（默认拒私网，仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开）、异步 ≤60s、逐条 skipped。
+- **报告/证据/复测**：报告格式 markdown/html/docx/pdf（PDF 依赖阅读器 CJK 字体、DOCX 最小合法、无图片）；流量重放直接调 http_probe，**绕过策略/审批（🟡 高风险）**；证据轮换返回 501（⬜）；证据审计仅部分动作埋点（🟡）；复测 run 重算签名/解密校验（非重跑 exploit），无证据 error；from-node 可重复（🟡）。
+
 ## 7. 运行时机制
 
 ### 7.1 引擎调度与任务执行
@@ -899,6 +1029,13 @@ HTTP 请求
 - 流量正文读取不缓存、不记录新的审计/采集行；`DELETE /traffic/{id}` 只删采集行，保留 blob 与已冻结快照（证据完整性优先）。
 - Dashboard 每次请求实时聚合（多条 COUNT/SUM/分组 SQL，无物化视图/缓存）；数据量大时是已知性能风险，后续可加缓存或按日汇总。
 - 命令历史与 LLM 记录是审计/台账视图，不触发任务运行时、不改变任务状态。
+
+### 7.11 B4/B5 模块位置与安全边界
+
+- HTTP 层：`internal/httpapi/{policy_api,settings_api,logs_api,notifications_api,assets_extra,findings_extra,evidence_extra,retest_extra,mcp_api,skills_api,agents_api,workspace_api,sync_api,traffic_extra,report_extra}.go`；全部通过 `RegisterFeatureRoutes` 在 init 注册，NewHandler 复用同一鉴权中间件。
+- 领域/存储：`internal/logging`（环形缓冲）、`internal/app/{mcp,report,syncdata,workspace}`；`internal/infra/pg/{store_policy_api,store_settings,store_notification,store_mcp,store_skill,store_agent,store_sync,store_data_extra,store_extra_b5}.go`。
+- 安全边界：文件类（Skills/Workspace）做路径 Clean+前缀校验、拒绝符号链接/穿越、大小上限；Sync 做保存/解析/拨号三层 SSRF 校验，默认拒私网；MCP env/headers 响应掩码、stdio 默认禁用；通知 webhook 无出站白名单（🟡）；流量重放绕过策略/审批（🟡 高风险）。
+- 未完成机制：settings 热生效、Agents 执行装配、证据密钥轮换、通知事件推送/加密、sync 崩溃恢复、LLM 正文采集、Dashboard 小时趋势（⬜/🟡）。
 
 ## 8. 前端对接指南
 
@@ -1044,6 +1181,29 @@ HTTP 请求
 - **用量聚合**：`group_by` 缺省 model；`days` 默认 30、上限 365、非法 400；day 分组键用 DB 时区，跨时区展示以返回 key 为准。
 - **Dashboard**：建议 15s 轮询或进入首页时拉一次；`spent_total` 是任务累计消耗（不是 LLM 记录求和），`today` 是当天记录求和，两者口径不同，不要混用。
 
+### 8.10 B4/B5 前端字段与操作补充
+
+| 实体 | 关键字段 | 操作/说明 |
+| --- | --- | --- |
+| `PolicyRule` | id,name,tool,arg_pattern,action,priority,timeout_seconds,enabled,immutable | 列表/CRUD/simulate；immutable 不可删改动作；arg_pattern 可改（🟡） |
+| `Settings` | settings{max_concurrent,default_budget{max_tokens,max_steps},default_action,approval_timeout} | GET/PATCH；🟡 运行时未热生效，界面需提示“保存后待生效/重启” |
+| `LogEntry` | id,time,level,msg,attrs | GET 默认 200/上限 1000 无 after_id；SSE event=log |
+| `NotificationChannel` / `Delivery` | id,name,type,config,enabled / channel_id,event,status,detail | test 一律 200+delivery；email/generic skipped；config 明文（🟡） |
+| `McpServer` / `McpTool` | transport,url/command,args,env,headers,last_status,last_error / server_id,name,input_schema | refresh 失败保留旧工具；env/headers 掩码 |
+| `Skill` / `SkillFile` | name,description,version,file_count / path,size | upload zip≤10MB/≤200 文件；文件路由 `{path...}` |
+| `Agent` | key,name,role,tools,system_prompt,model,enabled | CRUD/test；🟡 未接入执行 |
+| `SyncSource` / `SyncProject` / `SyncRun` | type,config / external_id,data / status,stats,error | run 202+running；SSRF 默认拒私网 |
+| `AssetIdentity` | kind,key | POST 新增/DELETE `{kind}/{key...}`；重复 409 |
+| `Finding`（跨任务/导出） | 同既有 Finding | `GET /findings` 跨任务；`/findings/export` CSV（≤10000） |
+| `Retest`（run/evidence） | 同既有 Retest | run 重算签名/解密，非重跑；evidence 列出绑定 |
+| `Report` | 同既有 Markdown；`format=markdown/html/docx/pdf` | PDF 依赖阅读器字体；DOCX 最小合法 |
+| `EvidenceAudit` | snapshot_id,action,actor,created_at | 🟡 仅 export/verify 部分埋点；rotate 501（⬜） |
+| `TrafficReplay` | replayed,traffic_id,status_code | 🟡 绕过策略/审批，仅 http_probe |
+
+- 分页组件：B1–B3 列表 + B4 的 assets/findings/traffic/commands/llm-records 支持 `after_id`/`next_after_id`（方向随列表）；日志无 after_id。
+- 通知 test 用 200+delivery 展示，不要按 502 处理；webhook 真实出站、email/generic skipped。
+- 报告用 `format` 选择，非 JSON；`Content-Type`/`Content-Disposition` 按格式处理。
+
 ## 9. 原版 27 页映射与后端缺口（三态）
 
 参考产品的页面清单来自 `research/` 下研究资料（gitignored，不随仓库发布）；「原版页面」只做职责对照。状态图例见文档顶部：✅ 已实现、🟡 部分实现、⬜ 计划/未开始。
@@ -1055,79 +1215,79 @@ HTTP 请求
 
 ### 9.1 27 页映射（三态 + 可用性）
 
-| # | 原版页面 | 原版职责 | 状态 | 可用性 | 已实现 API（§5 编号）/数据 | 缺口/计划接口 | 建议前端页面 |
+| # | 原版页面 | 职责 | 状态 | 可用性 | 已实现 API（§5 编号）/数据 | 缺口/计划 | 建议前端页面 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | login | 密码登录、须知确认 | ⬜ | 完全阻塞 | 无用户体系，仅静态管理令牌 | 用户/会话/密码存储（未排期） | 暂不实现 |
+| 1 | login | 密码登录、须知确认 | ⬜ | 完全阻塞 | 无用户体系，仅静态令牌 | 用户/会话（未排期） | 暂不实现 |
 | 2 | setup | 首次初始化密码 | ⬜ | 完全阻塞 | 无 | 初始化流程（未排期） | 暂不实现 |
-| 3 | external redirect | 落地跳转 | ✅ | 可直接开发 | 单页 `/`（WebUI 托管） | 无 | 不需要独立页面 |
-| 4 | chat | 会话列表 + transcript + @提及 | ⬜ | 完全阻塞 | 无会话/消息表 | 会话模型 + LLM 对话 API（未排期） | 后续 |
-| 5 | dashboard | token 用量、趋势、活动 | ✅ | 可直接开发（基础版） | #70 Dashboard；#67–#69 用量 | 趋势按小时/活动流（🟡 未排期） | /dashboard |
-| 6 | tasks | 任务列表/分类/归档/批量/创建 | ✅ | 可直接开发（基础版） | #5–#11 | 分类/归档/批量（⬜ 无表） | /missions |
-| 7 | tasks/detail | 任务头 + 10 Tab 容器 | ✅ | 可直接开发（基础版） | #7,#12,#13,#33–#35,#37–#56 | 策略/规则编辑（P-B4）；会话 transcript（⬜） | /missions/:id |
-| 8 | tasks/detail/sessions | transcript + 任务 SSE + worker 操作 | ⬜ | 完全阻塞 | 仅 `mission_events`（#12） | Agent 会话/消息/侧问（未排期） | 后续 |
-| 9 | tasks/detail/overview | 目标/约束/范围/拦截/LLM 链 | 🟡 | 依赖计划接口 | #37–#40 范围/计划；#36 覆盖度；#14/#15 审批 | 策略规则 CRUD/模拟（P-B4-01..06）；审批取消/详情（P-B4-07/08） | 任务概览 Tab |
-| 10 | tasks/detail/graph | 探索图可视化 | 🟡 | 可直接开发（基础版），大图依赖计划接口 | #41 图；#42/#43 节点 | 大图分页 P-B4-26 | 作战图 Tab |
+| 3 | external redirect | 落地跳转 | ✅ | 可直接开发 | 单页 `/` | 无 | 不需要独立页面 |
+| 4 | chat | 会话列表 + transcript + @提及 | ⬜ | 完全阻塞 | 无会话/消息表 | 会话模型（未排期） | 后续 |
+| 5 | dashboard | 用量、趋势、活动 | 🟡 | 可直接开发（基础版） | #70 Dashboard；#67–#69 用量 | 小时趋势/活动流（🟡 未排期） | /dashboard |
+| 6 | tasks | 任务列表/分类/归档/批量/创建 | ✅ | 可直接开发（基础版） | #5–#11 | 分类/归档/批量（⬜） | /missions |
+| 7 | tasks/detail | 任务头 + 10 Tab | ✅ | 可直接开发（基础版） | #7,#12,#13,#33–#56,#68 | 会话 transcript（⬜） | /missions/:id |
+| 8 | tasks/detail/sessions | transcript + SSE + worker 操作 | ⬜ | 完全阻塞 | 仅 #12 SSE | Agent 会话/侧问（未排期） | 后续 |
+| 9 | tasks/detail/overview | 目标/范围/拦截/LLM 链 | ✅ | 可直接开发 | #37–#40 范围/计划；#36 覆盖度；#117–#124 规则/审批 | LLM profile 管理（⬜） | 任务概览 Tab |
+| 10 | tasks/detail/graph | 探索图 | 🟡 | 可直接开发（基础版） | #41–#43 | 大图 after_id/分段（🟡） | 作战图 Tab |
 | 11 | tasks/detail/broadcast | 分页播报板 | 🟡 | 依赖计划接口 | #41 节点数据 | 专门查询/语义 API（未排期） | 并入作战图 |
-| 12 | tasks/detail/findings | 任务发现 | ✅ | 可直接开发 | #44–#51 | node_id PATCH（P-B4-23）；AI 自动 finding（P-B5-47） | 发现 Tab |
-| 13 | tasks/detail/retests | 复测 | 🟡 | 可直接开发（基础版），执行器依赖计划接口 | #52–#55 | 执行器/证据（P-B5-38/39） | 复测 Tab |
-| 14 | tasks/detail/assets | 任务资产 | ✅ | 可直接开发 | #33–#35 | 无（权限/来源筛选可后续） | 任务资产 Tab |
-| 15 | tasks/detail/coverage-graph | 覆盖度图 | ✅ | 可直接开发 | #36 覆盖度；#41 图 | 图布局前端组合 | 覆盖度 Tab |
-| 16 | tasks/detail/intercept | 任务内审批 | 🟡 | 可直接开发（基础版），取消/详情依赖计划接口 | #14/#15 | P-B4-07/08 | 审批 Tab |
-| 17 | tasks/detail/report | Markdown 报告 | 🟡 | 可直接开发（基础版），导出依赖计划接口 | #56 Markdown | PDF/Word P-B5-40 | 报告 Tab |
-| 18 | findings | 发现三视图/筛选/导出 | 🟡 | 依赖计划接口 | #44–#51 任务内发现 | 跨任务列表/导出 P-B4-24；导出未排期 | /findings |
-| 19 | findings/detail | 发现详情/攻击链/流量 | ✅ | 可直接开发 | #46 详情；#41 图；#49 证据 | 攻击链聚合（前端组合） | /findings/:id |
-| 20 | traffic | 抓包列表/详情/删除/清理 | 🟡 | 可直接开发（基础版），导出/重放依赖计划接口 | #60–#64 全局流量；#16/#17 任务流量/证据 | 导出/重放/批量清理 P-B5-41/42/43 | /traffic |
-| 21 | commands | 工具执行历史 + 统计 | ✅ | 可直接开发（基础版） | #65/#66 | 按工具统计/重放（🟡 未排期） | /commands |
-| 22 | llm-records | LLM 原始记录 + token 聚合 | ✅ | 可直接开发（基础版） | #67–#69 | LLM 请求/响应正文（⬜ 无采集） | /llm-records |
-| 23 | assets | 企业范围 + 资产 CRUD + 搜索 | 🟡 | 可直接开发（基础版），身份写/attrs 依赖计划接口 | #19–#32 | P-B4-20/21/22/26 | /assets |
-| 24 | sync | 外部数据源同步 | ⬜ | 完全阻塞 | 无 | P-B5-29..37 + 适配器 | /sync |
-| 25 | workspace | workDir 文件管理 | ⬜ | 完全阻塞 | 无 | P-B5-24..28 + 沙箱 | /workspace |
-| 26 | system/llm | LLM profile CRUD/状态/重试 | ⬜ | 完全阻塞 | 仅配置文件（启动固定） | profile 表/CRUD（未排期） | /system/llm |
-| 27 | system/agents | Agent 定义与编辑器 | ⬜ | 完全阻塞 | 无 Agent 表 | P-B5-18..23 | /system/agents |
-| 28 | system/agents/detail | 深链复用编辑器 | ⬜ | 完全阻塞 | 无 | P-B5-20/21 | /system/agents/:key |
-| 29 | system/mcp | MCP server CRUD/工具可见性 | ⬜ | 完全阻塞 | 无 | P-B5-01..07 + MCP 客户端 | /system/mcp |
-| 30 | system/skills | Skill 文件树/上传/缺失统计 | ⬜ | 完全阻塞 | 无 | P-B5-08..17 | /system/skills |
-| 31 | system/tools | 内置工具参数编辑/自定义工具 | 🟡 | 依赖计划接口 | 工具静态注册（代码内） | 工具配置表/自定义工具（未排期） | /system/tools |
-| 32 | system/notify | 通知渠道/投递/测试 | ⬜ | 完全阻塞 | 无 | P-B4-11..17 | /system/notify |
-| 33 | system/intercept | 拦截规则/LLM judge/工具范围 | 🟡 | 依赖计划接口 | `policy_rules` 已有 + 内置规则（执行期生效） | P-B4-01..06 | /system/policy |
+| 12 | tasks/detail/findings | 任务发现 | ✅ | 可直接开发 | #44–#51、#82（from-node）、#78/#79（跨任务/导出） | 并发去重（🟡） | 发现 Tab |
+| 13 | tasks/detail/retests | 复测 | ✅ | 可直接开发（基础版） | #52–#55、#80/#81（run/evidence） | 自动重跑 exploit（⬜ 非目标） | 复测 Tab |
+| 14 | tasks/detail/assets | 任务资产 | ✅ | 可直接开发 | #33–#35、#114/#115 身份写 | 无 | 任务资产 Tab |
+| 15 | tasks/detail/coverage-graph | 覆盖度图 | ✅ | 可直接开发 | #36 + #41 | 图布局前端组合 | 覆盖度 Tab |
+| 16 | tasks/detail/intercept | 任务内审批 | ✅ | 可直接开发 | #14/#15、#123/#124 详情/取消 | 无 | 审批 Tab |
+| 17 | tasks/detail/report | 报告 | ✅ | 可直接开发 | #56 多格式 markdown/html/docx/pdf | 图片/字体嵌入（🟡） | 报告 Tab |
+| 18 | findings | 发现三视图/筛选/导出 | ✅ | 可直接开发 | #78 跨任务列表、#79 CSV、#44–#51 任务内 | 跨任务详情聚合（前端组合） | /findings |
+| 19 | findings/detail | 发现详情/攻击链/流量 | ✅ | 可直接开发 | #46 详情；#41 图；#49 证据 | 攻击链聚合（前端） | /findings/:id |
+| 20 | traffic | 抓包列表/详情/删除/清理 | ✅ | 可直接开发（重放高风险 🟡） | #60–#64、#95 HAR、#96 replay、#97 清理 | replay 绕过策略（🟡 风险） | /traffic |
+| 21 | commands | 工具执行历史 + 统计 | ✅ | 可直接开发 | #65/#66 | 按工具统计（前端） | /commands |
+| 22 | llm-records | LLM 记录 + token 聚合 | 🟡 | 可直接开发（基础版） | #67–#69 | LLM 正文采集（⬜ 未实现） | /llm-records |
+| 23 | assets | 企业范围 + 资产 CRUD + 搜索 | ✅ | 可直接开发 | #19–#32、#114/#115 身份、#24 attrs 扩展 + after_id 扩展 | 全量游标（🟡） | /assets |
+| 24 | sync | 外部数据源同步 | ✅ | 可直接开发（基础版） | #105–#113 | 崩溃恢复/保留策略（🟡） | /sync |
+| 25 | workspace | workDir 文件管理 | ✅ | 可直接开发（基础版） | #90–#94 | 配额/清理（🟡） | /workspace |
+| 26 | system/llm | LLM profile CRUD | ⬜ | 完全阻塞 | 仅 config 文件 | profile 表/CRUD（未排期） | /system/llm |
+| 27 | system/agents | Agent 列表/编辑器 | 🟡 | 依赖计划接口 | #125–#130 CRUD/test | 接入 engine 装配（🟡） | /system/agents |
+| 28 | system/agents/detail | 深链复用编辑器 | 🟡 | 依赖计划接口 | #127/#128 | 同上 | /system/agents/:key |
+| 29 | system/mcp | MCP CRUD/工具可见性 | ✅ | 可直接开发 | #83–#89 | stdio 沙箱（🟡） | /system/mcp |
+| 30 | system/skills | Skill 文件树/上传 | ✅ | 可直接开发 | #131–#140 | 版本历史（🟡） | /system/skills |
+| 31 | system/tools | 工具参数编辑/自定义工具 | 🟡 | 依赖计划接口 | 静态注册 | 工具配置表（未排期） | /system/tools |
+| 32 | system/notify | 通知渠道/投递/测试 | ✅ | 可直接开发（基础版） | #98–#104 | 事件推送/SSRF/加密（🟡） | /system/notify |
+| 33 | system/intercept | 拦截规则/模拟 | ✅ | 可直接开发 | #117–#124 | 规则编译落库（🟡） | /system/policy |
 | 34 | system/intercept/assets | 全局资产黑名单 | ⬜ | 完全阻塞 | 无 | 黑名单表（未排期） | 后续 |
-| 35 | system/intercept/approvals | 审批记录壳页 | 🟡 | 可直接开发（基础版），详情/取消依赖计划接口 | #14/#15 | P-B4-07/08 | /system/approvals |
-| 36 | system/logs | SSE 日志流 | ⬜ | 完全阻塞 | 只有进程日志（slog 输出） | P-B4-09/10 | /system/logs |
-| 37 | system/settings | 更新/GC/Web 搜索/环境检测 | 🟡 | 依赖计划接口 | #57–#59 自更新已可做 | P-B4-18/19（设置）；GC/搜索自检未排期 | /system/settings |
+| 35 | system/intercept/approvals | 审批记录 | ✅ | 可直接开发 | #14/#15、#123/#124 | 无 | /system/approvals |
+| 36 | system/logs | SSE 日志流 | ✅ | 可直接开发 | #71/#72 | after_id/多进程（🟡） | /system/logs |
+| 37 | system/settings | 更新/GC/Web 搜索/环境检测 | 🟡 | 依赖计划接口 | #57–#59 自更新；#73/#74 settings | 热生效/GC/检测（🟡/⬜） | /system/settings |
 
 > 表中 #1–#7 与 #18–#37 对应原版 27 个顶层页面；#8–#17 是任务详情页的 10 个 Tab（对照用，不单独计页面）。
 
 ### 9.2 前端页面建议拆分与数据依赖（侧边栏 2 组 21 项）
 
-| 分组 | # | 建议路由 | 页面 | 核心组件 | 数据来源（已实现 # / 计划 P） | 空态/轮询 | 可开发状态 |
+| 分组 | # | 建议路由 | 页面 | 核心组件 | 数据来源（已实现 # / 计划） | 空态/轮询 | 可开发状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 功能 | 1 | `/dashboard` | 概览 | 指标卡、状态分布、最近任务、用量摘要 | #70 Dashboard；#67–#69 | 空态“暂无数据”；15s 轮询 | ✅ 基础版可开发 |
-| 功能 | 2 | `/missions` | 任务列表 | 表格、状态筛选、创建抽屉、批量操作 | #5–#11 | 空列表；5s 轮询 | ✅ 基础版可开发（分类/归档⬜） |
-| 功能 | 3 | `/missions/:id` | 任务详情 | 头部+Tab：概览/事件/流量/计划/图/发现/复测/报告/审批 | #7,#12,#13,#33–#56；P-B4 策略 | 事件空态；SSE+5s | ✅ 基础版可开发 |
-| 功能 | 4 | `/findings` | 发现列表 | 筛选（severity/status/asset）、表格、导出 | #44 任务内；P-B4-24 跨任务 | 空列表；10s | 🟡 任务内可做，跨任务待 P-B4-24 |
-| 功能 | 5 | `/findings/:id` | 发现详情 | 详情卡、证据列表、关联图节点/流量 | #46,#49,#41 | 证据空态；按需 | ✅ 可开发 |
-| 功能 | 6 | `/traffic` | 流量 | 列表、详情抽屉、正文查看器、删除 | #60–#64；P-B5-41/42/43 | 空列表；10s；正文按需 | 🟡 基础版可开发（导出/重放⬜） |
+| 功能 | 1 | `/dashboard` | 概览 | 指标卡、状态/严重度分布、最近任务、用量摘要 | #70、#67–#69 | 空态；15s | ✅ 基础版可开发（趋势🟡） |
+| 功能 | 2 | `/missions` | 任务列表 | 表格、状态筛选、创建抽屉 | #5–#11 | 空列表；5s | ✅ 可开发 |
+| 功能 | 3 | `/missions/:id` | 任务详情 | 头部 + Tab（概览/事件/流量/计划/图/发现/复测/报告/审批） | #7,#12,#13,#33–#56,#68 | SSE+5s | ✅ 可开发 |
+| 功能 | 4 | `/findings` | 发现列表 | 筛选、表格、CSV 导出 | #84/#85 + #44–#51 | 空列表；10s | ✅ 可开发 |
+| 功能 | 5 | `/findings/:id` | 发现详情 | 详情卡、证据、图节点、流量 | #46,#49,#41 | 空态；按需 | ✅ 可开发 |
+| 功能 | 6 | `/traffic` | 流量 | 列表、正文查看、HAR 导出、清理 | #60–#64,#77,#79 | 空列表；10s；正文按需 | ✅ 可开发（replay 高风险🟡） |
 | 功能 | 7 | `/commands` | 命令历史 | 列表、outcome 筛选、详情 | #65/#66 | 空列表；10s | ✅ 可开发 |
-| 功能 | 8 | `/llm-records` | LLM 记录与用量 | 记录表、按角色/模型聚合、趋势 | #67–#69 | 空态；15s | ✅ 可开发（按小时趋势⬜） |
-| 功能 | 9 | `/assets` | 资产与企业 | 企业列表、资产树/表、范围、身份、覆盖度入口 | #19–#32,#36 | 空态；10s | 🟡 基础版可开发（身份写/attrs待 P-B4） |
-| 功能 | 10 | `/workspace` | 工作区 | 文件树、编辑器、上传/下载 | P-B5-24..28 | — | ⬜ 完全阻塞 |
-| 功能 | 11 | `/sync` | 数据同步 | 数据源、项目、运行记录 | P-B5-29..37 | — | ⬜ 完全阻塞 |
-| 功能 | 12 | `/chat` | 对话 | 会话列表、transcript、@提及 | 无 | — | ⬜ 完全阻塞 |
-| 系统 | 13 | `/system/llm` | LLM 配置 | profile 列表/编辑、测试 | 仅 config；无 API | — | ⬜ 完全阻塞 |
-| 系统 | 14 | `/system/agents` | Agents | Agent 列表/编辑器/试跑 | P-B5-18..23 | — | ⬜ 完全阻塞 |
-| 系统 | 15 | `/system/mcp` | MCP | server 列表/工具刷新 | P-B5-01..07 | — | ⬜ 完全阻塞 |
-| 系统 | 16 | `/system/skills` | Skills | 文件树/上传/缺失统计 | P-B5-08..17 | — | ⬜ 完全阻塞 |
-| 系统 | 17 | `/system/tools` | 工具 | 内置工具参数编辑、自定义工具 | 静态注册；无 API | — | 🟡 依赖计划接口（未排期） |
-| 系统 | 18 | `/system/notify` | 通知 | 渠道 CRUD、测试、投递记录 | P-B4-11..17 | — | ⬜ 完全阻塞 |
-| 系统 | 19 | `/system/policy` | 策略与审批 | 规则 CRUD、模拟、审批记录/取消 | #14/#15；P-B4-01..08 | 空列表；5s | 🟡 审批可做，规则待 P-B4 |
-| 系统 | 20 | `/system/logs` | 日志 | 级别筛选、实时流、暂停 | P-B4-09/10 | — | ⬜ 完全阻塞 |
-| 系统 | 21 | `/system/settings` | 设置 | 自更新、运行参数、通知/证据设置 | #57–#59；P-B4-18/19 | — | 🟡 自更新可做，其余待 P-B4 |
+| 功能 | 8 | `/llm-records` | LLM 记录/用量 | 记录表、角色/模型聚合、趋势 | #67–#69 | 空态；15s | 🟡 基础版（正文⬜） |
+| 功能 | 9 | `/assets` | 资产/企业 | 企业列表、资产树、范围、身份、覆盖度 | #19–#32,#36,#88/#89 | 空态；10s | ✅ 可开发（游标部分🟡） |
+| 功能 | 10 | `/workspace` | 工作区 | 文件树、编辑器、上传/下载 | #90–#94 | 空态；按需 | ✅ 基础版（配额🟡） |
+| 功能 | 11 | `/sync` | 数据同步 | 数据源、项目、运行记录 | #105–#113 | 空态；10s | ✅ 基础版（崩溃恢复🟡） |
+| 功能 | 12 | `/chat` | 对话 | 会话/transcript/@提及 | 无（未排期） | — | ⬜ 阻塞 |
+| 系统 | 13 | `/system/llm` | LLM 配置 | profile CRUD/测试 | 仅 config；无 API | — | ⬜ 阻塞 |
+| 系统 | 14 | `/system/agents` | Agents | 列表/编辑器/试跑 | #125–#130 | 空态 | 🟡 CRUD 可做，执行接入⬜ |
+| 系统 | 15 | `/system/mcp` | MCP | server CRUD/刷新工具 | #83–#89 | 空态 | ✅ 可开发 |
+| 系统 | 16 | `/system/skills` | Skills | 文件树/上传/编辑 | #131–#140 | 空态 | ✅ 可开发 |
+| 系统 | 17 | `/system/tools` | 工具 | 内置参数编辑/自定义 | 静态注册 | — | 🟡 依赖计划 |
+| 系统 | 18 | `/system/notify` | 通知 | 渠道 CRUD、测试、投递 | #98–#104 | 空态 | ✅ 基础版（推送🟡） |
+| 系统 | 19 | `/system/policy` | 策略/审批 | 规则 CRUD、模拟、审批记录/取消 | #117–#124 | 空态；5s | ✅ 可开发 |
+| 系统 | 20 | `/system/logs` | 日志 | 级别筛选、实时流 | #71/#72 | — | ✅ 可开发 |
+| 系统 | 21 | `/system/settings` | 设置 | 自更新、运行参数 | #57–#59、#73/#74 settings | — | 🟡 自更新可做，热生效⬜ |
 
-**推荐排期**：先做 ✅ 页面（Dashboard/任务/审批/流量基础/命令/LLM/资产/发现详情/报告），再按 B4（策略/日志/通知/设置/补全）解锁 🟡 系统页，最后做 B5（MCP/Skills/Agents/Workspace/Sync）解锁 ⬜ 页。
+**推荐排期**：先做 ✅ 页面（Dashboard/任务/审批/流量/命令/LLM/资产/发现/报告），B4/B5 的 ✅ 系统页（策略/日志/通知/MCP/Skills/Workspace/Sync）可并行；🟡 页面按风险提示，⬜ 页面等待后续能力。
 
-## 10. M6.2 后端补齐路线（B1/B2/B3 已实现；B4–B5 草案）
+## 10. M6.2 后端补齐路线（B1–B5 已实现/部分实现）
 
-> B1（18 条）、B2（20 条）与 B3（11 条）已实现（见 §5 #19–#70）；B4–B5 仍是**未实现的 API 草案**，实际实现时以 OpenAPI 与本文档更新为准。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（B1 默认 50/上限 200 且非法静默回退，B3 非法 400、超上限钳制）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量/命令/LLM 记录按 `id DESC`。
+> B1–B3（59 条）+ B4（24 条）+ B5（46 条 pattern）已实现（见 §5 #19–#140）；仅 B5 少数条目仍为 🟡/⬜（证据轮换、Agents 执行接入、settings 热生效等）。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（B1 默认 50/上限 200 且非法静默回退，B3 非法 400、超上限钳制）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量/命令/LLM 记录按 `id DESC`。
 
 ### B1：资产 / 企业 / 范围 / 覆盖率 / 任务资产（已实现 2026-10-21）
 
@@ -1195,94 +1355,40 @@ HTTP 请求
 - 趋势按小时/自定义粒度、Dashboard 缓存/物化视图；`/missions/{id}/usage` 的 records 不分页。
 - 验收（已完成）：11 条路由与 §5 一致、`make docs-check` 覆盖全部路由、insights 接口测试通过。
 
-### B4：策略 / 审批 / 日志 / 通知 / 设置 / 资产补全（⬜ 计划，26 条）
+### B4：策略 / 审批 / 日志 / 通知 / 设置 / 资产补全（✅ 已实现 2026-10-22）
 
-> 批内编号对应 §5.6.1；所有路径均为**草案，未实现**。请求/响应完整示例、错误码见 §5.6.1，本表给出开发批次与依赖。
+已实现 **24 条 feature 路由 + 6 处既有接口扩展**（见 §5 #71–#97 与 §5.2）：
 
-| 状态 | 编号 | 方法/路径 | 用途 | 请求/响应摘要 | 错误 | 依赖（表/模块） | 批次 | 前端页面 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ⬜ | P-B4-01 | GET `/policy/rules` | 规则列表 | `?enabled=&tool=&limit=` → `{rules:[]}` | 400/401/503 | `policy_rules` | B4-1 | /system/policy |
-| ⬜ | P-B4-02 | POST `/policy/rules` | 新建规则 | `{name,tool,arg_pattern,action,priority,enabled}` → 201 规则 | 400/401/409/503 | `policy_rules` + Store | B4-1 | /system/policy |
-| ⬜ | P-B4-03 | GET `/policy/rules/{id}` | 规则详情 | — → 规则 | 400/401/404/503 | 同上 | B4-1 | /system/policy |
-| ⬜ | P-B4-04 | PATCH `/policy/rules/{id}` | 更新规则（immutable 限制） | 局部字段 → 200 规则 | 400/401/404/409/503 | 同上 | B4-1 | /system/policy |
-| ⬜ | P-B4-05 | DELETE `/policy/rules/{id}` | 删除规则（immutable 拒绝） | — → 204 | 400/401/404/409/503 | 同上 | B4-1 | /system/policy |
-| ⬜ | P-B4-06 | POST `/policy/simulate` | 裁决试算 | `{tool,args}` → `{action,rule_id,rule_name}` | 400/401/503 | `policy.Evaluate` | B4-1 | /system/policy |
-| ⬜ | P-B4-07 | POST `/approvals/{id}/cancel` | 取消 pending 审批 | — → 200 审批（cancelled） | 400/401/404/409/503 | `approvals` Store 写入 | B4-1 | /system/approvals |
-| ⬜ | P-B4-08 | GET `/approvals/{id}` | 审批详情/上下文 | — → 审批 + 任务/节点摘要 | 400/401/404/503 | `approvals` + 节点读取 | B4-1 | /system/approvals |
-| ⬜ | P-B4-09 | GET `/logs` | 日志查询 | `?level=&limit=&after_id=` → `{logs:[]}` | 400/401/503 | 环形日志缓冲（新） | B4-2 | /system/logs |
-| ⬜ | P-B4-10 | GET `/logs/stream` | 日志 SSE | → `text/event-stream`（event=log） | 401/503 | 日志 sink + SSE | B4-2 | /system/logs |
-| ⬜ | P-B4-11 | GET `/notifications/channels` | 渠道列表 | → `{channels:[]}` | 401/503 | 计划表 channels | B4-2 | /system/notify |
-| ⬜ | P-B4-12 | POST `/notifications/channels` | 新建渠道 | `{name,type,config,enabled}` → 201 | 400/401/409/503 | 同上 | B4-2 | /system/notify |
-| ⬜ | P-B4-13 | GET `/notifications/channels/{id}` | 渠道详情 | — → 渠道 | 400/401/404/503 | 同上 | B4-2 | /system/notify |
-| ⬜ | P-B4-14 | PATCH `/notifications/channels/{id}` | 更新渠道 | 局部字段 → 200 渠道 | 400/401/404/503 | 同上 | B4-2 | /system/notify |
-| ⬜ | P-B4-15 | DELETE `/notifications/channels/{id}` | 删除渠道 | — → 204 | 400/401/404/503 | 同上 | B4-2 | /system/notify |
-| ⬜ | P-B4-16 | POST `/notifications/channels/{id}/test` | 发送测试消息 | — → `{sent:true}` | 400/401/404/502/503 | 发送器 | B4-2 | /system/notify |
-| ⬜ | P-B4-17 | GET `/notifications/deliveries` | 投递记录 | `?channel_id=&status=&limit=` → `{deliveries:[]}` | 400/401/503 | 计划表 deliveries | B4-2 | /system/notify |
-| ⬜ | P-B4-18 | GET `/settings` | 运行时设置 | — → `{settings:{…}}` | 401/503 | 计划表 settings（优先级待定） | B4-3 | /system/settings |
-| ⬜ | P-B4-19 | PATCH `/settings` | 更新设置 | 局部字段 → 200 设置 | 400/401/409/503 | 同上 | B4-3 | /system/settings |
-| ⬜ | P-B4-20 | POST `/assets/{id}/identities` | 新增身份键 | `{kind,key}` → 201 身份 | 400/401/404/409/503 | `asset_identity` | B4-3 | /assets |
-| ⬜ | P-B4-21 | DELETE `/assets/{id}/identities/{kind}/{key}` | 删除身份键 | — → 204 | 400/401/404/409/503 | `asset_identity` | B4-3 | /assets |
-| ⬜ | P-B4-22 | PATCH `/companies/{id}` | 扩展支持 attrs | `{attrs}` → 200 企业 | 400/401/404/409/503 | `companies.attrs` | B4-3 | /assets |
-| ⬜ | P-B4-23 | PATCH `/findings/{id}` | 扩展支持 node_id 三态 | `{node_id:null|N}` → 200 Finding | 400/401/404/503 | `findings.node_id` | B4-3 | /findings |
-| ⬜ | P-B4-24 | GET `/findings` | 跨任务发现列表 | `?mission_id=&severity=&status=&asset_id=&limit=` → `{findings:[]}` | 400/401/503 | `findings` + 新索引 | B4-3 | /findings |
-| ⬜ | P-B4-25 | POST `/missions/{id}/scope/compile` | 范围编译为策略 | — → `{compiled,rules:[]}` | 400/401/404/409/503 | `mission_scope` + policy 写入 | B4-3 | 任务概览 |
-| ⬜ | P-B4-26 | 列表分页扩展（横切） | 增加 after_id/cursor | `?after_id=&limit=` → `{items,next_cursor}` | 400/401 | 各 Store 查询 | B4-4 | 各列表页 |
+| 分类 | 已实现 | 状态 |
+| --- | --- | --- |
+| 策略/审批 | 规则 CRUD 5 + simulate；审批详情/取消；共 8 条 | ✅（规则 arg_pattern 可改 🟡） |
+| 日志 | GET `/logs`、GET `/logs/stream`（SSE event:log） | ✅（进程级、无 after_id 🟡） |
+| 通知 | 渠道 CRUD/测试/deliveries 共 7 条 | ✅（真实事件推送/SSRF 白名单/config 加密 🟡） |
+| 设置 | GET/PATCH `/settings` | 🟡 仅持久化+可读，运行时未热生效 |
+| 数据补全 | 身份新增/删除（`{kind}/{key...}`）、跨任务发现、CSV 导出、scope compile 预览 | ✅ |
+| 既有接口扩展 | assets/findings/traffic/commands/llm-records 的 after_id；findings node_id；companies attrs；任务内发现排序改 id DESC | ✅ |
 
-### B5：MCP / Skills / Agents / Workspace / Sync / 能力增强（⬜ 计划，47 条）
+- 迁移：`0008_settings`、`0009_notifications`（2 表）；无其他表。B4 路由全部通过 `RegisterFeatureRoutes` 注册，复用鉴权/错误信封。
+- 未完成/风险：settings 热生效（🟡）、规则 immutable 的 arg_pattern（🟡）、通知真实事件推送/SSRF 白名单/敏感配置加密（🟡）、CSV 10000 行截断（🟡）、范围编译不落库（🟡）。
 
-> 批内编号对应 §5.6.2；所有路径均为**草案，未实现**。依赖新表（迁移 0008+）、文件沙箱或新执行器，建议在 B4 稳定后启动。
+### B5：MCP / Skills / Agents / Workspace / Sync / 增强（✅ 大部分已实现 2026-10-22）
 
-| 状态 | 编号 | 方法/路径 | 用途 | 请求/响应摘要 | 错误 | 依赖（表/模块） | 批次 | 前端页面 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ⬜ | P-B5-01 | GET `/mcp/servers` | MCP 端点列表 | → `{servers:[]}` | 401/503 | 计划表 mcp_servers | B5-1 | /system/mcp |
-| ⬜ | P-B5-02 | POST `/mcp/servers` | 新建端点 | `{name,transport,command/url,enabled}` → 201 | 400/401/409/503 | 同上 | B5-1 | /system/mcp |
-| ⬜ | P-B5-03 | GET `/mcp/servers/{id}` | 端点详情 | — → 端点 | 400/401/404/503 | 同上 | B5-1 | /system/mcp |
-| ⬜ | P-B5-04 | PATCH `/mcp/servers/{id}` | 更新端点 | 局部字段 → 200 | 400/401/404/503 | 同上 | B5-1 | /system/mcp |
-| ⬜ | P-B5-05 | DELETE `/mcp/servers/{id}` | 删除端点 | — → 204 | 400/401/404/503 | 同上 | B5-1 | /system/mcp |
-| ⬜ | P-B5-06 | POST `/mcp/servers/{id}/refresh` | 刷新工具清单 | — → `{tools:[]}` | 400/401/404/502/503 | MCP 客户端 | B5-1 | /system/mcp |
-| ⬜ | P-B5-07 | GET `/mcp/tools` | 工具列表 | `?server_id=` → `{tools:[]}` | 400/401/503 | mcp_tools | B5-1 | /system/mcp |
-| ⬜ | P-B5-08 | GET `/skills` | 技能列表 | → `{skills:[]}` | 401/503 | 计划表 skills/skill_files | B5-2 | /system/skills |
-| ⬜ | P-B5-09 | POST `/skills` | 新建技能 | `{name,description}` → 201 | 400/401/409/503 | 同上 | B5-2 | /system/skills |
-| ⬜ | P-B5-10 | GET `/skills/{name}` | 技能详情 | — → 技能 | 400/401/404/503 | 同上 | B5-2 | /system/skills |
-| ⬜ | P-B5-11 | PATCH `/skills/{name}` | 更新技能元数据 | 局部字段 → 200 | 400/401/404/503 | 同上 | B5-2 | /system/skills |
-| ⬜ | P-B5-12 | DELETE `/skills/{name}` | 删除技能 | — → 204 | 400/401/404/503 | 同上 | B5-2 | /system/skills |
-| ⬜ | P-B5-13 | POST `/skills/upload` | 上传技能 zip | multipart（≤10MiB） → `{name,files}` | 400/401/409/413/503 | 文件存储+zip 校验 | B5-2 | /system/skills |
-| ⬜ | P-B5-14 | GET `/skills/{name}/files` | 文件树 | → `{files:[]}` | 400/401/404/503 | skill_files | B5-2 | /system/skills |
-| ⬜ | P-B5-15 | GET `/skills/{name}/files/{path}` | 读文件 | → `{path,content}` | 400/401/404/503 | 文件存储 | B5-2 | /system/skills |
-| ⬜ | P-B5-16 | PUT `/skills/{name}/files/{path}` | 写文件 | `{content}` → `{path,size}` | 400/401/404/413/503 | 文件存储 | B5-2 | /system/skills |
-| ⬜ | P-B5-17 | DELETE `/skills/{name}/files/{path}` | 删除文件 | — → 204 | 400/401/404/503 | 文件存储 | B5-2 | /system/skills |
-| ⬜ | P-B5-18 | GET `/agents` | Agent 列表 | → `{agents:[]}` | 401/503 | 计划表 agents | B5-3 | /system/agents |
-| ⬜ | P-B5-19 | POST `/agents` | 新建 Agent | `{key,name,model,tools,system_prompt}` → 201 | 400/401/409/503 | 同上 | B5-3 | /system/agents |
-| ⬜ | P-B5-20 | GET `/agents/{key}` | Agent 详情 | — → Agent | 400/401/404/503 | 同上 | B5-3 | /system/agents |
-| ⬜ | P-B5-21 | PATCH `/agents/{key}` | 更新 Agent | 局部字段 → 200 | 400/401/404/503 | 同上 | B5-3 | /system/agents |
-| ⬜ | P-B5-22 | DELETE `/agents/{key}` | 删除 Agent | — → 204 | 400/401/404/409/503 | 同上 | B5-3 | /system/agents |
-| ⬜ | P-B5-23 | POST `/agents/{key}/test` | 试跑 Agent | `{prompt}` → `{ok,output,tokens}` | 400/401/404/502/503 | LLM + 工具注册表 | B5-3 | /system/agents |
-| ⬜ | P-B5-24 | GET `/workspace/files` | 工作目录列表 | `?mission_id=&path=` → `{entries:[]}` | 400/401/404/503 | 沙箱目录 | B5-3 | /workspace |
-| ⬜ | P-B5-25 | GET `/workspace/files/{path}` | 读文件 | → `{path,content}` | 400/401/404/503 | 沙箱/大小限制 | B5-3 | /workspace |
-| ⬜ | P-B5-26 | PUT `/workspace/files/{path}` | 写文件 | `{content}` → `{path,size}` | 400/401/404/413/503 | 同上 | B5-3 | /workspace |
-| ⬜ | P-B5-27 | POST `/workspace/upload` | 上传文件 | multipart → `{path,size}` | 400/401/404/413/503 | 同上 | B5-3 | /workspace |
-| ⬜ | P-B5-28 | DELETE `/workspace/files/{path}` | 删除文件/目录 | — → 204 | 400/401/404/409/503 | 同上 | B5-3 | /workspace |
-| ⬜ | P-B5-29 | GET `/sync/sources` | 数据源列表 | → `{sources:[]}` | 401/503 | 计划表 sync_sources | B5-4 | /sync |
-| ⬜ | P-B5-30 | POST `/sync/sources` | 新建数据源 | `{name,type,config}` → 201 | 400/401/409/503 | 适配器 | B5-4 | /sync |
-| ⬜ | P-B5-31 | GET `/sync/sources/{id}` | 数据源详情 | — → 数据源 | 400/401/404/503 | 同上 | B5-4 | /sync |
-| ⬜ | P-B5-32 | PATCH `/sync/sources/{id}` | 更新数据源 | 局部字段 → 200 | 400/401/404/503 | 同上 | B5-4 | /sync |
-| ⬜ | P-B5-33 | DELETE `/sync/sources/{id}` | 删除数据源 | — → 204 | 400/401/404/503 | 同上 | B5-4 | /sync |
-| ⬜ | P-B5-34 | GET `/sync/projects` | 外部项目列表 | → `{projects:[]}` | 401/503 | 计划表 sync_projects | B5-4 | /sync |
-| ⬜ | P-B5-35 | POST `/sync/projects` | 关联项目 | `{source_id,remote_id,mission_id}` → 201 | 400/401/404/409/503 | 同上 | B5-4 | /sync |
-| ⬜ | P-B5-36 | POST `/sync/run` | 触发同步 | `{source_id,project_id?}` → 202 `{run_id}` | 400/401/404/409/503 | 同步执行器 | B5-4 | /sync |
-| ⬜ | P-B5-37 | GET `/sync/runs` | 同步运行记录 | `?source_id=&limit=` → `{runs:[]}` | 400/401/503 | 计划表 sync_runs | B5-4 | /sync |
-| ⬜ | P-B5-38 | POST `/retests/{id}/run` | 执行复测 | — → 202 `{retest_id,status}` | 400/401/404/409/503 | 复测执行器（新） | B5-5 | 任务详情/复测 |
-| ⬜ | P-B5-39 | GET `/retests/{id}/evidence` | 复测证据列表 | → `{evidence:[]}` | 400/401/404/503 | retests + 证据关联 | B5-5 | 任务详情/复测 |
-| ⬜ | P-B5-40 | GET `/missions/{id}/report?format=` | 报告导出 | `format=markdown/pdf/docx` | 400/401/404/503 | 报告导出器（新） | B5-5 | 报告 |
-| ⬜ | P-B5-41 | GET `/traffic/{id}/export?format=` | 流量导出 | `format=har/pcap` → 附件 | 400/401/404/409/503 | 导出器/抓包能力 | B5-5 | /traffic |
-| ⬜ | P-B5-42 | POST `/traffic/{id}/replay` | 重放请求 | — → 202 `{replayed,approval_id}` | 400/401/404/409/503 | executor/策略/审批 | B5-5 | /traffic |
-| ⬜ | P-B5-43 | DELETE `/missions/{id}/traffic` | 批量清理采集行 | `?keep_evidence=` → `{deleted}` | 400/401/404/409/503 | 批量删除 Store | B5-5 | /traffic |
-| ⬜ | P-B5-44 | GET `/evidence/{id}/audit` | 证据读取审计 | → `{audit:[]}` | 400/401/404/503 | 证据审计表（新） | B5-5 | 证据/流量 |
-| ⬜ | P-B5-45 | POST `/evidence/rotate` | 密钥轮换 | — → `{rotated}` | 400/401/409/503 | 证据密钥轮换（M5.1） | B5-5 | /system/settings |
-| ⬜ | P-B5-46 | GET `/evidence/{id}/export?format=zip` | 导出证据包 | → zip 附件 | 400/401/404/409/503 | 证据导出器 | B5-5 | 证据/报告 |
-| ⬜ | P-B5-47 | POST `/missions/{id}/findings/from-node` | AI 自动写 finding（草案入口） | `{node_id}` → 201 Finding | 400/401/404/409/503 | finding 域 + AI 集成（机制缺口） | B5-5 | 任务详情/发现 |
+已实现 **46 条 feature pattern + 报告多格式扩展**（见 §5 #59–#140；报告 `/missions/{id}/report?format=` 为既有路由扩展，不新增 pattern）：
 
-依赖与风险：B4 主要依赖 `policy_rules`/`approvals` 既有表 + 新日志/通知/设置表；B5 需要新增较多表（迁移 0008+）、MCP 客户端、文件沙箱（路径穿越/大小限制）、同步适配器与复测/导出执行器，建议 B4 稳定后再启动。
+| 分类 | 已实现 | 状态 |
+| --- | --- | --- |
+| MCP | servers CRUD/refresh + tools（7） | ✅（stdio 默认禁用+白名单；失败保留旧工具） |
+| Skills | CRUD/upload/files（10，文件路由 `{path...}`） | ✅（磁盘存储、无 skill_files 表、版本历史 🟡） |
+| Agents | CRUD/test（6） | 🟡 未接入 engine 装配 |
+| Workspace | files/upload（5，`{path...}`） | ✅（路径穿越/符号链接拒绝、大小限制；配额 🟡） |
+| Sync | sources/projects/run/runs（9） | ✅ 基础版（SSRF 三层、默认拒私网；崩溃恢复/保留策略 🟡） |
+| 流量增强 | HAR 导出/重放/任务级清理（3） | ✅（重放绕过策略/审批 🟡 高风险） |
+| 证据增强 | 审计/导出/轮换（3） | 审计/导出 ✅ 部分；轮换返回 501（⬜） |
+| 复测/发现 | run/evidence/from-node（3） | ✅（run 只校验证据，不重跑 exploit；from-node 可能重复 🟡） |
+| 报告 | markdown/html/docx/pdf 扩展 | ✅（PDF 依赖阅读器 CJK 字体；DOCX 最小合法） |
+
+- 迁移：0010 mcp、0011 skills、0012 agents、0013 workspace（空操作）、0014 evidence_access_log、0015 sync（3 表）。
+- 未完成/风险：证据密钥轮换（⬜ 501）、Agents 接入执行（🟡）、通知真实事件推送/SSRF 白名单/config 加密（🟡）、sync 崩溃恢复/保留策略（🟡）、证据审计覆盖不全（🟡）、流量重放绕过策略（🟡）、from-node 并发重复（🟡）、LLM 正文采集/Dashboard 小时趋势（⬜/未排期）。
 
 ## 11. 配置与环境变量
 
@@ -1358,15 +1464,28 @@ HTTP 请求
 - `.env` 已 gitignore；`docker compose` 只透传 compose 文件里引用的变量（当前未透传 update/证据/LLM/policy 等，容器部署需自行补 environment 或挂载 config.json）。
 - 状态目录布局：`$BEACONX_HOME/{jwt.key?} tenants/<id>/{sessions,evidence,traffic} skills/ cache/ selfupdate/`（部分目录尚未使用）。
 
+### 11.6 B4/B5 运行时环境变量（不走 config 结构）
+
+| 变量 | 作用 | 默认/说明 |
+| --- | --- | --- |
+| `BEACONX_SKILLS_DIR` | Skills 磁盘根目录 | 优先于 `<state.dir>/skills`；再缺省 `data/skills`（任务描述口径） |
+| `BEACONX_MCP_ALLOW_STDIO` | 是否允许 stdio MCP 端点 | 默认 false；false 时创建/更新 stdio 端点 400 |
+| `BEACONX_MCP_STDIO_ALLOWLIST` | stdio 命令白名单 | 默认空（不允许任意命令） |
+| `BEACONX_SYNC_ALLOW_PRIVATE` | 是否允许同步访问私网/loopback | 默认 false；SSRF 防护用 |
+| `BEACONX_SYNC_MAX_BYTES` | http_json 同步响应大小上限 | 默认实现值（≤5MB 量级） |
+| `BEACONX_SYNC_TIMEOUT` | http_json 同步请求超时 | 默认 10s 量级 |
+
+> 这些变量由 B4/B5 功能代码直接读取，不属于 `internal/config` 的 29 个配置项；`BEACONX_TEST_PG_DSN` 仅测试使用。
+
 ## 12. 测试 / CI / 发布
 
-### 12.1 测试分层（20 个测试包）
+### 12.1 测试分层（20 个测试包；B4/B5 测试在各 handler 包内）
 
 | 层 | 包 | 内容 | 需要 PostgreSQL |
 | --- | --- | --- | --- |
 | 领域（纯函数） | `domain/asset`、`domain/graph`、`domain/task`、`domain/plan`、`domain/policy`、`domain/finding` | 归一化、枚举/校验、状态机穷举、依赖/环、策略匹配、发现/复测迁移矩阵 | 否 |
 | 配置/平台 | `config`、`platform`、`tenant`（无测试）、`logging`（无测试） | 默认值/环境变量/校验、目录权限 | 否 |
-| HTTP | `httpapi` | 路由/鉴权/健康、任务 API 集成、审批、证据、SSE、B1 企业/资产集成、B2 范围/计划/图/发现/复测/报告、B3 流量/命令/LLM/用量/Dashboard、docs-check | 部分 |
+| HTTP | `httpapi` | 路由/鉴权/健康、任务/审批/证据/SSE、B1–B3、B4/B5 feature 路由（140 总）、docs-check | 部分 |
 | 存储 | `infra/pg` | 资产 upsert/隔离/覆盖度、性能（`BEACONX_PERF=1`） | 是 |
 | AI/执行 | `app/ai`、`app/executor`、`app/tools`、`app/evidence` | 假 LLM 端到端、工具循环、策略/审批/证据采集、加密/签名/篡改 | 部分是 |
 | 运行时 | `app/runner` | 完成/暂停恢复/恢复对账/删除/并发上限/预算暂停 | 是 |
@@ -1420,9 +1539,9 @@ make docs-check
 | 无浏览器级 e2e、无 URL 路由、无 CORS | 前端交付/多源部署 | §8、M6.1 |
 | 发布包文件名与 selfupdate 解压不匹配；无签名；Windows 自更新未验证 | 自更新可用性/供应链 | §7.8、§12.4 |
 | `beaconx help` 未列新变量；compose 未透传新变量 | 部署一致性 | §11.5 |
-| 无规则 CRUD、跨任务发现列表、流量导出/命令重放、LLM 请求/响应正文记录、趋势按小时 | 前端剩余页面（B4/B5）不可做 | §9、§10 |
-| AI 自动写 finding、复测执行器、图大集合分页、报告导出 PDF/Word 未实现 | B2 只到“人工 API 基础版” | §7.9、§10 |
-| 纯文本输出未脱敏、MITM/真实流量未实现、证据密钥不支持轮换 | 证据/安全边界 | §6.8、M5.1 |
+| LLM 请求/响应正文采集、Dashboard 小时趋势/活动流、跨任务发现独立详情聚合 | 少量前端增强不可做 | §5.6.3、§9 |
+| from-node 并发去重、大图 after_id 分页、报告图片/字体嵌入、sync 崩溃恢复 | B4/B5 部分实现/风险 | §5.6.3、§10 |
+| 纯文本输出未脱敏、MITM/真实流量未实现、证据密钥轮换返回 501、审计埋点不全、流量重放绕过策略 | 证据/安全边界 | §6.8、§6.13、evidence.md |
 | LLM 规划诊断事件（planner_*）前端未登记 | 前端看不到诊断事件 | §8.2 |
 
 ## 13. 一致性检查清单
@@ -1467,4 +1586,5 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 2026-10-21 | 提交 38aaeb4（M6.2-B1） | 实现 M6.2-B1：企业/资产/范围/覆盖率/任务资产 API（18 条，总路由 39 条） | §1、§3、§5、§6、§8、§9、§10、§14 |
 | 2026-10-21 | `ad4f3db` | 实现 M6.2-B2：B2a 任务范围/计划/作战图/节点 7 条 + B2b 发现/证据/复测/报告 13 条（共 20 条，总路由 39→59）；新增迁移 0007 三表与 `internal/domain/finding` 状态机 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-21 | `e08401b` | 实现 M6.2-B3：流量列表/详情/正文/删除 5 条 + 命令历史 2 条 + LLM 记录/任务用量/用量聚合 3 条 + Dashboard 1 条（共 11 条，总路由 59→70）；无新迁移；`spent_total`/`today` 口径与 DB 时区说明 | §1、§3、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
+| 2026-10-22 | 本次提交（工作区） | B4+B5 最终文档同步：已实现 140 条（基础 70 + feature 70）；补 0008–0015 共 11 表、B4 24 条 + B5 46 条 pattern、报告多格式扩展、§5.6 状态与实际偏差；OpenAPI 1.0.0 / README / data-model / runtime / evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-21 | 本次提交 | 文档补全计划接口与三态标注（未实现，供前端设计）：新增 ✅/🟡/⬜ 图例；§5.2 已实现路由加状态列；§5.6 新增 73 条计划接口草案（B4 26 + B5 47）与 B1/B2/B3 缺口索引；§9 改为三态映射 + 可用性结论 + 21 项前端页面拆分；§10 B4/B5 改为计划明细表；data-model 增加计划表标注 | §1、§5、§9、§10、§14 |

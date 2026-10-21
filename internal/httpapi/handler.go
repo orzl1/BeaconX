@@ -192,11 +192,22 @@ func NewHandler(opts Options) (http.Handler, error) {
 		}
 		mux.Handle(rt.Method+" "+rt.Pattern, opts.withAuth(rt, handler))
 	}
+	// 功能模块自行注册的路由（B4/B5 等）复用同一套鉴权与兜底逻辑。
+	for _, fr := range featureRouteList() {
+		handler := fr.Build(opts)
+		if handler == nil {
+			return nil, errors.New("feature 路由工厂返回空处理器: " + fr.Method + " " + fr.Pattern)
+		}
+		mux.Handle(fr.Method+" "+fr.Pattern, opts.withAuth(Route{
+			Method: fr.Method, Pattern: fr.Pattern, Summary: fr.Summary, Public: fr.Public,
+		}, HandlerFunc(handler)))
+	}
 	// 未嵌入前端时，未匹配的路径也要返回 JSON 错误信封，否则默认的纯文本
 	// "404 page not found" 会让客户端无法统一解析。这里把兜底路由放在最后
 	// 注册，保证更具体的路径优先命中。
 	if opts.WebUI == nil {
-		mux.Handle("/", newFallbackHandler(Routes()))
+		all := append(append([]Route(nil), Routes()...), featureRouteSpecs()...)
+		mux.Handle("/", newFallbackHandler(all))
 	}
 
 	var h http.Handler = mux

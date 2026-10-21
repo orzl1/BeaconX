@@ -14,7 +14,8 @@ func TestProjectMapDocumentsAllRoutes(t *testing.T) {
 		t.Fatalf("读取 docs/project-map.md 失败（唯一真源文档必须存在）: %v", err)
 	}
 	doc := string(raw)
-	for _, rt := range Routes() {
+	all := append(append([]Route(nil), Routes()...), featureRouteSpecs()...)
+	for _, rt := range all {
 		if !strings.Contains(doc, rt.Pattern) {
 			t.Errorf("docs/project-map.md 未记录路由 %s %s；请同步更新唯一真源文档", rt.Method, rt.Pattern)
 		}

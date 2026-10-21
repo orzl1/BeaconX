@@ -25,7 +25,8 @@ func New(cfg config.Log) (*slog.Logger, error) {
 	default:
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
-	return slog.New(handler), nil
+	// 原样输出到原目标的同时写入进程级环形缓冲，供 /api/v1/logs 与日志 SSE 读取。
+	return slog.New(newTeeHandler(handler, Buffer())), nil
 }
 
 func parseLevel(s string) (slog.Level, error) {

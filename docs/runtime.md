@@ -143,3 +143,15 @@ M2 验收标准：kill -9 后无永久 `running`；暂停/恢复/删除可用；
 export GOCACHE=$PWD/.cache/gocache GOMODCACHE=$PWD/.cache/gomodcache GOTMPDIR=$PWD/.cache/tmp GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct GOSUMDB=off
 BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=disable' go test -count=1 ./...
 ```
+
+## 10. B4/B5 扩展与风险（M6.2-B4/B5）
+
+- **模块位置**：策略/审批/设置/日志/通知/资产补全在 `internal/httpapi/{policy_api,settings_api,logs_api,notifications_api,assets_extra}.go`；MCP/Skills/Agents/Workspace/Sync/报告/流量/证据增强在 `{mcp_api,skills_api,agents_api,workspace_api,sync_api,traffic_extra,evidence_extra,report_extra,retest_extra}.go`；领域/存储见 `internal/app/{mcp,report,syncdata,workspace}` 与 `internal/infra/pg/store_*`。
+- **日志**：进程级环形缓冲（2000）由 `internal/logging` 提供，SSE 先订阅后写头、20s 心跳、慢订阅丢帧；无跨进程聚合/after_id。
+- **设置**：`settings` 表持久化 + 可读，**runner/executor 仍读启动 config，未热生效（🟡）**。
+- **通知**：webhook 真实 POST、email/generic 记 skipped；无真实事件触发、无出站 URL 白名单、config 明文（🟡）。
+- **文件沙箱**：Skills/Workspace 用状态目录 + 路径 Clean/前缀校验/符号链接拒绝 + 大小限制；非空目录删除需 recursive。
+- **Sync**：异步运行 ≤60s、manual/http_json、SSRF 三层校验默认拒私网、逐条容错 skipped；无崩溃恢复/保留策略（🟡）。
+- **流量重放（高风险 🟡）**：`POST /traffic/{id}/replay` 直接调用 http_probe，**绕过 executor 的政策门/审批**，仅受 Bearer+租户+http_probe 限制；接入前不应开放给普通使用。
+- **证据**：`GET /evidence/{id}/audit` 只覆盖部分动作；`POST /evidence/rotate` 返回 501（无 key-id，无法安全重写）；正文读取/verify 未全量埋点（🟡）。
+- **Agents**：仅定义 CRUD/test，**未接入 engine 装配（🟡）**；test 不调用 LLM，未知工具以 200+warnings 返回。

@@ -1,8 +1,8 @@
-# 数据模型（M1–M6.2）
+# 数据模型（M1–M6.2-B5）
 
-本文描述 BeaconX M1–M6.2 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）。
+本文描述 BeaconX M1–M6.2-B5 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）、B4/B5 的设置/通知/MCP/Skills/Agents/证据审计/Sync（0008–0015）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0007_findings.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0015_sync.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -38,6 +38,17 @@
 | 0007 | `findings` | 任务发现（严重级别、处置状态、可选资产/节点关联） |
 | 0007 | `finding_evidence` | 发现 ↔ 证据快照的绑定（多对多） |
 | 0007 | `retests` | 复测请求与结果（pending → running → 终态） |
+| 0008 | `settings` | 租户级运行时设置（点号键 + JSONB） |
+| 0009 | `notification_channels` | 通知渠道（webhook/email/generic） |
+| 0009 | `notification_deliveries` | 通知投递事实台账 |
+| 0010 | `mcp_servers` | MCP 端点（http/stdio） |
+| 0010 | `mcp_tools` | 刷新发现到的 MCP 工具 |
+| 0011 | `skills` | 技能元数据（正文在磁盘） |
+| 0012 | `agents` | Agent 定义（role/tools/prompt） |
+| 0014 | `evidence_access_log` | 证据读取/校验/导出审计 |
+| 0015 | `sync_sources` | 同步数据源（manual/http_json） |
+| 0015 | `sync_projects` | 外部项目（幂等 upsert） |
+| 0015 | `sync_runs` | 同步运行记录（pending→running→终态） |
 
 ### 2.1 租户根表（0001）
 
@@ -68,7 +79,7 @@
 
 ### 2.6 索引与触发器
 
-所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings` 六张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 `idx_findings_mission`、`idx_findings_asset`（部分索引）、`idx_finding_evidence_snapshot`、`idx_retests_mission` 四个索引。
+所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引（合计 37 个）。
 
 ### 2.7 运行时变更（0003）
 
@@ -125,6 +136,28 @@
 | Workspace | 不新增表，使用状态目录沙箱文件 | P-B5-24..28 |
 
 > 计划表的字段/索引/约束在实现时确定；当前 API 与数据库均**没有**这些表。
+
+### 2.13 B4/B5 新增表（0008–0015）
+
+| 迁移 | 表 | 关键列 / 约束 / 索引 | 说明 |
+| --- | --- | --- | --- |
+| 0008 | `settings` | PK(tenant,key)；`value JSONB`；`updated_at` 触发器；FK tenants CASCADE | 运行时设置；只持久化+可读，运行时未热生效（🟡） |
+| 0009 | `notification_channels` | PK(tenant,id)；UNIQUE(tenant,name)；`type` CHECK webhook/email/generic；`config JSONB`；索引 + 触发器 | 通知渠道；webhook 真发、email/generic 测试 skipped |
+| 0009 | `notification_deliveries` | PK(tenant,id)；FK channel CASCADE；`status` CHECK pending/sent/failed/skipped；2 索引 | 投递事实（只追加） |
+| 0010 | `mcp_servers` | PK(tenant,id)；UNIQUE(tenant,name)；`transport` CHECK http/stdio；`args/env/headers JSONB`；`last_status` CHECK unknown/ok/error；索引 + 触发器 | env/headers 响应掩码、stdio 默认禁用 |
+| 0010 | `mcp_tools` | PK(tenant,id)；UNIQUE(tenant,server,name)；FK server CASCADE；`input_schema JSONB`；索引 server | 刷新时整体替换 |
+| 0011 | `skills` | PK(tenant,name)；`file_count>=0`；`version` 展示用；索引 + 触发器 | 正文在 `<state>/skills/<tenant>/<name>/`；无 skill_files 表 |
+| 0012 | `agents` | PK(tenant,id)；UNIQUE(tenant,key)；`key` 正则 CHECK；`role` CHECK planner/worker/retester/main；`tools JSONB array`；索引 + 触发器 | 定义 CRUD；**未接入 engine（🟡）** |
+| 0013 | 无表 | 空操作 `SELECT 1` | 工作区以文件系统为准；仅记录迁移版本 |
+| 0014 | `evidence_access_log` | PK(tenant,id)；FK snapshot CASCADE；`action` CHECK read/verify/export；索引 snapshot/time | 证据审计；当前仅部分动作埋点（🟡） |
+| 0015 | `sync_sources` | PK(tenant,id)；UNIQUE(tenant,name)；`type` CHECK manual/http_json；`config JSONB`；索引 + 触发器 | SSRF 三层防护、默认拒私网 |
+| 0015 | `sync_projects` | PK(tenant,id)；UNIQUE(tenant,source,external_id)；`data JSONB`；FK source CASCADE；索引 + 触发器 | 幂等 upsert |
+| 0015 | `sync_runs` | PK(tenant,id)；`status` CHECK pending/running/succeeded/failed；`stats JSONB`；source/status 索引；`project_id` 无 FK（应用层校验） | 运行记录只追加 |
+
+- **资产/节点为什么不做复合 FK**（沿用 findings）：`ON DELETE SET NULL` 会把复合键的 `tenant_id` 置空，违反 `NOT NULL`；`findings.asset_id/node_id`、`sync_runs.project_id` 等由应用层校验同租户/同任务。
+- **文件沙箱**：Skills/Workspace 不建文件表，正文在状态目录；路径 Clean+前缀校验、拒绝符号链接/穿越、大小限制（Skills zip≤10MB/≤200 文件；Workspace 单文件≤1MB、上传≤10MB）。
+- **SSRF**：Sync 保存/解析/拨号三层校验，默认拒绝 loopback/私网；仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开。
+- 0008–0015 共新增 11 张表（0013 空操作）；索引共 37 个、`updated_at` 触发器共 13 个。
 
 ## 3. 资产身份与归一化
 

@@ -33,6 +33,8 @@ type findingPatchRequest struct {
 	Severity *string         `json:"severity"`
 	Detail   *string         `json:"detail"`
 	AssetID  json.RawMessage `json:"asset_id"`
+	// NodeID 与 asset_id 同构：缺省=不变；null=清空；正整数=设置为该节点。
+	NodeID json.RawMessage `json:"node_id"`
 }
 
 // findingStatusRequest 是发现状态迁移的请求体。
@@ -86,8 +88,13 @@ func (o Options) handleListFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	findings, err := o.Store.ListFindings(r.Context(), o.TenantID, missionID,
-		q.Get("severity"), q.Get("status"), listLimitParam(r))
+	afterID, ok := parseAfterID(w, r)
+	if !ok {
+		return
+	}
+	limit := listLimitParam(r)
+	findings, err := o.Store.ListFindingsPage(r.Context(), o.TenantID, missionID,
+		q.Get("severity"), q.Get("status"), afterID, limit)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
@@ -95,7 +102,15 @@ func (o Options) handleListFindings(w http.ResponseWriter, r *http.Request) {
 	if findings == nil {
 		findings = []pg.Finding{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"findings": findings})
+	// 发现按 id 倒序（新的在前），next_after_id 即本页最后一条的 id。
+	var lastID int64
+	if len(findings) > 0 {
+		lastID = findings[len(findings)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"findings":      findings,
+		"next_after_id": cursorNext(len(findings), limit, lastID),
+	})
 }
 
 // handleCreateFinding 在任务下创建发现（初始状态 open）。
@@ -182,7 +197,23 @@ func (o Options) handleUpdateFinding(w http.ResponseWriter, r *http.Request) {
 			in.AssetID = &assetID
 		}
 	}
-	updated, err := o.Store.UpdateFinding(r.Context(), o.TenantID, findingID, in)
+	// node_id 三态：缺省不变、null 清空、数字设置（节点必须属于同一任务）。
+	node := pg.FindingNodePatch{}
+	if len(req.NodeID) > 0 {
+		raw := bytes.TrimSpace(req.NodeID)
+		if bytes.Equal(raw, []byte("null")) {
+			node.Clear = true
+		} else {
+			var nodeID int64
+			if err := json.Unmarshal(raw, &nodeID); err != nil || nodeID <= 0 {
+				writeError(w, r, http.StatusBadRequest, "bad_request", "node_id 必须为正整数或 null")
+				return
+			}
+			node.Set = true
+			node.NodeID = &nodeID
+		}
+	}
+	updated, err := o.Store.PatchFinding(r.Context(), o.TenantID, findingID, in, node)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
