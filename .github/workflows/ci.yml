@@ -46,6 +46,24 @@ jobs:
       - name: 覆盖率汇总
         run: go tool cover -func=coverage.out | tail -1
 
+  # Windows 不是 v1 的正式支持目标，但 MCP stdio 在 Windows 上被平台级拒绝
+  # （mcp.StdioSupported()=false → HTTP 400 / ErrStdioUnsupported）。这个 job
+  # 只跑与平台强相关的两个包，验证「Windows 上仍可编译、stdio 拒绝分支正确、
+  # 其余用例通过」，避免每次靠人工确认。
+  windows-test:
+    name: Windows 单元测试（MCP/LLM）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: MCP 客户端测试（含 Windows stdio 拒绝）
+        run: go test -count=1 -v ./internal/app/mcp/
+      - name: LLM 客户端测试
+        run: go test -count=1 -v ./internal/infra/llm/
+
   integration:
     name: 集成测试
     runs-on: ubuntu-latest

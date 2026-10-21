@@ -6,7 +6,7 @@
 2. 配置文件（`BEACONX_CONFIG`，默认 `./config.json`；不存在则跳过）
 3. 环境变量（`BEACONX_*`，逐项覆盖）
 
-配置在启动时解析一次；业务配置（Agent、模型、策略、推送等）存放在数据库，通过 UI 修改，不需要重启。
+配置在启动时解析一次（其中 settings 表参数由启动流程加载）；业务配置（Agent、模型、策略、推送等）存放在数据库，通过 UI 修改；settings 的 PATCH 即时热生效，其余启动配置仍需重启。
 
 ## 配置文件
 
@@ -109,6 +109,28 @@
 
 环境变量值为空时视为未设置，不会覆盖配置文件或默认值。
 
+### 仅环境变量（未进 config 结构）
+
+以下变量由对应功能代码直接读取，**没有** config 字段；配置文件里写了也不会生效：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `BEACONX_LLM_CAPTURE` | `true` | 是否采集 LLM 请求/响应正文（写 llm_exchanges） |
+| `BEACONX_LLM_RETENTION_DAYS` | `7` | llm_exchanges 正文保留天数；0=不清理；不动 llm_usage |
+| `BEACONX_NOTIFY_ALLOW_PRIVATE` | `false` | 通知 webhook 是否允许私网/loopback（SSRF 防护） |
+| `BEACONX_SYNC_ALLOW_PRIVATE` | `false` | Sync 是否允许私网/loopback |
+| `BEACONX_SYNC_RETENTION_DAYS` | `30` | sync 终态记录保留天数；0=不清理 |
+| `BEACONX_SYNC_TIMEOUT` | 实现默认（10s 量级） | http_json 同步请求超时 |
+| `BEACONX_SYNC_MAX_BYTES` | 实现默认（5MB 量级） | http_json 同步响应大小上限 |
+| `BEACONX_SKILLS_DIR` | `<state.dir>/skills` | Skills 磁盘根目录 |
+| `BEACONX_SKILLS_KEEP_VERSIONS` | `5` | Skills 版本快照保留数；1..50，非法回退 |
+| `BEACONX_MCP_ALLOW_STDIO` | `false` | 是否允许 stdio MCP |
+| `BEACONX_MCP_STDIO_ALLOWLIST` | 空 | stdio 命令白名单 |
+| `BEACONX_MCP_STDIO_DIR` | 空 | stdio 命令白名单目录 |
+| `BEACONX_WORKSPACE_QUOTA_MB` | `100` | Workspace 每任务配额（MB）；<=0/非法回默认 |
+
+`BEACONX_TEST_PG_DSN` 仅测试使用，不属于运行时配置。
+
 启动时会校验配置；非法值直接退出并给出一条可读错误，不做静默降级。
 
 ## 任务运行时
@@ -159,7 +181,7 @@
 
 - `dir`：证据根目录，默认 `<state.dir>/tenants/<tenant_id>/evidence`；目录以 0700、blob 文件以 0600 创建。
 - `key_hex`：64 位十六进制（32 字节）主密钥；为空时读取或生成 `<state.dir>/evidence.key`（0600）。格式非法会在启动校验阶段失败；密钥不会打印到日志。
-- **密钥轮换暂不支持**（M5.1）：更换密钥会让存量 blob 无法解密、快照验签失败（表现为 tampered）。
+- **密钥轮换**：B7/B8 已支持 `POST /evidence/rotate`（写锁重加密+全租户重签+通知配置重加密）；新密钥不落盘，需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；轮换存在极窄窗口，操作前备份 PG+证据目录。
 
 ## 自更新
 

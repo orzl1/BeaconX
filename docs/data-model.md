@@ -1,8 +1,8 @@
-# 数据模型（M1–M6.2-B7）
+# 数据模型（M1–M6.2-B8）
 
 本文描述 BeaconX M1–M6.2-B6 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）、B4/B5 的设置/通知/MCP/Skills/Agents/证据审计/Sync（0008–0015）、B6 的发现节点唯一索引（0016）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0017_llm_exchanges.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0019_evidence_audit_actions.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -51,6 +51,8 @@
 | 0015 | `sync_runs` | 同步运行记录（pending→running→终态） |
 | 0016 | 索引 `uq_findings_node` | 同一作战图节点最多一条发现（node_id IS NOT NULL 部分唯一） |
 | 0017 | `llm_exchanges` | LLM 请求/响应正文（脱敏/截断/token/字节数） |
+| 0018 | `notification_events` | 通知事件推送幂等台账（event+channel 唯一） |
+| 0019 | 约束扩展 | `evidence_access_log.action` 增加 create/rotate（无新表） |
 
 ### 2.1 租户根表（0001）
 
@@ -81,7 +83,7 @@
 
 ### 2.6 索引与触发器
 
-所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引，0016 新增 1 个部分唯一索引，0017 新增 2 个索引（合计 40 个）。
+所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引，0016 新增 1 个部分唯一索引，0017 新增 2 个索引，0018 新增 2 个索引（合计 42 个）。
 
 ### 2.7 运行时变更（0003）
 
@@ -160,7 +162,7 @@
 - **文件沙箱**：Skills/Workspace 不建文件表，正文在状态目录；路径 Clean+前缀校验、拒绝符号链接/穿越、大小限制（Skills zip≤10MB/≤200 文件；Workspace 单文件≤1MB、上传≤10MB、默认总配额 100MB，超限 413 quota_exceeded）。
 - **Skills 版本**：快照在技能目录 `.versions/<timestamp>/`，保留最近 5 份；`.versions` 对文件列表/文件接口隐藏（直接访问 400）；快照含 meta.json，restore 同时回滚文件与 description/version（旧快照无 meta 给 warning）。
 - **SSRF**：Sync 保存/解析/拨号三层校验，默认拒绝 loopback/私网；仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开。
-- 0008–0015 共新增 11 张表（0013 空操作）；索引共 40 个（0016 追加 `uq_findings_node`，0017 追加 llm_exchanges 两索引）、`updated_at` 触发器共 13 个。
+- 0008–0015 共新增 11 张表（0013 空操作）；索引共 42 个（0016 `uq_findings_node`、0017 llm_exchanges 两索引、0018 notification_events 两索引）、`updated_at` 触发器共 13 个。
 
 ### 2.14 LLM 正文采集（0017 `llm_exchanges`）
 
@@ -179,6 +181,17 @@
 
 - 单条正文 64KB（UTF-8 安全截断）；采集开关 `BEACONX_LLM_CAPTURE`（默认 true）；写失败 Warn 不阻塞主流程。
 - 敏感数据：只存脱敏后内容；未采集 tools 定义/原始 HTTP；**保留期清理未实现（🟡）**，当前依赖任务级联删除。
+
+### 2.15 B8 新表与审计扩展（0018/0019）
+
+| 迁移 | 对象 | 关键列/约束 | 说明 |
+| --- | --- | --- | --- |
+| 0018 | `notification_events` | PK(tenant,id)；UNIQUE(tenant,event_id,channel_id)；FK channel/tenant CASCADE；索引 (tenant,event_id)、(tenant,channel_id,id DESC) | 事件推送幂等台账：dispatcher 先 INSERT ON CONFLICT 占位，再发送并回填 delivery_id；at-most-once；停机不补推 |
+| 0019 | `evidence_access_log.action` CHECK | read/verify/export/create/rotate | B8 补 create（快照创建）与 rotate（每条重签）埋点；export 失败不记 |
+
+- `notification_events.event_id` 引用 `mission_events.id`，不建复合外键（事件/渠道删除由租户级联清理；保留外键会引入级联顺序问题）。
+- 通知 config 敏感键用证据派生密钥加密后存为 `{__enc,payload,url}`，DB 无明文；旧明文读取时 best-effort 迁移。
+- 启动维护：llm_exchanges 按 `BEACONX_LLM_RETENTION_DAYS`（默认 7）清理；sync pending/running >15min → failed；终态按 `BEACONX_SYNC_RETENTION_DAYS` 保留。
 
 ## 3. 资产身份与归一化
 

@@ -11,7 +11,7 @@
 
 - **[docs/project-map.md](docs/project-map.md) 是项目代码功能结构的唯一真源**：代码地图、数据模型、API 全表、状态机、运行时机制、配置、前端对接指南与缺口路线。
 - **任何改动都必须同步更新它**（对应章节 + 文末「变更记录」），并在提交前运行 `make docs-check`；规则见 [AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- 文档当前含：**已实现 146 条 API（基础 70 + feature 76；✅）**，以及 B4–B7 的 🟡 缺口标注（通知事件推送/凭据加密、Agents 执行接入、LLM 采集保留期、MCP Windows CI、报告字体/图片等）。
+- 文档当前含：**已实现 146 条 API（基础 70 + feature 76；✅）**；B8 清理后的剩余项统一列在「已知设计限制」（PDF 字体/图片、edges 5000、at-most-once、rotate 窗口、Agents 选择/热更新等）。
 - 前端设计请以该文档的「API 全表」「前端对接指南」「原版页面映射与缺口」三章为依据。
 
 ## 快速开始
@@ -111,7 +111,7 @@ make docker-build  # 构建含前端的镜像
 
 token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
 
-## HTTP 接口（M6.2-B4/B5/B6/B7）
+## HTTP 接口（M6.2-B4/B5/B6/B7/B8）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -360,6 +360,7 @@ docs/                   项目真源（project-map）、术语、配置、路线
 - **高风险能力**：流量重放已改走 executor（策略门/审批/审计/证据采集）；证据密钥轮换已实现但**存量快照签名会失效**，需离线重签；报告 PDF 依赖阅读器 CJK 字体。
 - **B6 硬化**：证据轮换需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；Workspace 默认 100MB 配额（`BEACONX_WORKSPACE_QUOTA_MB`）；MCP stdio 默认禁用、命令白名单/`BEACONX_MCP_STDIO_DIR`；Skills 版本保留最近 5 份；B7 起 restore 同时回滚 files+meta（旧快照给 warning）。
 - **B7 收口**：settings PATCH 即时热生效（运行中任务预算不回溯）；证据轮换后自动重签快照（短暂 Verify 409 窗口）；LLM 正文按 6 个调用点采集、脱敏+64KB 截断，`BEACONX_LLM_CAPTURE` 默认 true；通知 webhook 默认拒私网、`BEACONX_NOTIFY_ALLOW_PRIVATE` 可放开；sync 终态按 `BEACONX_SYNC_RETENTION_DAYS` 清理；workspace 配额用 pg advisory lock 跨进程。
+- **B8 收口**：通知敏感 config 加密存储（响应掩码）、后台事件推送 at-most-once（停机不补推）；证据审计补 create/rotate；rotate 全租户重签并重加密通知配置；启动维护按 `BEACONX_LLM_RETENTION_DAYS`（默认 7）清理 LLM 正文、sync pending>15min→failed；Agents 接入 Planner/Worker；graph 过滤下推（edges 仍 5000 上限）；Skills 保留数 `BEACONX_SKILLS_KEEP_VERSIONS`。
 - **品牌门禁**：`scripts/check-brand.sh` 在 CI 中阻止第三方项目标识进入代码、依赖与二进制。
 
 ## 文档

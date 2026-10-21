@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 1.2.0
+  version: 1.2.1
   description: |
     BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
     流量采集与证据校验、自更新、SSE 事件流；M6.2 已补齐 B1–B5：企业/资产/任务资产/
     覆盖率、任务范围/计划/作战图、发现/复测/报告、流量/命令/LLM/用量/Dashboard，以及
-    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强，以及 B6 的活动流、技能版本、重放策略门、证据轮换、graph after_id、Dashboard hourly 与 stdio/配额硬化，B7 的 LLM 正文采集/查看与 settings 热生效、轮换重签、通知 SSRF 硬化。
+    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强，以及 B6 的活动流、技能版本、重放策略门、证据轮换、graph after_id、Dashboard hourly 与 stdio/配额硬化，B7 的 LLM 正文采集/查看与 settings 热生效、轮换重签、通知 SSRF 硬化，B8 的通知加密/推送、全租户重签、Agents 接入、graph 过滤下推。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -55,7 +55,7 @@ tags:
   - name: skills
     description: 技能包与文件（需要令牌）
   - name: agents
-    description: Agent 定义（🟡 未接入运行时装配）
+    description: Agent 定义（B8 已接入 Planner/Worker 运行时）
   - name: workspace
     description: 任务工作区文件（需要令牌）
   - name: sync
@@ -1118,7 +1118,7 @@ paths:
       description: |
         一次性返回任务的节点、边与锚点；`kind`/`state` 过滤只作用于节点
         （边与锚点返回该任务全量，按 id 排序）。非法 kind/state 返回 400；
-        limit 缺省 500、上限 2000；支持 `after_id`/`next_after_id`（节点升序 id>）；空数组返回 `[]`。任务不存在返回 404。
+        limit 缺省 500、上限 2000；B8 起 kind/state/after_id/limit 下推到 SQL，删除 1000 截断；edges/anchors 仍全量（edges 5000 上限）。任务不存在返回 404。
       operationId: getMissionGraph
       responses:
         "200":
@@ -2046,8 +2046,9 @@ paths:
       summary: 证据密钥轮换
       description: |
         用新主密钥重新加密全部证据 blob（写锁、逐文件、失败 best-effort 回滚），
-        成功后遍历租户全部快照用新 key 重签，返回 {rotated,resigned}。重签中断返回
-        500 rotate_resign_failed + 已完成数；存在短暂 Verify 409 窗口（🟡）。
+        成功后遍历**全部租户**快照用新 key 重签，并重加密通知渠道 config，返回
+        {rotated,resigned}。重签中断返回 500 rotate_resign_failed + 已完成数；
+        极窄窗口下新建通知渠道可能遗漏，需重跑 rotate。
       operationId: rotateEvidence
       requestBody:
         required: true
@@ -3867,6 +3868,7 @@ components:
           enum: [executed, tool_error, denied_by_rule, rejected_by_user, approval_unavailable]
         detail:
           type: string
+          description: 目标响应片段，已脱敏≤512B
           description: 结果摘要或错误说明（可能被截断）。
         actor:
           type: string
@@ -5098,7 +5100,7 @@ components:
           type: integer
         action:
           type: string
-          description: read/verify/export
+          description: read/verify/export/create/rotate（B8 扩展）
         actor:
           type: string
         created_at:
@@ -5344,6 +5346,7 @@ components:
         config:
           type: object
           additionalProperties: true
+          description: 敏感键加密存储为 {__enc,payload,url}；响应仍掩码（B8）
         enabled:
           type: boolean
         created_at:
@@ -5895,6 +5898,9 @@ components:
         size:
           type: integer
           format: int64
+        has_meta:
+          type: boolean
+          description: 快照是否含 meta.json（restore 可回滚 description/version）
     SkillVersionList:
       type: object
       required: [versions]

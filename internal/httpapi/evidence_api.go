@@ -68,6 +68,9 @@ func (o Options) handleCreateEvidence(w http.ResponseWriter, r *http.Request) {
 		writeMissionError(w, r, err)
 		return
 	}
+	// B8：冻结证据快照也属于证据访问（action=create），best-effort 记审计；
+	// 写入失败不改变创建结果，避免审计可用性影响证据冻结。
+	o.logEvidenceAccess(r, snap.ID, "create", "user")
 	writeJSON(w, http.StatusCreated, snap)
 }
 

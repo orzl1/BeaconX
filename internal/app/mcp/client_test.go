@@ -145,7 +145,11 @@ func TestDiscoverURLValidation(t *testing.T) {
 }
 
 // TestDiscoverStdioDisabled 覆盖 stdio 默认禁用。
+//
+// Windows 上平台级拒绝先于开关检查（ErrStdioUnsupported），因此本用例仅
+// 在支持 stdio 的平台运行；Windows 分支由 TestStdioUnsupportedOnWindows 覆盖。
 func TestDiscoverStdioDisabled(t *testing.T) {
+	skipOnWindows(t)
 	_, err := Discover(context.Background(), Server{Name: "std", Transport: TransportStdio, Command: "echo"}, Options{})
 	if !errors.Is(err, ErrStdioDisabled) {
 		t.Fatalf("期望 ErrStdioDisabled，实际: %v", err)
@@ -153,7 +157,10 @@ func TestDiscoverStdioDisabled(t *testing.T) {
 }
 
 // TestDiscoverStdioAllowlist 覆盖命令白名单拒绝（不执行进程）。
+//
+// 同上：Windows 会先返回 ErrStdioUnsupported，跳过本用例。
 func TestDiscoverStdioAllowlist(t *testing.T) {
+	skipOnWindows(t)
 	_, err := Discover(context.Background(), Server{Name: "std", Transport: TransportStdio, Command: "echo"}, Options{
 		AllowStdio:     true,
 		StdioAllowlist: []string{"/usr/local/bin/other"},

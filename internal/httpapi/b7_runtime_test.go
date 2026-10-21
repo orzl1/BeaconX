@@ -150,8 +150,10 @@ func TestB7RotateResignsSnapshots(t *testing.T) {
 		Resigned int `json:"resigned"`
 	}
 	b5trafficDecodeInto(t, rec, &result)
-	if result.Rotated < 2 || result.Resigned != 2 {
-		t.Fatalf("轮换结果 = %+v，期望 rotated>=2 resigned=2", result)
+	// B8 起重签覆盖全部租户，共享测试库里可能还有其它租户的快照，只断言
+	// 至少包含本测试的两条。
+	if result.Rotated < 2 || result.Resigned < 2 {
+		t.Fatalf("轮换结果 = %+v，期望 rotated>=2 resigned>=2", result)
 	}
 
 	// 签名列必须变化，并且 Verify 全部通过（新密钥重签成功）。

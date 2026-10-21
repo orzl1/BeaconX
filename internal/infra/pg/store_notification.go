@@ -386,3 +386,157 @@ func (s *Store) ListNotificationDeliveries(ctx context.Context, tenantID, channe
 	}
 	return out, nil
 }
+
+// ---------- 事件推送（B8） ----------
+
+// NotificationEvent 是「某事件已投递给某渠道」的幂等台账行。
+type NotificationEvent struct {
+	TenantID   int64     `json:"tenant_id"`
+	ID         int64     `json:"id"`
+	EventID    int64     `json:"event_id"`
+	ChannelID  int64     `json:"channel_id"`
+	DeliveryID *int64    `json:"delivery_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// MaxMissionEventID 返回当前最大任务事件 id（dispatcher 首次启动的起点）。
+func (s *Store) MaxMissionEventID(ctx context.Context) (int64, error) {
+	var id int64
+	if err := s.db.pool.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM mission_events`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("读取任务事件游标失败: %w", err)
+	}
+	return id, nil
+}
+
+// LatestNotificationEventCursor 返回已处理的最大事件 id；没有台账时返回 0。
+func (s *Store) LatestNotificationEventCursor(ctx context.Context) (int64, error) {
+	var id int64
+	if err := s.db.pool.QueryRow(ctx,
+		`SELECT COALESCE(MAX(event_id), 0) FROM notification_events`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("读取通知事件游标失败: %w", err)
+	}
+	return id, nil
+}
+
+// ListMissionEventsAfter 跨租户按 id 升序读取事件（dispatcher 专用只读查询）。
+//
+// mission_events.id 是全局自增且跨租户唯一，因此可以只按 id 游标扫描；每行携带
+// tenant_id 供 dispatcher 选择该租户的渠道。limit 缺省 100、上限 500。
+func (s *Store) ListMissionEventsAfter(ctx context.Context, afterID int64, limit int) ([]MissionEvent, error) {
+	if afterID < 0 {
+		return nil, fmt.Errorf("%w：事件游标不能为负数", ErrInvalidInput)
+	}
+	limit = normalizeLimit(limit, 100, 500)
+	rows, err := s.db.pool.Query(ctx, `
+		SELECT tenant_id, id, mission_id, type, actor, reason, payload, created_at
+		FROM mission_events
+		WHERE id > $1
+		ORDER BY id ASC LIMIT $2`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("读取事件推送队列失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]MissionEvent, 0, limit)
+	for rows.Next() {
+		var (
+			event   MissionEvent
+			payload []byte
+		)
+		if err := rows.Scan(&event.TenantID, &event.ID, &event.MissionID, &event.Type,
+			&event.Actor, &event.Reason, &payload, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("解析事件推送队列失败: %w", err)
+		}
+		if event.Payload, err = decodeJSON(payload); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历事件推送队列失败: %w", err)
+	}
+	return out, nil
+}
+
+// ListEnabledNotificationChannelsForPush 返回租户启用中的全部渠道（dispatcher 用）。
+func (s *Store) ListEnabledNotificationChannelsForPush(ctx context.Context, tenantID int64) ([]NotificationChannel, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.pool.Query(ctx,
+		`SELECT `+notificationChannelColumns+`
+		 FROM notification_channels
+		 WHERE tenant_id = $1 AND enabled = true
+		 ORDER BY id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("读取推送渠道失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]NotificationChannel, 0, 8)
+	for rows.Next() {
+		var (
+			channel NotificationChannel
+			raw     []byte
+		)
+		if err := rows.Scan(&channel.TenantID, &channel.ID, &channel.Name, &channel.Type,
+			&raw, &channel.Enabled, &channel.CreatedAt, &channel.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("解析推送渠道失败: %w", err)
+		}
+		if channel.Config, err = decodeJSON(raw); err != nil {
+			return nil, err
+		}
+		out = append(out, channel)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历推送渠道失败: %w", err)
+	}
+	return out, nil
+}
+
+// BeginNotificationEvent 抢占「事件+渠道」的投递权；已存在时返回 fresh=false。
+//
+// 先占位再发送：并发 dispatcher/多副本下只有一个调用方会真正发送，实现
+// at-most-once。发送失败也保留台账（不重试），失败原因写入投递记录。
+func (s *Store) BeginNotificationEvent(ctx context.Context, tenantID, eventID, channelID int64) (int64, bool, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return 0, false, err
+	}
+	if eventID <= 0 || channelID <= 0 {
+		return 0, false, fmt.Errorf("%w：事件与渠道标识必须为正数", ErrInvalidInput)
+	}
+	var id int64
+	err := s.db.pool.QueryRow(ctx, `
+		INSERT INTO notification_events (tenant_id, event_id, channel_id)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (tenant_id, event_id, channel_id) DO NOTHING
+		RETURNING id`, tenantID, eventID, channelID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if isNotificationForeignKeyViolation(err) {
+		// 渠道在读取与占位之间被删除：按「无需投递」处理，而不是记失败。
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("写入通知事件台账失败: %w", err)
+	}
+	return id, true, nil
+}
+
+// CompleteNotificationEvent 回填投递记录 id（best-effort，失败不影响发送结论）。
+func (s *Store) CompleteNotificationEvent(ctx context.Context, tenantID, notificationEventID, deliveryID int64) error {
+	if err := checkTenant(tenantID); err != nil {
+		return err
+	}
+	if notificationEventID <= 0 || deliveryID <= 0 {
+		return fmt.Errorf("%w：通知事件与投递标识必须为正数", ErrInvalidInput)
+	}
+	_, err := s.db.pool.Exec(ctx, `
+		UPDATE notification_events SET delivery_id = $3
+		WHERE tenant_id = $1 AND id = $2`, tenantID, notificationEventID, deliveryID)
+	if err != nil {
+		return fmt.Errorf("回填通知事件投递标识失败: %w", err)
+	}
+	return nil
+}

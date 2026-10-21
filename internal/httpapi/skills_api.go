@@ -55,14 +55,21 @@ const (
 // 版本历史（最小实现）：快照落在技能目录内的 .versions/<timestamp>/。
 //
 //   - 每次 PUT 文件、每次上传覆盖前都会先给当前技能目录打一份快照；
-//   - 只保留最近 skillMaxVersions 份，更旧的自动清理；
+//   - 只保留最近 skillKeepVersions() 份（默认 5，可用 BEACONX_SKILLS_KEEP_VERSIONS
+//     配置为 1..50），更旧的自动清理；
 //   - .versions 目录自身不参与文件列表与文件数统计，避免污染用户视图；
 //   - timestamp 用 UTC 固定宽度格式（无分隔符），既可排序也可安全用于路径。
 const (
 	// skillVersionsDirName 是版本快照在技能目录内的子目录名。
 	skillVersionsDirName = ".versions"
-	// skillMaxVersions 是保留的版本数上限。
-	skillMaxVersions = 5
+	// skillDefaultKeepVersions 是版本保留份数的默认值。
+	skillDefaultKeepVersions = 5
+	// skillMinKeepVersions / skillMaxKeepVersionsLimit 是允许的配置区间；
+	// 超出区间或无法解析时回退默认值（fail-safe，不让配置错误变成无限保留）。
+	skillMinKeepVersions      = 1
+	skillMaxKeepVersionsLimit = 50
+	// skillKeepVersionsEnv 是版本保留份数的配置键（每次裁剪时读取）。
+	skillKeepVersionsEnv = "BEACONX_SKILLS_KEEP_VERSIONS"
 	// skillVersionMetaFileName 是版本目录内保存元数据的文件名。
 	skillVersionMetaFileName = "meta.json"
 	// skillVersionTimestampFormat 是版本目录名格式（UTC，精确到纳秒）。
@@ -73,6 +80,22 @@ const (
 
 // skillVersionTimestampPattern 校验版本目录名/URL 参数，防止路径穿越。
 var skillVersionTimestampPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{9}$`)
+
+// skillKeepVersions 返回版本保留份数：环境变量 BEACONX_SKILLS_KEEP_VERSIONS，
+// 默认 5，只接受 1..50；空/非法/越界一律回退默认值。
+//
+// 每次裁剪都重新读取，便于测试用 t.Setenv 注入；生产上改配置无需重启。
+func skillKeepVersions() int {
+	raw := strings.TrimSpace(os.Getenv(skillKeepVersionsEnv))
+	if raw == "" {
+		return skillDefaultKeepVersions
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < skillMinKeepVersions || value > skillMaxKeepVersionsLimit {
+		return skillDefaultKeepVersions
+	}
+	return value
+}
 
 // skillAllowedExtensions 是可读写的文本扩展名（上传与 PUT 都校验）。
 var skillAllowedExtensions = map[string]bool{
@@ -157,6 +180,9 @@ type skillVersionView struct {
 	Timestamp string `json:"timestamp"`
 	Files     int    `json:"files"`
 	Size      int64  `json:"size"`
+	// HasMeta 表示该快照是否带 meta.json（B7 之前的旧版本没有，restore 时
+	// 只回滚文件内容、不回滚元数据；前端可据此提示用户）。
+	HasMeta bool `json:"has_meta"`
 }
 
 // skillVersionMeta 是版本快照里保存的技能元数据（用于 restore 时回滚 DB）。
@@ -556,7 +582,7 @@ func snapshotSkillVersion(tenantID int64, name string, meta skillVersionMeta, pr
 	return stamp, nil
 }
 
-// pruneSkillVersions 只保留最近 skillMaxVersions 份快照（按时间戳升序删最旧）。
+// pruneSkillVersions 只保留最近 skillKeepVersions() 份快照（按时间戳升序删最旧）。
 func pruneSkillVersions(tenantID int64, name string) {
 	root := skillVersionsRoot(skillDirFor(tenantID, name))
 	entries, err := os.ReadDir(root)
@@ -570,7 +596,8 @@ func pruneSkillVersions(tenantID int64, name string) {
 		}
 	}
 	sort.Strings(stamps)
-	for len(stamps) > skillMaxVersions {
+	keep := skillKeepVersions()
+	for len(stamps) > keep {
 		_ = os.RemoveAll(filepath.Join(root, stamps[0]))
 		stamps = stamps[1:]
 	}
@@ -593,7 +620,12 @@ func listSkillVersions(tenantID int64, name string) ([]skillVersionView, error) 
 		}
 		versionDir := filepath.Join(root, entry.Name())
 		files, size := countVersionFiles(versionDir)
-		out = append(out, skillVersionView{Timestamp: entry.Name(), Files: files, Size: size})
+		out = append(out, skillVersionView{
+			Timestamp: entry.Name(),
+			Files:     files,
+			Size:      size,
+			HasMeta:   fileExists(filepath.Join(versionDir, skillVersionMetaFileName)),
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp > out[j].Timestamp })
 	return out, nil

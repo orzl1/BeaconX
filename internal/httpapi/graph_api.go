@@ -26,10 +26,6 @@ const (
 	maxGraphLimit     = 2000
 )
 
-// storeNodeListMax 是 pg.Store.ListNodes 内部允许的最大条数（超出会回落到 200），
-// 这里显式按它取数，避免传 2001 之类的值反而只拿到 200 条。
-const storeNodeListMax = 1000
-
 // storeEdgeListMax 是 pg.Store.ListEdges 内部允许的最大条数。
 const storeEdgeListMax = 5000
 
@@ -174,7 +170,8 @@ func (o Options) handleMissionPlan(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 作战图 ----------
 
-// handleMissionGraph 一次性返回任务的节点/边/锚点，节点支持 kind/state 过滤与 limit。
+// handleMissionGraph 返回任务的节点/边/锚点，节点支持 kind/state 过滤、limit
+// 与 after_id 游标；过滤与游标都下推到 SQL，大图（>1000 节点）不会漏数据。
 func (o Options) handleMissionGraph(w http.ResponseWriter, r *http.Request) {
 	if !o.storeReady(w, r) {
 		return
@@ -211,36 +208,18 @@ func (o Options) handleMissionGraph(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// 过滤在内存做：有过滤条件时尽量多取（store 上限 1000），否则按请求条数取。
-	fetchLimit := limit
-	if kindFilter != nil || stateFilter != nil || fetchLimit > storeNodeListMax {
-		fetchLimit = storeNodeListMax
-	}
-	var nodes []pg.Node
-	var err error
-	if afterID > 0 {
-		// 游标模式沿用既有升序（id 升序），因此 after_id 表示「取 id 更大的节点」，
-		// 与响应里 next_after_id=本页最后一条 id 配合即可向前翻页。
-		nodes, err = o.Store.ListNodesPage(r.Context(), o.TenantID, missionID, afterID, fetchLimit)
-	} else {
-		nodes, err = o.Store.ListNodes(r.Context(), o.TenantID, missionID, fetchLimit)
-	}
+	// kind/state/after_id 全部下推到 SQL（见 pg.ListGraphNodesPage）：不再有
+	// 「先取 1000 行再内存过滤」的静默截断，节点数超过 1000 时也能翻页取全。
+	// 游标沿用既有升序（id 升序），after_id 表示「取 id 更大的节点」。
+	nodes, nextAfterID, err := o.Store.ListGraphNodesPage(r.Context(), o.TenantID, missionID, pg.GraphNodeFilter{
+		Kind:    kindFilter,
+		State:   stateFilter,
+		AfterID: afterID,
+		Limit:   limit,
+	})
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
-	}
-	filtered := make([]pg.Node, 0, len(nodes))
-	for _, n := range nodes {
-		if kindFilter != nil && n.Kind != *kindFilter {
-			continue
-		}
-		if stateFilter != nil && n.State != *stateFilter {
-			continue
-		}
-		filtered = append(filtered, n)
-		if len(filtered) >= limit {
-			break
-		}
 	}
 
 	edges, err := o.Store.ListEdges(r.Context(), o.TenantID, missionID, storeEdgeListMax)
@@ -259,13 +238,10 @@ func (o Options) handleMissionGraph(w http.ResponseWriter, r *http.Request) {
 	if anchors == nil {
 		anchors = []pg.Anchor{}
 	}
-	// 本页取满才继续翻页；next_after_id 即最后一条节点 id。
-	var nextAfterID int64
-	if len(filtered) >= limit && len(filtered) > 0 {
-		nextAfterID = filtered[len(filtered)-1].ID
-	}
+	// next_after_id 由 pg.ListGraphNodesPage 给出：本页取满时是最后一条节点 id，
+	// 否则为 0（表示没有下一页）。
 	writeJSON(w, http.StatusOK, map[string]any{
-		"nodes":         filtered,
+		"nodes":         nodes,
 		"edges":         edges,
 		"anchors":       anchors,
 		"next_after_id": nextAfterID,

@@ -51,6 +51,28 @@ func recoverSyncRuns(ctx context.Context, store *pg.Store, tenantID int64, log *
 		log.Info("已恢复中断的同步运行", "count", recovered)
 	}
 
+	// B8 启动维护：LLM 正文保留期清理 + 超时 pending 同步运行恢复。
+	llmRetentionDays := 7
+	if raw := strings.TrimSpace(os.Getenv("BEACONX_LLM_RETENTION_DAYS")); raw != "" {
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 0 {
+			log.Warn("BEACONX_LLM_RETENTION_DAYS 非法，使用默认 7 天", "value", raw)
+		} else {
+			llmRetentionDays = days
+		}
+	}
+	llmRetention := time.Duration(0)
+	if llmRetentionDays > 0 {
+		llmRetention = time.Duration(llmRetentionDays) * 24 * time.Hour
+	}
+	if maintenance, err := store.RunStartupMaintenance(ctx, tenantID, llmRetention, 15*time.Minute); err != nil {
+		log.Warn("启动维护执行失败", "error", err)
+	} else if maintenance.LLMDeleted > 0 || maintenance.SyncPendingRecovered > 0 {
+		log.Info("启动维护完成", "llm_deleted", maintenance.LLMDeleted,
+			"sync_pending_recovered", maintenance.SyncPendingRecovered,
+			"llm_retention_days", llmRetentionDays)
+	}
+
 	retentionDays := 30
 	if raw := strings.TrimSpace(os.Getenv("BEACONX_SYNC_RETENTION_DAYS")); raw != "" {
 		days, err := strconv.Atoi(raw)
@@ -336,6 +358,11 @@ func serve(args []string) int {
 		log.Error("启动任务运行时失败", "error", err)
 		return 1
 	}
+	// 通知事件推送后台循环与引擎同生命周期：引擎启动后开始轮询 mission_events，
+	// 进程退出时停止（Stop 有 5s 超时兜底）。
+	dispatcher := httpapi.NewNotificationDispatcher(store, evStore, log)
+	dispatcher.Start(ctx)
+	defer dispatcher.Stop()
 
 	adminToken, err := resolveAdminToken(cfg.Auth.AdminToken, log)
 	if err != nil {

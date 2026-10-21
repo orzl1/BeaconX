@@ -20,6 +20,7 @@ type Planner struct {
 	cfg    Config
 	log    *slog.Logger
 	model  string
+	agents *agentResolver
 }
 
 // NewPlanner 创建规划器。
@@ -27,12 +28,49 @@ func NewPlanner(store *pg.Store, client LLM, model string, cfg Config, log *slog
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Planner{store: store, client: client, cfg: cfg.withDefaults(), log: log.With("component", "ai-planner"), model: model}
+	return &Planner{
+		store: store, client: client, cfg: cfg.withDefaults(),
+		log: log.With("component", "ai-planner"), model: model,
+		agents: newAgentResolver(store, log),
+	}
+}
+
+// InvalidateAgents 清空本实例的 Agent 定义缓存（测试/热更新用）。
+func (p *Planner) InvalidateAgents() {
+	if p != nil && p.agents != nil {
+		p.agents.invalidate()
+	}
+}
+
+// plannerRun 解析本任务启用的 planner Agent 定义并合并默认配置。
+//
+// 没有启用定义时返回默认（client/model 原样，system 为空走内置提示词），
+// 因此请求内容与接入前逐字节一致。
+func (p *Planner) plannerRun(ctx context.Context, mission pg.Mission) plannerAgentRun {
+	run := plannerAgentRun{client: p.client, model: p.model}
+	agent := p.agents.resolve(ctx, mission, agentRolePlanner)
+	if agent == nil {
+		return run
+	}
+	run.system = strings.TrimSpace(agent.SystemPrompt)
+	if agent.Model != "" {
+		// 配置里的模型名先落到「本次运行使用的模型」上（用量/审计按它记录）；
+		// 若当前 LLM 实例可切换模型（WithModel）或能按启动配置派生客户端，则请求
+		// 也真正使用该模型，否则保留默认客户端并已由 clientForModel 记录 Warn。
+		run.model = agent.Model
+		if agent.Model != p.model {
+			if client, ok := p.agents.clientForModel(p.client, agent.Model); ok {
+				run.client = client
+			}
+		}
+	}
+	return run
 }
 
 // Plan 实现 runner.Planner。
 func (p *Planner) Plan(ctx context.Context, mission pg.Mission) (bool, error) {
 	tenantID, missionID := mission.TenantID, mission.ID
+	run := p.plannerRun(ctx, mission)
 
 	maxTokens, spent, maxSteps, stepsUsed, err := p.store.MissionBudget(ctx, tenantID, missionID)
 	if err != nil {
@@ -113,7 +151,7 @@ func (p *Planner) Plan(ctx context.Context, mission pg.Mission) (bool, error) {
 	}
 
 	snap := snapshot{MissionName: mission.Name, Goal: mission.Goal, Steps: steps, Facts: facts, OpenActions: openActions}
-	decision, err := p.decide(ctx, tenantID, missionID, snap)
+	decision, err := p.decide(ctx, tenantID, missionID, snap, run)
 	if err != nil {
 		// 规划失败不阻塞任务；记录事件，等下一轮重试。
 		p.appendEvent(ctx, tenantID, missionID, "planner_error", truncate(err.Error(), 500))
@@ -132,7 +170,7 @@ func (p *Planner) Plan(ctx context.Context, mission pg.Mission) (bool, error) {
 			if pending := pendingStepKeys(steps); len(pending) > 0 {
 				p.appendEvent(ctx, tenantID, missionID, "planner_done_with_pending",
 					"模型宣布完成但仍有未完成步骤："+strings.Join(pending, ","))
-				follow, ferr := p.followup(ctx, tenantID, missionID, snap, pending)
+				follow, ferr := p.followup(ctx, tenantID, missionID, snap, pending, run)
 				if ferr == nil {
 					if err := p.applyDecision(ctx, tenantID, missionID, follow); err != nil {
 						p.log.Warn("追问决策落库失败", "mission_id", missionID, "error", err)
@@ -214,20 +252,24 @@ func (p *Planner) applyDecision(ctx context.Context, tenantID, missionID int64, 
 }
 
 // followup 在模型过早完成时追问下一步动作。
-func (p *Planner) followup(ctx context.Context, tenantID, missionID int64, snap snapshot, pending []string) (plan.Decision, error) {
+func (p *Planner) followup(ctx context.Context, tenantID, missionID int64, snap snapshot, pending []string, run plannerAgentRun) (plan.Decision, error) {
+	system := plannerSystemNext
+	if run.system != "" {
+		system = run.system
+	}
 	messages := []llm.Message{
-		{Role: "system", Content: plannerSystemNext},
+		{Role: "system", Content: system},
 		{Role: "user", Content: renderSnapshot(snap)},
 		{Role: "user", Content: "仍有未完成步骤：" + strings.Join(pending, ",") +
 			"。请为依赖已满足的步骤生成动作；若确实无法推进，请在 reason 中说明受阻原因，不要直接返回空动作且 done=true。"},
 	}
-	resp, err := p.client.CompleteJSON(ctx, messages)
+	resp, err := run.client.CompleteJSON(ctx, messages)
 	if err != nil {
 		p.captureExchange(ctx, tenantID, missionID, "planner-followup", messages, llm.Response{}, err)
 		return plan.Decision{}, err
 	}
 	p.captureExchange(ctx, tenantID, missionID, "planner-followup", messages, resp, nil)
-	p.recordUsage(ctx, tenantID, missionID, "planner-followup", resp)
+	p.recordUsage(ctx, tenantID, missionID, "planner-followup", run.model, resp)
 	return plan.ParseDecisionWithKnown(resp.Content, knownStepSet(snap.Steps))
 }
 
@@ -252,22 +294,26 @@ func pendingStepKeys(steps []pg.PlanStep) []string {
 }
 
 // decide 调用模型并解析决策；解析失败会重试一次。
-func (p *Planner) decide(ctx context.Context, tenantID, missionID int64, snap snapshot) (plan.Decision, error) {
+func (p *Planner) decide(ctx context.Context, tenantID, missionID int64, snap snapshot, run plannerAgentRun) (plan.Decision, error) {
 	system := plannerSystemNext
 	if len(snap.Steps) == 0 {
 		system = plannerSystemDecompose
+	}
+	// Agent 定义里的 system_prompt 直接替换内置提示词（管理员自行保证输出格式约束）。
+	if run.system != "" {
+		system = run.system
 	}
 	messages := []llm.Message{
 		{Role: "system", Content: system},
 		{Role: "user", Content: renderSnapshot(snap)},
 	}
-	resp, err := p.client.CompleteJSON(ctx, messages)
+	resp, err := run.client.CompleteJSON(ctx, messages)
 	if err != nil {
 		p.captureExchange(ctx, tenantID, missionID, "planner", messages, llm.Response{}, err)
 		return plan.Decision{}, err
 	}
 	p.captureExchange(ctx, tenantID, missionID, "planner", messages, resp, nil)
-	p.recordUsage(ctx, tenantID, missionID, "planner", resp)
+	p.recordUsage(ctx, tenantID, missionID, "planner", run.model, resp)
 
 	known := knownStepSet(snap.Steps)
 	decision, err := plan.ParseDecisionWithKnown(resp.Content, known)
@@ -280,18 +326,18 @@ func (p *Planner) decide(ctx context.Context, tenantID, missionID int64, snap sn
 		llm.Message{Role: "assistant", Content: resp.Content},
 		llm.Message{Role: "user", Content: "上一次输出无法解析：" + err.Error() + "。请只输出一个符合规定结构的 JSON 对象，不要解释、不要围栏。"},
 	)
-	resp2, err2 := p.client.CompleteJSON(ctx, retry)
+	resp2, err2 := run.client.CompleteJSON(ctx, retry)
 	if err2 != nil {
 		p.captureExchange(ctx, tenantID, missionID, "planner-retry", retry, llm.Response{}, err2)
 		return plan.Decision{}, err2
 	}
 	p.captureExchange(ctx, tenantID, missionID, "planner-retry", retry, resp2, nil)
-	p.recordUsage(ctx, tenantID, missionID, "planner-retry", resp2)
+	p.recordUsage(ctx, tenantID, missionID, "planner-retry", run.model, resp2)
 	return plan.ParseDecisionWithKnown(resp2.Content, known)
 }
 
-func (p *Planner) recordUsage(ctx context.Context, tenantID, missionID int64, role string, resp llm.Response) {
-	if err := p.store.RecordLLMUsage(ctx, tenantID, missionID, role, p.model, resp.Usage); err != nil {
+func (p *Planner) recordUsage(ctx context.Context, tenantID, missionID int64, role, model string, resp llm.Response) {
+	if err := p.store.RecordLLMUsage(ctx, tenantID, missionID, role, model, resp.Usage); err != nil {
 		p.log.Warn("记录模型用量失败", "mission_id", missionID, "error", err)
 	}
 }

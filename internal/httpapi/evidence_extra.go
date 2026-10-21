@@ -196,6 +196,35 @@ func (o Options) handleEvidenceRotate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "bad_request", "new_key_hex 必须是合法的 64 位十六进制字符串")
 		return
 	}
+	// 轮换会更换证据子密钥：通知渠道的加密配置也会随之失效。轮换前先收集
+	// 全部租户里已加密的渠道配置（解密成明文），轮换后用新密钥重加密回写；
+	// 收集失败则直接拒绝轮换，避免「轮换成功但通知配置不可读」的半损坏状态。
+	type pendingNotification struct {
+		tenantID  int64
+		channelID int64
+		config    map[string]any
+	}
+	channels, chErr := o.Store.ListAllNotificationChannels(r.Context())
+	if chErr != nil {
+		writeError(w, r, http.StatusInternalServerError, "rotate_failed",
+			fmt.Sprintf("读取通知渠道失败，未执行密钥轮换：%v", chErr))
+		return
+	}
+	pendingNotifications := make([]pendingNotification, 0, len(channels))
+	for _, channel := range channels {
+		plain, encrypted, decErr := notificationPlaintextConfig(o.Evidence, channel.Config)
+		if decErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "rotate_failed",
+				fmt.Sprintf("通知渠道 #%d 配置解密失败，未执行密钥轮换：%v", channel.ID, decErr))
+			return
+		}
+		if encrypted {
+			pendingNotifications = append(pendingNotifications, pendingNotification{
+				tenantID: channel.TenantID, channelID: channel.ID, config: plain,
+			})
+		}
+	}
+
 	rotated, err := o.Evidence.RotateKey(r.Context(), newKey)
 	if err != nil {
 		if errors.Is(err, evidence.ErrTampered) {
@@ -206,13 +235,13 @@ func (o Options) handleEvidenceRotate(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("证据密钥轮换失败（已完成 %d 个，请停机并从备份恢复）：%v", rotated, err))
 		return
 	}
-	// 轮换会同时更换签名子密钥，存量快照的 HMAC 必须用新密钥重签，否则
-	// Verify 全部失败。重签在轮换成功后同步执行；中断时返回 500 并说明已重签数量，
-	// 由运维重试/从备份恢复（重签本身幂等，可重复调用 Seal+Update）。
-	snapshots, listErr := o.Store.ListEvidenceSnapshotsForResign(r.Context(), o.TenantID)
+	// 轮换会同时更换签名子密钥，全部租户的存量快照 HMAC 必须用新密钥重签，
+	// 否则 Verify 全部失败。重签在轮换成功后同步执行；中断时返回 500 并说明
+	// 已重签数量，由运维重试/从备份恢复（重签本身幂等，可重复 Seal+Update）。
+	snapshots, listErr := o.Store.ListAllEvidenceSnapshotsForResign(r.Context())
 	if listErr != nil {
 		writeError(w, r, http.StatusInternalServerError, "rotate_resign_failed",
-			fmt.Sprintf("已轮换 %d 个 blob，但读取证据快照失败，签名未更新：%v；请修复数据库后重签", rotated, listErr))
+			fmt.Sprintf("已轮换 %d 个 blob，但读取全租户证据快照失败，签名未更新：%v；请修复数据库后重签", rotated, listErr))
 		return
 	}
 	resigned := 0
@@ -231,19 +260,42 @@ func (o Options) handleEvidenceRotate(w http.ResponseWriter, r *http.Request) {
 					rotated, resigned, len(snapshots), sealErr))
 			return
 		}
-		if updateErr := o.Store.UpdateEvidenceSignature(r.Context(), o.TenantID, snapshot.ID, sealed.Signature); updateErr != nil {
+		if updateErr := o.Store.UpdateEvidenceSignature(r.Context(), snapshot.TenantID, snapshot.ID, sealed.Signature); updateErr != nil {
 			writeError(w, r, http.StatusInternalServerError, "rotate_resign_failed",
 				fmt.Sprintf("已轮换 %d 个 blob，但重签中断（已重签 %d/%d 个）：%v；请从备份恢复或重试重签",
 					rotated, resigned, len(snapshots), updateErr))
 			return
 		}
+		// 轮换影响每条快照的签名，逐条记 rotate 审计（跨租户按各自 tenant_id）。
+		_, _ = o.Store.LogEvidenceAccess(r.Context(), snapshot.TenantID, snapshot.ID, "rotate", "rotate")
 		resigned++
 	}
+
+	// 通知渠道加密配置用新密钥重加密回写。
+	rencrypted := 0
+	for _, pending := range pendingNotifications {
+		storedConfig, encErr := o.storedNotificationConfig(pending.config)
+		if encErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "rotate_failed",
+				fmt.Sprintf("已轮换 %d 个 blob、重签 %d 个快照，但通知渠道 #%d 配置重加密失败：%v",
+					rotated, resigned, pending.channelID, encErr))
+			return
+		}
+		if updateErr := o.Store.UpdateNotificationChannelStoredConfig(r.Context(),
+			pending.tenantID, pending.channelID, storedConfig); updateErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "rotate_failed",
+				fmt.Sprintf("已轮换 %d 个 blob、重签 %d 个快照，但通知渠道 #%d 配置回写失败：%v",
+					rotated, resigned, pending.channelID, updateErr))
+			return
+		}
+		rencrypted++
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"rotated":                rotated,
-		"resigned":               resigned,
-		"new_key_hex_not_stored": true,
+		"rotated":                  rotated,
+		"resigned":                 resigned,
+		"notifications_rencrypted": rencrypted,
+		"new_key_hex_not_stored":   true,
 		"notice": "新密钥仅用于本次进程；请更新 BEACONX_EVIDENCE_KEY 或 evidence.key 并重启；" +
-			"本次已用新密钥重签全部证据快照",
+			"本次已用新密钥重签全部租户证据快照并重加密通知渠道配置",
 	})
 }

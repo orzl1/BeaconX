@@ -12,7 +12,7 @@ import (
 // B6 可观测补口（图游标分页 / Dashboard 小时趋势 / 全局活动流）。
 //
 // 这里的三组查询都是「读多写少、只按 id 或时间范围扫描」的聚合/分页：
-//   - ListNodesPage：作战图节点分页（保留既有 ListNodes 的升序语义，外加 id 游标）；
+//   - ListGraphNodesPage：作战图节点分页（过滤 + 游标全部下推 SQL，无 1000 行上限）；
 //   - DashboardHourly：最近 24 小时按小时聚合（missions/tokens/approvals）；
 //   - ListMissionEventsGlobal：跨任务的活动流（mission_events 倒序 + 游标）。
 //
@@ -33,25 +33,66 @@ type DashboardHour struct {
 // dashboardHourCount 是小时趋势的桶数（最近 24 小时，含当前小时）。
 const dashboardHourCount = 24
 
-// ListNodesPage 按 id 游标列出作战图节点（id 升序，afterID>0 时只取 id > afterID）。
+// GraphNodeFilter 是作战图节点分页的过滤条件。
 //
-// 与既有 ListNodes 的差异只有两点：显式接受 afterID、limit 上限固定为 1000
-// （与 ListNodes 的内部上限一致），保证同一页的取数口径不变。
-func (s *Store) ListNodesPage(ctx context.Context, tenantID, missionID, afterID int64, limit int) ([]Node, error) {
+// Kind/State 为 nil 表示不按该维度过滤；AfterID>0 表示取 id 更大的节点（升序
+// 游标）；Limit<=0 取默认值 500，上限 2000。
+type GraphNodeFilter struct {
+	Kind    *graph.NodeKind
+	State   *graph.NodeState
+	AfterID int64
+	Limit   int
+}
+
+// 作战图节点分页的 limit 约定：缺省 500、上限 2000。
+const (
+	defaultGraphNodeLimit = 500
+	maxGraphNodeLimit     = 2000
+)
+
+// ListGraphNodesPage 按 id 升序分页列出作战图节点，过滤与游标**全部下推 SQL**。
+//
+// 与旧实现的差别：过去是「先取最多 1000 行、再在内存里按 kind/state 过滤」，
+// 节点数超过 1000 时后面的节点永远拿不到（静默截断）；现在 kind/state/after_id
+// 都在 WHERE 里，ORDER BY id LIMIT n 直接由数据库完成，因此：
+//   - 任意规模的作战图都能翻页取全；
+//   - 过滤后的分页结果稳定（不会因为内存截断而出现空页/漏页）；
+//   - limit 上限提到 2000，但仍然拒绝无界查询。
+//
+// 返回值 nextAfterID 只在「本页取满」时给出最后一条节点 id，否则为 0。
+func (s *Store) ListGraphNodesPage(ctx context.Context, tenantID, missionID int64, f GraphNodeFilter) ([]Node, int64, error) {
 	if err := checkTenant(tenantID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if missionID <= 0 {
-		return nil, fmt.Errorf("%w：任务标识必须为正数", ErrInvalidInput)
+		return nil, 0, fmt.Errorf("%w：任务标识必须为正数", ErrInvalidInput)
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+	if f.Kind != nil && !f.Kind.Valid() {
+		return nil, 0, fmt.Errorf("%w：非法节点类型 %q", ErrInvalidInput, string(*f.Kind))
+	}
+	if f.State != nil && !f.State.Valid() {
+		return nil, 0, fmt.Errorf("%w：非法节点状态 %q", ErrInvalidInput, string(*f.State))
+	}
+	limit := f.Limit
+	if limit <= 0 {
+		limit = defaultGraphNodeLimit
+	}
+	if limit > maxGraphNodeLimit {
+		limit = maxGraphNodeLimit
 	}
 
 	args := []any{tenantID, missionID}
 	conds := []string{"tenant_id = $1", "mission_id = $2"}
-	if afterID > 0 {
-		args = append(args, afterID)
+	if f.Kind != nil {
+		args = append(args, string(*f.Kind))
+		conds = append(conds, fmt.Sprintf("kind = $%d", len(args)))
+	}
+	if f.State != nil {
+		args = append(args, string(*f.State))
+		conds = append(conds, fmt.Sprintf("state = $%d", len(args)))
+	}
+	if f.AfterID > 0 {
+		args = append(args, f.AfterID)
 		conds = append(conds, fmt.Sprintf("id > $%d", len(args)))
 	}
 	args = append(args, limit)
@@ -60,9 +101,9 @@ func (s *Store) ListNodesPage(ctx context.Context, tenantID, missionID, afterID 
 		SELECT tenant_id, id, mission_id, kind, state, title, body, payload, created_at, updated_at
 		FROM operation_nodes
 		WHERE `+strings.Join(conds, " AND ")+`
-		ORDER BY id LIMIT $`+fmt.Sprint(len(args)), args...)
+		ORDER BY id ASC LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
-		return nil, fmt.Errorf("列出节点失败: %w", err)
+		return nil, 0, fmt.Errorf("列出节点失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -76,19 +117,24 @@ func (s *Store) ListNodesPage(ctx context.Context, tenantID, missionID, afterID 
 		)
 		if err := rows.Scan(&n.TenantID, &n.ID, &n.MissionID, &kind, &state, &n.Title, &n.Body,
 			&rawPay, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("解析节点失败: %w", err)
+			return nil, 0, fmt.Errorf("解析节点失败: %w", err)
 		}
 		n.Kind = graph.NodeKind(kind)
 		n.State = graph.NodeState(state)
 		if n.Payload, err = decodeJSON(rawPay); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, n)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历节点失败: %w", err)
+		return nil, 0, fmt.Errorf("遍历节点失败: %w", err)
 	}
-	return out, nil
+
+	var nextAfterID int64
+	if len(out) == limit && limit > 0 {
+		nextAfterID = out[len(out)-1].ID
+	}
+	return out, nextAfterID, nil
 }
 
 // DashboardHourly 返回最近 24 小时（含当前小时）的小时聚合。

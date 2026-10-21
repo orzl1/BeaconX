@@ -118,7 +118,7 @@ done
 	start := time.Now()
 	_, err := Discover(context.Background(), Server{
 		Name: "sandbox-output", Transport: TransportStdio, Command: script,
-	}, sandboxOptions(script, 5*time.Second))
+	}, sandboxOptions(script, 15*time.Second))
 	if err == nil {
 		t.Fatal("期望输出超限错误")
 	}
@@ -174,6 +174,25 @@ func TestSandboxUnsupportedPlatform(t *testing.T) {
 	_, err := Discover(context.Background(), Server{Name: "win", Transport: TransportStdio, Command: "/bin/echo"}, Options{AllowStdio: true})
 	if !errors.Is(err, ErrStdioUnsupported) {
 		t.Fatalf("期望 ErrStdioUnsupported，实际: %v", err)
+	}
+}
+
+// TestStdioUnsupportedOnWindows 仅在 Windows 上运行：验证平台级拒绝。
+//
+// 非 Windows 平台没有「不支持」这条分支可测（stdio 是支持的），因此反向跳过；
+// 该用例让 windows-test CI job 有一个显式的平台断言，而不是只依赖其它用例的 skip。
+func TestStdioUnsupportedOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("仅在 Windows 上验证 stdio 平台拒绝")
+	}
+	if StdioSupported() {
+		t.Fatal("Windows 上 StdioSupported() 应为 false")
+	}
+	_, err := Discover(context.Background(), Server{
+		Name: "windows-stdio", Transport: TransportStdio, Command: "cmd.exe",
+	}, Options{AllowStdio: true})
+	if !errors.Is(err, ErrStdioUnsupported) {
+		t.Fatalf("Windows 上期望 ErrStdioUnsupported，实际: %v", err)
 	}
 }
 

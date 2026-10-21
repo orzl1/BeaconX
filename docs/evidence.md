@@ -186,3 +186,10 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 - **LLM 正文采集**：0017 `llm_exchanges` 保存脱敏后的 messages/response/error（64KB 截断、`BEACONX_LLM_CAPTURE` 默认 true），用于排障/审计；**无保留期清理（🟡）**，任务删除级联删除。
 - **通知 SSRF**：webhook 发送前解析 URL 并拒绝私网/loopback/link-local/CGNAT，拨号前校验真实 IP、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；存储的 config 仍明文（加密未做 🟡）、投递 detail 响应片段未脱敏（🟡）。
 - **证据审计**：verify 成功/失败、正文 read（blob 被快照引用）继续 best-effort 记录，仍有路径未埋点（🟡）。
+
+## 14. B8 审计/轮换收口（M6.2-B8）
+
+- **审计动作扩展**：`evidence_access_log.action` 现允许 read/verify/export/create/rotate；B8 补 create（快照创建成功）与 rotate（每条重签），均为 best-effort；**export 失败不记审计**（设计限制）。
+- **全租户重签**：rotate 成功后遍历全部租户快照用新 key 重签，返回 `{rotated,resigned}`；轮换前收集全部租户加密通知配置并在轮换后重加密回写，避免渠道不可读；收集失败拒绝轮换。极窄窗口下新建渠道可能未被重加密，需要重跑 rotate。
+- **通知加密**：通知渠道敏感 config 使用证据派生密钥加密存储（`{__enc,payload,url}`），DB 无明文；响应仍掩码；旧明文读取时 best-effort 迁移。
+- **通知推送**：dispatcher 先占位再发送（0018 `notification_events` 唯一键去重），at-most-once，停机期间历史不补推。

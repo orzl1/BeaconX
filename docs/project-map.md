@@ -4,12 +4,12 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 文档版本 | v2.2 |
+| 文档版本 | v2.3 |
 | 更新日期 | 2026-10-22 |
 | 适用 commit | 本次提交（当前工作区，未提交） |
-| 文档状态 | **已实现 146 条路由 + 计划剩余（⬜/🟡，见 §5.6）** |
-| 覆盖里程碑 | M0–M6（后端 + 前端 + 交付）+ M6.2-B1/B2/B3/B4/B5 + B6 硬化 + B7 收口（已实现/部分，见状态列） |
-| 路由数量 | 已实现 146 条 = 基础 70 + feature 76（B4 24 + B5 46 + B6 3 + B7 3；报告多格式为既有 `/report` 扩展，不新增 pattern） |
+| 文档状态 | **已实现 146 条路由 + 已知设计限制（见 §5.6.3）** |
+| 覆盖里程碑 | M0–M6（后端 + 前端 + 交付）+ M6.2-B1/B2/B3/B4/B5 + B6/B7 硬化 + B8 收口（已实现/部分，见状态列） |
+| 路由数量 | 已实现 146 条 = 基础 70 + feature 76（B4 24 + B5 46 + B6 3 + B7 3；B8 无新增路由，仅行为/迁移） |
 | 校验命令 | `make docs-check`（校验 Routes()+featureRouteSpecs() 共 146 条已实现路由是否被记录） |
 | 文档语言 | 中文；标识符、JSON 字段、错误码、环境变量、SQL、路径保留英文 |
 
@@ -224,7 +224,7 @@ HTTP 请求
 
 ## 4. 数据模型全表
 
-迁移文件 `migrations/0001_init.sql` – `0017_llm_exchanges.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
+迁移文件 `migrations/0001_init.sql` – `0019_evidence_audit_actions.sql` 全部由 `embed.go` 嵌入；启动时按版本升序执行，校验和记录在 `schema_migrations`。所有业务表首列 `tenant_id`，主键/唯一键以 `tenant_id` 打头；租户外键指向 `tenants(id) ON DELETE CASCADE`。
 
 ### 4.1 迁移清单
 
@@ -247,6 +247,8 @@ HTTP 请求
 | `0015_sync` | 同步数据源 / 外部项目 / 运行记录 + 索引 + 触发器 | 3 表 |
 | `0016_findings_node_unique` | findings(node_id) 部分唯一索引（node_id IS NOT NULL） | 0 表 + 1 索引 |
 | `0017_llm_exchanges` | LLM 请求/响应正文采集（脱敏/截断/token） + 2 索引 | 1 表 |
+| `0018_notification_push` | 通知事件推送去重台账（`notification_events`） + 2 索引 | 1 表 |
+| `0019_evidence_audit_actions` | 证据审计 action CHECK 扩展 create/rotate（无新表） | 0 表 |
 
 ### 4.2 表清单与关键约束
 
@@ -346,7 +348,7 @@ HTTP 请求
 | `notification_deliveries.status` | pending / sent / failed / skipped | 投递状态 |
 | `mcp_servers.transport` / `last_status` | http / stdio；unknown / ok / error | MCP 端点与刷新状态 |
 | `agents.role` | planner / worker / retester / main | Agent 角色 |
-| `evidence_access_log.action` | read / verify / export | 证据审计动作 |
+| `evidence_access_log.action` | read / verify / export / create / rotate | 证据审计动作（0019 扩展） |
 | `sync_sources.type` | manual / http_json | 同步数据源类型 |
 | `sync_runs.status` | pending / running / succeeded / failed | 同步运行状态 |
 | `retests.status` | pending / running / passed / failed / error | 复测状态机（§6.10） |
@@ -354,7 +356,7 @@ HTTP 请求
 ### 4.5 触发器与索引汇总
 
 - `set_updated_at()` 触发器挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 **13** 张表（0002/0007/0008–0015 创建）。
-- 索引共 **40** 个：0002+0006 的 20 个、0007 的 4 个、0008–0015 的 13 个、0016 的 1 个部分唯一索引（`uq_findings_node`）、0017 的 2 个（mission 倒序 / created_at 倒序）。
+- 索引共 **42** 个：0002+0006 的 20 个、0007 的 4 个、0008–0015 的 13 个、0016 的 1 个部分唯一索引（`uq_findings_node`）、0017 的 2 个、0018 的 2 个。
 - 查询路径约定：所有查询带 `tenant_id`；任务/审批/流量/审计/发现/复测按 `id` 或 `created_at DESC`；B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
 
 ### 4.6 B4/B5 新增表（0008–0015）
@@ -369,12 +371,12 @@ HTTP 请求
 | 0011 | `skills` | PK(tenant_id,name)；`file_count>=0`；`version` 展示用；索引 `idx_skills_tenant`；触发器 | 技能元数据；正文在 `<state>/skills/<tenant>/<name>/`，无 skill_files 表 |
 | 0012 | `agents` | PK(tenant_id,id)；UNIQUE(tenant_id,key)；`key` 正则 CHECK；`role` CHECK planner/worker/retester/main；`tools JSONB array`；索引 + 触发器 | Agent 定义；**尚未接入 engine 装配（🟡）** |
 | 0013 | 无表 | 空操作 `SELECT 1` | 工作区文件系统能力，仅记录迁移版本 |
-| 0014 | `evidence_access_log` | PK(tenant_id,id)；FK snapshot CASCADE；`action` CHECK read/verify/export；索引 snapshot/time | 证据审计；当前仅 export/部分动作埋点（🟡） |
+| 0014 | `evidence_access_log` | PK(tenant_id,id)；FK snapshot CASCADE；`action` CHECK read/verify/export/create/rotate；索引 snapshot/time | 证据审计；B8 补 create/rotate，仍 best-effort |
 | 0015 | `sync_sources` | PK(tenant_id,id)；UNIQUE(tenant_id,name)；`type` CHECK manual/http_json；`config JSONB`；索引 + 触发器 | 同步数据源；SSRF 三层防护、默认拒私网 |
 | 0015 | `sync_projects` | PK(tenant_id,id)；UNIQUE(tenant_id,source_id,external_id)；`data JSONB`；FK source CASCADE；索引 + 触发器 | 外部项目（幂等 upsert） |
 | 0015 | `sync_runs` | PK(tenant_id,id)；`status` CHECK pending/running/succeeded/failed；`stats JSONB`；索引 source/status；project_id 无 FK（应用层校验） | 一次同步运行记录（只追加） |
 
-> 0008–0015 共新增 **11 张表**（0008 1 +0009 2 +0010 2 +0011 1 +0012 1 +0014 1 +0015 3；0013 为空操作）；0016 新增 `findings(tenant_id,node_id) WHERE node_id IS NOT NULL` 部分唯一索引，保证同一节点最多一条发现（from-node 并发 409）。B7 后仍为 🟡 的：通知凭据加密/真实事件推送、Agents 接入 engine、LLM 采集保留期、PDF 字体、graph 1000 上限、审计埋点等。
+> 0008–0015 共新增 **11 张表**（0008 1 +0009 2 +0010 2 +0011 1 +0012 1 +0014 1 +0015 3；0013 为空操作）；0016 新增 `findings(tenant_id,node_id) WHERE node_id IS NOT NULL` 部分唯一索引，保证同一节点最多一条发现（from-node 并发 409）。B8 后：通知加密/推送、证据审计 create/rotate、全租户重签、Agents 接入、LLM 保留、sync pending、graph 下推、skills 保留配置、MCP Windows CI 均已完成；剩余为**已知设计限制**（见 §5.6.3）。
 
 ## 5. API 全表（当前 146 条）
 
@@ -473,7 +475,7 @@ HTTP 请求
 | 72 | ✅ | GET | `/api/v1/logs/stream` | Bearer | `logs_api.go` | `?level=`；SSE | `text/event-stream` | 401/503 |
 | 73 | ✅ | GET | `/api/v1/settings` | Bearer | `settings_api.go` | — | `{"settings":{…}}` | 401/503 |
 | 74 | ✅ | PATCH | `/api/v1/settings` | Bearer | `settings_api.go` | `{settings:{…}}` | 200 Settings（即时热生效） | 400/401/503 |
-| 75 | 🟡 | GET | `/api/v1/evidence/{id}/audit` | Bearer | `evidence_extra.go` | — | `{"audit":[]}` | 400/401/404/503 |
+| 75 | ✅ | GET | `/api/v1/evidence/{id}/audit` | Bearer | `evidence_extra.go` | — | `{"audit":[]}` | 400/401/404/503 |
 | 76 | ✅ | POST | `/api/v1/evidence/{id}/export` | Bearer | `evidence_extra.go` | — | `application/zip` | 400/401/404/409/503 |
 | 77 | ✅ | POST | `/api/v1/evidence/rotate` | Bearer | `evidence_extra.go` | `{new_key_hex}`（64 hex） | `{rotated,new_key_hex_not_stored,notice}` | 400/401/409/500/503 |
 | 78 | ✅ | GET | `/api/v1/findings` | Bearer | `findings_extra.go` | `?mission_id=&severity=&status=&asset_id=&after_id=&limit=` | `{"findings":[]}` | 400/401/503 |
@@ -501,7 +503,7 @@ HTTP 请求
 | 100 | ✅ | GET | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | — | NotificationChannel | 400/401/404/503 |
 | 101 | ✅ | PATCH | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | 局部字段；config 三态 | 200 NotificationChannel | 400/401/404/503 |
 | 102 | ✅ | DELETE | `/api/v1/notifications/channels/{id}` | Bearer | `notifications_api.go` | — | 204 | 400/401/404/503 |
-| 103 | 🟡 | POST | `/api/v1/notifications/channels/{id}/test` | Bearer | `notifications_api.go` | — | `{sent,channel_id,delivery}` | 400/401/404/502/503 |
+| 103 | ✅ | POST | `/api/v1/notifications/channels/{id}/test` | Bearer | `notifications_api.go` | — | `{sent,channel_id,delivery}` | 400/401/404/503 |
 | 104 | ✅ | GET | `/api/v1/notifications/deliveries` | Bearer | `notifications_api.go` | `?channel_id=&status=&limit=` | `{"deliveries":[]}` | 400/401/503 |
 | 105 | ✅ | GET | `/api/v1/sync/sources` | Bearer | `sync_api.go` | `?limit=` | `{"sources":[]}` | 401/503 |
 | 106 | ✅ | POST | `/api/v1/sync/sources` | Bearer | `sync_api.go` | `{name,type,config,enabled}` | 201 SyncSource | 400/401/409/503 |
@@ -528,7 +530,7 @@ HTTP 请求
 | 127 | ✅ | GET | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | — | Agent | 400/401/404/503 |
 | 128 | ✅ | PATCH | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | 局部字段；key 不可改 | 200 Agent | 400/401/404/503 |
 | 129 | ✅ | DELETE | `/api/v1/agents/{key}` | Bearer | `agents_api.go` | — | 204 | 400/401/404/503 |
-| 130 | 🟡 | POST | `/api/v1/agents/{key}/test` | Bearer | `agents_api.go` | — | `{key,valid_tools,unknown_tools,warnings}` | 400/401/404/503 |
+| 130 | ✅ | POST | `/api/v1/agents/{key}/test` | Bearer | `agents_api.go` | — | `{key,valid_tools,unknown_tools,warnings}` | 400/401/404/503 |
 | 131 | ✅ | GET | `/api/v1/skills` | Bearer | `skills_api.go` | `?limit=` | `{"skills":[]}` | 401/503 |
 | 132 | ✅ | POST | `/api/v1/skills` | Bearer | `skills_api.go` | `{name,description,version}` | 201 Skill | 400/401/409/503 |
 | 133 | ✅ | GET | `/api/v1/skills/{name}` | Bearer | `skills_api.go` | — | Skill | 400/401/404/503 |
@@ -673,7 +675,7 @@ HTTP 请求
 
 ### 5.6 已实现/部分实现接口规格（✅ / 🟡 / ⬜）
 
-> **B4 已全部实现，B5 大部分已实现；仅少数条目仍为 🟡/⬜（见状态列）。** 未实现条目不按已实现宣传；落地时必须先实现、更新 OpenAPI 与 §5.2，再移除 ⬜/🟡。编号 `P-B4-xx` / `P-B5-xx` 供前端设计与后续开发引用。通用约定：Bearer 鉴权、错误信封 `{"error":{"code","message","request_id"}}`、`/api/v1` 前缀、默认 `limit` 50/上限 200（特别说明除外）、写操作返回资源或 204。
+> **B4–B7 已实现；B8 后不再保留路由级 🟡，剩余为设计限制（§5.6.3）。** 未实现条目不按已实现宣传；落地时必须先实现、更新 OpenAPI 与 §5.2，再移除 ⬜/🟡。编号 `P-B4-xx` / `P-B5-xx` 供前端设计与后续开发引用。通用约定：Bearer 鉴权、错误信封 `{"error":{"code","message","request_id"}}`、`/api/v1` 前缀、默认 `limit` 50/上限 200（特别说明除外）、写操作返回资源或 204。
 
 #### 5.6.1 B4 接口规格（策略/审批/日志/通知/设置/资产补全，26 条）
 
@@ -753,7 +755,7 @@ HTTP 请求
 | P-B5-41 | ✅ | GET `/api/v1/traffic/{id}/export?format=har/pcap` | 导出流量；har 可脱敏 JSON，pcap 需真实报文（当前无） | 二进制/JSON 附件 | 400/401/404/409/503 | 导出器/抓包能力 | 流量 |
 | P-B5-42 | ✅ | POST `/api/v1/traffic/{id}/replay` | 重放请求（**已改走 executor**：策略门/审批/审计/证据采集） | `{"policy_gated":true,"output":"…","status":200,"traffic_id":2}` | 403/400/401/404/409/502/503 | executor + 策略/审批 | 流量 |
 | P-B5-43 | ✅ | DELETE `/api/v1/missions/{id}/traffic` | 批量清理任务采集行（保留证据快照/正文） | 204 | 400/401/404/503 | 批量删除 Store | 流量 |
-| P-B5-44 | 🟡 | GET `/api/v1/evidence/{id}/audit` | 证据审计（🟡 仅 export/verify 部分埋点） | `{"audit":[]}` | 400/401/404/503 | `evidence_access_log`（0014） | 证据/流量 |
+| P-B5-44 | ✅ | GET `/api/v1/evidence/{id}/audit` | 证据审计（create/rotate/verify/read/export 埋点；best-effort） | `{"audit":[]}` | 400/401/404/503 | `evidence_access_log`（0014/0019） | 证据/流量 |
 | P-B5-45 | ✅ | POST `/api/v1/evidence/rotate` | 密钥轮换（重加密全部 blob；新密钥不落盘，需更新 env 并重启） | `{"rotated":10,"new_key_hex_not_stored":true,"notice":"…"}` | 400/401/500/503 | 证据存储 RotateKey | 系统设置 |
 | P-B5-46 | ✅ | POST `/api/v1/evidence/{id}/export` | 导出证据 zip（snapshot.json + 正文，写 export 审计） | `application/zip` | 400/401/404/409/503 | 证据导出器 | 证据/报告 |
 | P-B5-47 | ✅ | POST `/api/v1/missions/{id}/findings/from-node` | 从 fact/finding 节点创建发现（0016 部分唯一索引防重复） | 201 Finding；已绑定→409 | 400/401/404/409/503 | finding 域 + `uq_findings_node` | 任务详情/发现 |
@@ -774,26 +776,22 @@ HTTP 请求
 | P-B7-02 | ✅ | GET `/api/v1/llm-records/{id}/request` | 已脱敏 messages JSON（原样输出） | `application/json` | 400/401/404/503 | 同上 | /llm-records 详情 |
 | P-B7-03 | ✅ | GET `/api/v1/llm-records/{id}/response` | 已脱敏响应/错误文本 | `text/plain` | 400/401/404/503 | 同上 | /llm-records 详情 |
 
-#### 5.6.3 B4/B5/B6/B7 仍存在的缺口与风险（🟡/⬜）
+#### 5.6.3 已知设计限制（非缺陷，不随 B8 修复）
 
 > B1/B2/B3 的大部分缺口已由 B4/B5 补上；下表是**实现后仍存在**的部分实现/风险，前端设计必须按实际能力处理。
 
-| 缺口/风险 | 状态 | 现状 | 建议/未完成项 |
-| --- | --- | --- | --- |
-| settings 运行中任务语义 | 🟡 | PATCH 即时生效；运行中任务预算不回溯、调低并发不抢占运行中任务 | 运行时重算/迁移策略 |
-| 通知凭据加密/真实事件推送 | 🟡 | SSRF 校验、config 敏感键/url userinfo 掩码已做；存储仍明文、无真实事件触发 | 加密存储、事件推送 |
-| 通知投递详情脱敏 | 🟡 | delivery.detail 含目标响应片段，未脱敏 | 片段脱敏 |
-| Agents 接入 engine 装配 | 🟡 | 仅定义 CRUD/test，不改变运行时 | 引擎按 Agent 定义装配 |
-| 证据轮换重签窗口 | 🟡 | 轮换后已重签全部快照，但存在短暂 Verify 409 窗口；多租户未来需全租户重签 | 原子切换/全租户范围 |
-| 证据读取审计覆盖 | 🟡 | verify + 部分正文 read 已埋点，best-effort，仍有路径未埋点 | 全链路埋点 |
-| LLM 采集保留期/生产默认 | 🟡 | 已采集（6 个调用点、脱敏、64KB 截断），`BEACONX_LLM_CAPTURE` 默认 true；无清理策略、未采集 tools/原始 HTTP | 保留期清理/生产评估 |
-| MCP stdio Windows CI | 🟡 | 沙箱已实现；Windows 返回 400，无真实 Windows CI | Windows 测试 |
-| Workspace 配额跨实例 | ✅/🟡 | pg advisory xact lock 已接入；未注入时退化进程内锁 | 全实例注入 |
-| Skills 版本保留 | 🟡 | 保留最近 5 份、restore 回滚 files+meta；旧快照无 meta 只 warning | 可配置保留数 |
-| sync 崩溃恢复 | 🟡 | 启动 running>15min→failed；终态按保留天数清理；pending 不恢复 | pending 恢复策略 |
-| 报告图片/字体 | 🟡 | PDF 依赖阅读器 CJK 字体；DOCX 最小合法；无图片 | 字体嵌入/图片 |
-| graph 过滤上限 | 🟡 | after_id/next_after_id 已做，但过滤仍先取 ListNodes 1000 | 全量过滤/游标 |
-| 策略 immutable | ✅ | 除 enabled 外任何字段提交 409（B7 加固） | 无 |
+| 已知设计限制 | 影响/现状 | 处理建议 |
+| --- | --- | --- |
+| 报告 PDF 不嵌字体、无图片 | PDF 依赖阅读器 CJK 字体；DOCX 最小合法 | 需要时前端/离线工具补字体与图片 |
+| graph edges 5000 上限 | 单任务边最多 5000；B8 已下推节点过滤，无总行数上限 | 超大图需分片/导出 |
+| 通知 at-most-once、停机不补推 | dispatcher 先占位再发送，崩溃留下已占位未回填；启动游标取当前最大 event id | 需要精确一次/补推时另建 outbox |
+| rotate 极窄窗口 | 轮换期间新建渠道可能未被重加密，需重跑 rotate | 轮换时停写或补跑 |
+| Agents 选择/热更新 | 同角色取 id 最小定义；无 UI 选择，配置变更需手动 InvalidateAgents | 后续加优先级/管理入口 |
+| Worker 工具过滤边界 | 过滤只影响暴露给模型的工具定义，执行仍经策略门 | 不是安全边界，策略门才是 |
+| settings 运行中任务语义 | 预算不回溯、调低并发不抢占运行中任务 | 运行中任务需重启或单独调整 |
+| evidence export 失败不记审计 | 只记成功的 export；失败请求无 audit 行 | 需要时补失败埋点 |
+| workspace 配额锁范围 | advisory lock 仅覆盖 HTTP handler 路径；绕过 handler 不生效 | 所有写路径统一走 handler |
+| LLM 正文采集边界 | 启发式脱敏、未采 tools 定义/原始 HTTP；保留期由启动维护清理 | 需要更严格合规时调整采集/保留 |
 
 ## 6. 领域状态机与业务规则
 
@@ -951,16 +949,16 @@ HTTP 请求
 
 ### 6.13 B4/B5 规则与安全边界（摘要）
 
-- **策略规则**：列表含停用，priority DESC,id ASC；API 不可创建 immutable；immutable 仅禁止改 name/tool/action 与删除，arg_pattern 仍可 PATCH（🟡 风险）；simulate 取启用规则前 200，未知工具 400。
+- **策略规则**：列表含停用，priority DESC,id ASC；API 不可创建 immutable；immutable 除 enabled 外任何字段提交 409；simulate 取启用规则前 200，未知工具 400。
 - **审批**：GET 详情平铺 + 嵌套 approval + node/mission 摘要；cancel 仅 pending，重复/已决策 409。
-- **settings**：白名单键（engine.max_concurrent 1..64、policy.default_action、policy.approval_timeout 1..3600s、mission.default_max_tokens/steps）；B7 起启动/PATCH 即时热生效；运行中任务预算不回溯、调低并发不抢占（🟡）；默认 2/ask/60s。
+- **settings**：白名单键（engine.max_concurrent 1..64、policy.default_action、policy.approval_timeout 1..3600s、mission.default_max_tokens/steps）；B7 起启动/PATCH 即时热生效；运行中任务预算不回溯、调低并发不抢占为设计限制；默认 2/ask/60s。
 - **日志**：进程级环形 2000，GET 默认 200/上限 1000、无 after_id；SSE event=log、20s 心跳、慢订阅丢帧。
-- **通知**：type webhook/email/generic；test webhook 真发 POST，2xx→sent、失败→failed、email/generic→skipped；一律 200 + {sent,channel_id,delivery}；config 明文返回、无出站白名单（🟡）。
+- **通知**：type webhook/email/generic；test webhook 真发 POST，2xx→sent、失败→failed、email/generic→skipped；一律 200 + {sent,channel_id,delivery}；B8 起敏感 config 加密、SSRF 校验、后台事件推送（at-most-once）。
 - **身份/分页**：身份新增/删除（`{kind}/{key...}`，Normalize，重复 409，可删到 0）；after_id 方向随列表（assets 升序 id>，其余倒序 id<），不传保持旧行为；任务内发现排序改 id DESC。
 - **跨任务发现/CSV**：支持过滤+after_id；CSV ≤10000 行、固定表头、防公式注入、空表仅表头。
 - **范围编译**：纯预览不落库；root/subdomain/ip/url→http_probe allow 草案（url 120 > subdomain/ip 110 > root 100），cidr/keyword/icp 仅 notes。
-- **MCP/Skills/Agents/Workspace/Sync**：MCP http JSON-RPC initialize+tools/list、stdio 默认禁用+白名单、失败保留旧工具；Skills 磁盘 `<state>/skills/<tenant>/<name>/`、zip 10MB/200 文件/文本扩展、无 skill_files 表；Agents 仅定义 CRUD/test，**未接入 engine（🟡）**；Workspace 文件系统为准、UTF-8≤1MB、上传≤10MB、拒绝路径穿越/符号链接、非空目录需 recursive；Sync manual/http_json、SSRF 三层（默认拒私网，仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开）、异步 ≤60s、逐条 skipped。
-- **报告/证据/复测**：报告格式 markdown/html/docx/pdf（PDF 依赖阅读器 CJK 字体、DOCX 最小合法、无图片）；流量重放已改走 **executor**（策略门/审批/审计/证据采集，未接线 503，deny/拒绝 403，超时 409，未知工具/其它 502）；证据轮换已实现（重加密全部 blob，新密钥不落盘，需更新 env 并重启；**存量 Snapshot 签名失效，无自动重签 🟡**）；证据审计覆盖 verify 与部分正文 read（best-effort 🟡）；复测 run 重算签名/解密校验（非重跑 exploit），无证据 error；from-node 用 0016 部分唯一索引兜底（并发 409）。
+- **MCP/Skills/Agents/Workspace/Sync**：MCP http JSON-RPC initialize+tools/list、stdio 默认禁用+白名单、失败保留旧工具；Skills 磁盘 `<state>/skills/<tenant>/<name>/`、zip 10MB/200 文件/文本扩展、无 skill_files 表；Agents 定义 CRUD/test 且 B8 已接入 Planner/Worker；Workspace 文件系统为准、UTF-8≤1MB、上传≤10MB、拒绝路径穿越/符号链接、非空目录需 recursive；Sync manual/http_json、SSRF 三层（默认拒私网，仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开）、异步 ≤60s、逐条 skipped。
+- **报告/证据/复测**：报告格式 markdown/html/docx/pdf（PDF 依赖阅读器 CJK 字体、DOCX 最小合法、无图片）；流量重放已改走 **executor**（策略门/审批/审计/证据采集，未接线 503，deny/拒绝 403，超时 409，未知工具/其它 502）；证据轮换已实现（重加密全部 blob + 全租户重签，新密钥不落盘，需更新 env 并重启；极窄窗口为设计限制）；证据审计覆盖 create/rotate/verify/read/export（best-effort，export 失败不记）；复测 run 重算签名/解密校验（非重跑 exploit），无证据 error；from-node 用 0016 部分唯一索引兜底（并发 409）。
 
 ### 6.14 B7 收口语义（摘要）
 
@@ -968,10 +966,20 @@ HTTP 请求
 - **证据轮换重签**：rotate 成功后遍历租户全部快照用新 key 重签，返回 `{rotated,resigned}`；重签中断 500 `rotate_resign_failed` + 已完成数；存在短暂 Verify 409 窗口。
 - **策略 immutable 加固**：immutable 规则除 `enabled` 外任何字段提交 409。
 - **sync 恢复/保留**：启动把 running>15min 置 failed；终态按 `BEACONX_SYNC_RETENTION_DAYS`（默认 30，0=不清理）清理；pending 不恢复。
-- **LLM 正文采集**：planner/worker 6 个调用点写 `llm_exchanges`（失败也记 error）；messages/响应脱敏（键级+常见密钥形态+tool_calls.arguments）、单条 64KB UTF-8 安全截断；`BEACONX_LLM_CAPTURE` 默认 true，写失败 Warn 不阻塞；无保留期清理（🟡）。
-- **通知硬化**：webhook SSRF 校验（loopback/私网/link-local/CGNAT→400 webhook_blocked）、拨号前真实 IP 校验、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；响应 config 敏感键/url userinfo 掩码，存储仍明文（🟡）。
+- **LLM 正文采集**：planner/worker 6 个调用点写 `llm_exchanges`（失败也记 error）；messages/响应脱敏（键级+常见密钥形态+tool_calls.arguments）、单条 64KB UTF-8 安全截断；`BEACONX_LLM_CAPTURE` 默认 true；B8 起按 `BEACONX_LLM_RETENTION_DAYS`（默认 7）清理。
+- **通知硬化**：webhook SSRF 校验（loopback/私网/link-local/CGNAT→400 webhook_blocked）、拨号前真实 IP 校验、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；B8 起敏感 config 加密存储、响应仍掩码；事件 dispatcher 推送（at-most-once）。
 - **Skills meta 回滚**：快照写 meta.json，restore 同时回滚 files+description/version；旧版本无 meta 给 warning。
 - **Workspace 跨进程配额**：pg advisory xact lock 包住统计+写入；未注入时退化进程内锁。
+
+### 6.15 B8 收口（摘要）
+
+- **通知加密+推送**：敏感 config 用证据派生密钥整体加密为 `{"__enc":true,"payload":"enc:v1:…","url":"<无 userinfo url>"}`，DB 无明文；响应仍掩码；旧明文读取时 best-effort 迁移；Evidence=nil 创建/更新敏感配置 503。后台 dispatcher 每 1s 轮询 mission_events，仅推 approval_required/completed/failed/paused；先 INSERT ON CONFLICT 占位（UNIQUE tenant,event_id,channel_id）再发送；webhook sent/failed、email/generic skipped；detail 片段脱敏≤512B；at-most-once，停机不补推。
+- **证据审计**：action 扩展 read/verify/export/create/rotate；create（快照创建成功）、rotate（每条重签）均 best-effort；export 失败不记。
+- **全租户重签**：rotate 遍历全部租户快照重签，返回 `{rotated,resigned}`；轮换前收集全部租户加密通知配置，轮换后重加密回写，收集失败拒绝轮换；极窄窗口新建渠道可能遗漏（需重跑）。
+- **启动维护**：`BEACONX_LLM_RETENTION_DAYS`（默认 7，0=不清理）清理 llm_exchanges（不动 llm_usage）；sync pending（created_at>15min）→ failed；running 15min 恢复与终态 30 天保留沿用。
+- **Agents 接入**：Planner/Worker 按任务解析启用 role=planner/worker 定义，应用 system_prompt/model/tools 白名单（未知工具忽略+Warn）；每任务每角色缓存，InvalidateAgents 热失效；首次记 agent_applied；无定义行为不变；`WithModel` 优先，否则同端点异模型，均不可用回退默认并 Warn（用量仍记配置模型）。
+- **graph 下推**：GraphNodeFilter 下推 kind/state/after_id/limit（500/2000），删除 1000 静默截断；edges 仍受 5000 上限。
+- **Skills/Windows**：`BEACONX_SKILLS_KEEP_VERSIONS`（默认 5，1..50，非法回退）每次裁剪读取；versions 增加 has_meta；CI 增 windows-test job（mcp/llm），Windows stdio 400。
 
 ## 7. 运行时机制
 
@@ -1065,9 +1073,10 @@ HTTP 请求
 
 - HTTP 层：`internal/httpapi/{policy_api,settings_api,logs_api,notifications_api,assets_extra,findings_extra,evidence_extra,retest_extra,mcp_api,skills_api,agents_api,workspace_api,sync_api,traffic_extra,report_extra}.go`；全部通过 `RegisterFeatureRoutes` 在 init 注册，NewHandler 复用同一鉴权中间件。
 - 领域/存储：`internal/logging`（环形缓冲）、`internal/app/{mcp,report,syncdata,workspace}`；`internal/infra/pg/{store_policy_api,store_settings,store_notification,store_mcp,store_skill,store_agent,store_sync,store_data_extra,store_extra_b5}.go`。
-- 安全边界：文件类（Skills/Workspace）做路径 Clean+前缀校验、拒绝符号链接/穿越、大小上限；Sync 做保存/解析/拨号三层 SSRF 校验，默认拒私网；MCP env/headers 响应掩码、stdio 默认禁用+env 白名单+临时工作目录+stdout 上限+超时 kill（Windows 400）；通知 webhook 无出站白名单（🟡）；流量重放已走 executor（policy_gated，403/409/502/503 语义）。
+- 安全边界：文件类（Skills/Workspace）做路径 Clean+前缀校验、拒绝符号链接/穿越、大小上限；Sync 做保存/解析/拨号三层 SSRF 校验，默认拒私网；MCP env/headers 响应掩码、stdio 默认禁用+env 白名单+临时工作目录+stdout 上限+超时 kill（Windows 400）；通知 webhook 默认拒私网+SSRF 校验、配置加密；流量重放已走 executor（policy_gated，403/409/502/503 语义）。
 - B7 新增：`internal/app/ai/llm_capture.go`（采集/脱敏/截断）、`internal/httpapi/llm_capture_api.go`（3 条查看接口）、`internal/infra/pg/store_llm_exchange.go`、`store_skill_meta.go`、`store_workspace_lock.go`；settings 热生效/rotate 重签/policy immutable 加固/sync 恢复保留/通知 SSRF 均在原模块内。
-- 仍为 🟡：通知凭据加密/真实事件推送、Agents 执行装配、LLM 采集保留期、stdio Windows CI、报告字体/图片、graph 1000 过滤、审计全埋点、settings 运行中任务语义。
+- B8 新增：`internal/app/ai/agents.go`（Planner/Worker 定义解析/缓存/热失效）、`internal/app/evidence/secret.go`（EncryptSecret/DecryptSecret）、`internal/infra/pg/{store_maintenance,store_resign,store_notification}.go`、`migrations/0018/0019`；通知 dispatcher 在 main 启停。
+- 仍为设计限制：见 §5.6.3（PDF 字体/图片、edges 5000、at-most-once、rotate 窗口、Agents 选择/热更新、settings 运行中语义、export 失败不记、workspace 锁范围）。
 
 ## 8. 前端对接指南
 
@@ -1217,19 +1226,19 @@ HTTP 请求
 
 | 实体 | 关键字段 | 操作/说明 |
 | --- | --- | --- |
-| `PolicyRule` | id,name,tool,arg_pattern,action,priority,timeout_seconds,enabled,immutable | 列表/CRUD/simulate；immutable 不可删改动作；arg_pattern 可改（🟡） |
+| `PolicyRule` | id,name,tool,arg_pattern,action,priority,timeout_seconds,enabled,immutable | 列表/CRUD/simulate；immutable 除 enabled 外提交 409 |
 | `Settings` | settings{max_concurrent,default_budget{max_tokens,max_steps},default_action,approval_timeout} | GET/PATCH；B7 起即时热生效（运行中任务不回溯，界面可提示范围） |
 | `LogEntry` | id,time,level,msg,attrs | GET 默认 200/上限 1000 无 after_id；SSE event=log |
-| `NotificationChannel` / `Delivery` | id,name,type,config,enabled / channel_id,event,status,detail | test 一律 200+delivery；email/generic skipped；config 明文（🟡） |
+| `NotificationChannel` / `Delivery` | id,name,type,config,enabled / channel_id,event,status,detail | test 一律 200+delivery；config 加密存储、响应掩码；事件推送 at-most-once |
 | `McpServer` / `McpTool` | transport,url/command,args,env,headers,last_status,last_error / server_id,name,input_schema | refresh 失败保留旧工具；env/headers 掩码 |
 | `Skill` / `SkillFile` | name,description,version,file_count / path,size | upload zip≤10MB/≤200 文件；文件路由 `{path...}`；版本 `.versions` 隐藏 |
-| `Agent` | key,name,role,tools,system_prompt,model,enabled | CRUD/test；🟡 未接入执行 |
+| `Agent` | key,name,role,tools,system_prompt,model,enabled | CRUD/test；B8 已接入 Planner/Worker（同角色取 id 最小） |
 | `SyncSource` / `SyncProject` / `SyncRun` | type,config / external_id,data / status,stats,error | run 202+running；SSRF 默认拒私网 |
 | `AssetIdentity` | kind,key | POST 新增/DELETE `{kind}/{key...}`；重复 409 |
 | `Finding`（跨任务/导出） | 同既有 Finding | `GET /findings` 跨任务；`/findings/export` CSV（≤10000） |
 | `Retest`（run/evidence） | 同既有 Retest | run 重算签名/解密，非重跑；evidence 列出绑定 |
 | `Report` | 同既有 Markdown；`format=markdown/html/docx/pdf` | PDF 依赖阅读器字体；DOCX 最小合法 |
-| `EvidenceAudit` | snapshot_id,action,actor,created_at | 🟡 仅部分埋点；rotate 已实现（200，签名失效需重签） |
+| `EvidenceAudit` | snapshot_id,action,actor,created_at | create/rotate/verify/read/export 已埋点；export 失败不记为设计限制 |
 | `TrafficReplay`（B6） | `policy_gated,output,status,traffic_id` | ✅ 走 executor；traffic_id best-effort（可为 0）；403/409/502/503 |
 | `ActivityItem` / `ActivityList`（B6） | id,mission_id,type,payload?,created_at；外层 activity,next_before_id | `GET /activity` 跨任务倒序；limit 50/200；不存在的 mission_id 返回空数组 |
 | `SkillVersion` / `SkillVersionList`（B6） | timestamp,files,size；外层 versions | `GET /skills/{name}/versions`；保留最近 5 份 |
@@ -1240,7 +1249,12 @@ HTTP 请求
 | `LLMExchangeDetail`（B7） | id,mission_id,role,model,error?,prompt/completion/total_tokens,request_bytes,response_bytes,truncated,redacted,created_at | 详情不含正文；正文走 request/response 子接口 |
 | `LLMExchangeRequest`（B7） | 已脱敏 messages JSON（原样输出） | `application/json`；404/401/跨租户同 404 |
 | `LLMExchangeResponse`（B7） | 已脱敏响应/错误文本 | `text/plain`；失败调用返回错误文本 |
-| `Settings`（B7 语义） | 同既有字段 | PATCH 即时热生效；运行中任务预算不回溯/调低并发不抢占（🟡） |
+| `Settings`（B7 语义） | 同既有字段 | PATCH 即时热生效；运行中任务语义为设计限制 |
+| `NotificationChannel`（B8） | 同既有字段；config 敏感键加密后为 `{__enc,payload,url}` | 响应仍掩码；DB 无明文；事件推送 at-most-once |
+| `EvidenceAudit`（B8） | action 扩展 read/verify/export/create/rotate | create/rotate 已埋点；export 失败不记 |
+| `SkillVersion`（B8） | timestamp,files,size,has_meta | 保留数由 `BEACONX_SKILLS_KEEP_VERSIONS` 控制（默认 5） |
+| `Agent`（B8 运行时） | 定义仍 CRUD；Planner/Worker 按 role 应用 prompt/model/tools 白名单 | 同角色取 id 最小；热更新需 InvalidateAgents |
+| `GraphView`（B8） | 既有字段；after_id/next_after_id | kind/state/after_id/limit 下推；edges 仍 5000 上限 |
 
 - 分页组件：B1–B3 列表 + B4 的 assets/findings/traffic/commands/llm-records 支持 `after_id`/`next_after_id`（方向随列表）；日志无 after_id。
 - 通知 test 用 200+delivery 展示，不要按 502 处理；webhook 真实出站、email/generic skipped。
@@ -1268,33 +1282,33 @@ HTTP 请求
 | 7 | tasks/detail | 任务头 + 10 Tab | ✅ | 可直接开发（基础版） | #7,#12,#13,#33–#56,#68 | 会话 transcript（⬜） | /missions/:id |
 | 8 | tasks/detail/sessions | transcript + SSE + worker 操作 | ⬜ | 完全阻塞 | 仅 #12 SSE | Agent 会话/侧问（未排期） | 后续 |
 | 9 | tasks/detail/overview | 目标/范围/拦截/LLM 链 | ✅ | 可直接开发 | #37–#40 范围/计划；#36 覆盖度；#117–#124 规则/审批 | LLM profile 管理（⬜） | 任务概览 Tab |
-| 10 | tasks/detail/graph | 探索图 | ✅ | 可直接开发（基础版） | #41–#43；after_id/next_after_id | 过滤仍受 ListNodes 1000 上限（🟡） | 作战图 Tab |
+| 10 | tasks/detail/graph | 探索图 | ✅ | 可直接开发 | #41–#43；after_id/next_after_id；B8 过滤下推 | edges 5000 上限（设计） | 作战图 Tab |
 | 11 | tasks/detail/broadcast | 分页播报板 | 🟡 | 依赖计划接口 | #41 节点数据 | 专门查询/语义 API（未排期） | 并入作战图 |
 | 12 | tasks/detail/findings | 任务发现 | ✅ | 可直接开发 | #44–#51、#82（from-node）、#78/#79（跨任务/导出） | 无 | 发现 Tab |
 | 13 | tasks/detail/retests | 复测 | ✅ | 可直接开发（基础版） | #52–#55、#80/#81（run/evidence） | 自动重跑 exploit（⬜ 非目标） | 复测 Tab |
 | 14 | tasks/detail/assets | 任务资产 | ✅ | 可直接开发 | #33–#35、#114/#115 身份写 | 无 | 任务资产 Tab |
 | 15 | tasks/detail/coverage-graph | 覆盖度图 | ✅ | 可直接开发 | #36 + #41 | 图布局前端组合 | 覆盖度 Tab |
 | 16 | tasks/detail/intercept | 任务内审批 | ✅ | 可直接开发 | #14/#15、#123/#124 详情/取消 | 无 | 审批 Tab |
-| 17 | tasks/detail/report | 报告 | ✅ | 可直接开发 | #56 多格式 markdown/html/docx/pdf | 图片/字体嵌入（🟡） | 报告 Tab |
+| 17 | tasks/detail/report | 报告 | ✅ | 可直接开发 | #56 多格式 markdown/html/docx/pdf | PDF 字体/图片（设计） | 报告 Tab |
 | 18 | findings | 发现三视图/筛选/导出 | ✅ | 可直接开发 | #78 跨任务列表、#79 CSV、#44–#51 任务内 | 跨任务详情聚合（前端组合） | /findings |
 | 19 | findings/detail | 发现详情/攻击链/流量 | ✅ | 可直接开发 | #46 详情；#41 图；#49 证据 | 攻击链聚合（前端） | /findings/:id |
 | 20 | traffic | 抓包列表/详情/删除/清理 | ✅ | 可直接开发 | #60–#64、#95 HAR、#96 replay（策略门）、#97 清理 | replay 经 executor（403/409/502/503） | /traffic |
 | 21 | commands | 工具执行历史 + 统计 | ✅ | 可直接开发 | #65/#66 | 按工具统计（前端） | /commands |
-| 22 | llm-records | LLM 记录 + token 聚合 + 正文 | ✅ | 可直接开发 | #67–#69、#144–#146 详情/请求/响应 | 采集保留期（🟡 未做） | /llm-records |
+| 22 | llm-records | LLM 记录 + token 聚合 + 正文 | ✅ | 可直接开发 | #67–#69、#144–#146 详情/请求/响应 | 采集保留期由 env 控制（设计） | /llm-records |
 | 23 | assets | 企业范围 + 资产 CRUD + 搜索 | ✅ | 可直接开发 | #19–#32、#114/#115 身份、#24 attrs 扩展 + after_id 扩展 | 全量游标（🟡） | /assets |
-| 24 | sync | 外部数据源同步 | ✅ | 可直接开发（基础版） | #105–#113 | 崩溃恢复/保留策略（🟡） | /sync |
-| 25 | workspace | workDir 文件管理 | ✅ | 可直接开发（基础版） | #90–#94 | 配额/清理（🟡） | /workspace |
+| 24 | sync | 外部数据源同步 | ✅ | 可直接开发 | #105–#113；B8 启动恢复/保留 | pending 不恢复（设计） | /sync |
+| 25 | workspace | workDir 文件管理 | ✅ | 可直接开发 | #90–#94；B8 跨进程配额 | 配额锁仅 handler（设计） | /workspace |
 | 26 | system/llm | LLM profile CRUD | ⬜ | 完全阻塞 | 仅 config 文件 | profile 表/CRUD（未排期） | /system/llm |
-| 27 | system/agents | Agent 列表/编辑器 | 🟡 | 依赖计划接口 | #125–#130 CRUD/test | 接入 engine 装配（🟡） | /system/agents |
-| 28 | system/agents/detail | 深链复用编辑器 | 🟡 | 依赖计划接口 | #127/#128 | 同上 | /system/agents/:key |
-| 29 | system/mcp | MCP CRUD/工具可见性 | ✅ | 可直接开发 | #83–#89 | stdio 沙箱（🟡） | /system/mcp |
-| 30 | system/skills | Skill 文件树/上传/版本 | ✅ | 可直接开发 | #131–#140 + #142/#143 versions/restore | 版本保留 5 份（🟡） | /system/skills |
+| 27 | system/agents | Agent 列表/编辑器 | ✅ | 可直接开发 | #125–#130 CRUD/test；B8 已接入 Planner/Worker | 选择/热更新限制（设计） | /system/agents |
+| 28 | system/agents/detail | 深链复用编辑器 | ✅ | 可直接开发 | #127/#128 | 同角色 id 最小（设计） | /system/agents/:key |
+| 29 | system/mcp | MCP CRUD/工具可见性 | ✅ | 可直接开发 | #83–#89；B8 Windows CI | stdio 仅 Windows 400（设计） | /system/mcp |
+| 30 | system/skills | Skill 文件树/上传/版本 | ✅ | 可直接开发 | #131–#140 + #142/#143；B8 保留数可配 | 无 UI 版本清理（设计） | /system/skills |
 | 31 | system/tools | 工具参数编辑/自定义工具 | 🟡 | 依赖计划接口 | 静态注册 | 工具配置表（未排期） | /system/tools |
-| 32 | system/notify | 通知渠道/投递/测试 | ✅ | 可直接开发（基础版） | #98–#104（SSRF/掩码已硬化） | 事件推送/凭据加密/片段脱敏（🟡） | /system/notify |
-| 33 | system/intercept | 拦截规则/模拟 | ✅ | 可直接开发 | #117–#124 | 规则编译落库（🟡） | /system/policy |
+| 32 | system/notify | 通知渠道/投递/测试/推送 | ✅ | 可直接开发 | #98–#104；B8 加密+事件推送 | at-most-once/停机不补推（设计） | /system/notify |
+| 33 | system/intercept | 拦截规则/模拟 | ✅ | 可直接开发 | #117–#124 | 范围编译不落库（设计） | /system/policy |
 | 34 | system/intercept/assets | 全局资产黑名单 | ⬜ | 完全阻塞 | 无 | 黑名单表（未排期） | 后续 |
 | 35 | system/intercept/approvals | 审批记录 | ✅ | 可直接开发 | #14/#15、#123/#124 | 无 | /system/approvals |
-| 36 | system/logs | SSE 日志流 | ✅ | 可直接开发 | #71/#72 | after_id/多进程（🟡） | /system/logs |
+| 36 | system/logs | SSE 日志流 | ✅ | 可直接开发 | #71/#72 | 进程级/无 after_id（设计） | /system/logs |
 | 37 | system/settings | 更新/GC/Web 搜索/环境检测 | ✅ | 可直接开发（基础版） | #57–#59 自更新；#73/#74 settings（热生效） | GC/检测（⬜） | /system/settings |
 
 > 表中 #1–#7 与 #18–#37 对应原版 27 个顶层页面；#8–#17 是任务详情页的 10 个 Tab（对照用，不单独计页面）。
@@ -1316,11 +1330,11 @@ HTTP 请求
 | 功能 | 11 | `/sync` | 数据同步 | 数据源、项目、运行记录 | #105–#113 | 空态；10s | ✅ 基础版（崩溃恢复🟡） |
 | 功能 | 12 | `/chat` | 对话 | 会话/transcript/@提及 | 无（未排期） | — | ⬜ 阻塞 |
 | 系统 | 13 | `/system/llm` | LLM 配置 | profile CRUD/测试 | 仅 config；无 API | — | ⬜ 阻塞 |
-| 系统 | 14 | `/system/agents` | Agents | 列表/编辑器/试跑 | #125–#130 | 空态 | 🟡 CRUD 可做，执行接入⬜ |
+| 系统 | 14 | `/system/agents` | Agents | 列表/编辑器/试跑/运行时定义 | #125–#130（B8 已接入） | 空态 | ✅ 可开发（选择/热更新限制） |
 | 系统 | 15 | `/system/mcp` | MCP | server CRUD/刷新工具 | #83–#89 | 空态 | ✅ 可开发 |
 | 系统 | 16 | `/system/skills` | Skills | 文件树/上传/编辑/版本/恢复 | #131–#140、#142/#143 | 空态 | ✅ 可开发（版本保留 5 份🟡） |
 | 系统 | 17 | `/system/tools` | 工具 | 内置参数编辑/自定义 | 静态注册 | — | 🟡 依赖计划 |
-| 系统 | 18 | `/system/notify` | 通知 | 渠道 CRUD、测试、投递 | #98–#104 | 空态 | ✅ 基础版（推送/加密🟡） |
+| 系统 | 18 | `/system/notify` | 通知 | 渠道 CRUD、测试、投递、推送 | #98–#104（B8 加密+推送） | 空态 | ✅ 可开发（at-most-once 设计） |
 | 系统 | 19 | `/system/policy` | 策略/审批 | 规则 CRUD、模拟、审批记录/取消 | #117–#124 | 空态；5s | ✅ 可开发 |
 | 系统 | 20 | `/system/logs` | 日志 | 级别筛选、实时流 | #71/#72 | — | ✅ 可开发 |
 | 系统 | 21 | `/system/settings` | 设置 | 自更新、运行参数（PATCH 即时生效） | #57–#59、#73/#74 settings | — | ✅ 可开发（运行中任务语义🟡） |
@@ -1329,7 +1343,7 @@ HTTP 请求
 
 ## 10. M6.2 后端补齐路线（B1–B5 已实现/部分实现）
 
-> B1–B3（59 条）+ B4（24 条）+ B5（46 条 pattern）已实现（见 §5 #19–#140）；仅 B5 少数条目仍为 🟡/⬜（证据轮换、Agents 执行接入、settings 热生效等）。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（B1 默认 50/上限 200 且非法静默回退，B3 非法 400、超上限钳制）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量/命令/LLM 记录按 `id DESC`。
+> B1–B7（76 条 feature pattern）已实现（见 §5 #19–#146）；B8 无新增路由；剩余项统一列在 §5.6.3「已知设计限制」。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（B1 默认 50/上限 200 且非法静默回退，B3 非法 400、超上限钳制）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量/命令/LLM 记录按 `id DESC`。
 
 ### B1：资产 / 企业 / 范围 / 覆盖率 / 任务资产（已实现 2026-10-21）
 
@@ -1405,13 +1419,13 @@ HTTP 请求
 | --- | --- | --- |
 | 策略/审批 | 规则 CRUD 5 + simulate；审批详情/取消；共 8 条 | ✅（规则 arg_pattern 可改 🟡） |
 | 日志 | GET `/logs`、GET `/logs/stream`（SSE event:log） | ✅（进程级、无 after_id 🟡） |
-| 通知 | 渠道 CRUD/测试/deliveries 共 7 条 | ✅（真实事件推送/SSRF 白名单/config 加密 🟡） |
+| 通知 | 渠道 CRUD/测试/deliveries 共 7 条 | ✅（B8 加密+事件推送） |
 | 设置 | GET/PATCH `/settings` | ✅ 持久化+可读，PATCH 即时热生效（运行中任务语义🟡） |
 | 数据补全 | 身份新增/删除（`{kind}/{key...}`）、跨任务发现、CSV 导出、scope compile 预览 | ✅ |
 | 既有接口扩展 | assets/findings/traffic/commands/llm-records 的 after_id；findings node_id；companies attrs；任务内发现排序改 id DESC | ✅ |
 
 - 迁移：`0008_settings`、`0009_notifications`（2 表）；无其他表。B4 路由全部通过 `RegisterFeatureRoutes` 注册，复用鉴权/错误信封。
-- B7 后：settings 热生效 ✅、规则 immutable 加固 ✅；仍未完成：通知真实事件推送/凭据加密（🟡）、CSV 10000 行截断（🟡）、范围编译不落库（🟡）。
+- B8 后：settings 热生效 ✅、规则 immutable ✅、通知加密+推送 ✅；仍为设计限制：CSV 10000 行截断、范围编译不落库。
 
 ### B5：MCP / Skills / Agents / Workspace / Sync / 增强（✅ 大部分已实现 2026-10-22）
 
@@ -1420,17 +1434,17 @@ HTTP 请求
 | 分类 | 已实现 | 状态 |
 | --- | --- | --- |
 | MCP | servers CRUD/refresh + tools（7） | ✅（stdio 默认禁用+白名单；失败保留旧工具） |
-| Skills | CRUD/upload/files（10，文件路由 `{path...}`） | ✅（磁盘存储、无 skill_files 表、版本历史 🟡） |
-| Agents | CRUD/test（6） | 🟡 未接入 engine 装配 |
-| Workspace | files/upload（5，`{path...}`） | ✅（路径穿越/符号链接拒绝、大小限制；配额 🟡） |
-| Sync | sources/projects/run/runs（9） | ✅ 基础版（SSRF 三层、默认拒私网；崩溃恢复/保留策略 🟡） |
+| Skills | CRUD/upload/files（10，文件路由 `{path...}`） | ✅（磁盘存储；B8 保留数可配置、版本历史/restore meta ✅） |
+| Agents | CRUD/test（6） | ✅（B8 已接入 Planner/Worker） |
+| Workspace | files/upload（5，`{path...}`） | ✅（路径安全、大小限制；B8 跨进程配额） |
+| Sync | sources/projects/run/runs（9） | ✅（SSRF 三层；B8 启动恢复/保留） |
 | 流量增强 | HAR 导出/重放/任务级清理（3） | ✅（B6 重放已走 executor 策略门） |
-| 证据增强 | 审计/导出/轮换（3） | 审计/导出 ✅ 部分；轮换 ✅（签名失效需重签 🟡） |
+| 证据增强 | 审计/导出/轮换（3） | ✅（B8 create/rotate 审计、全租户重签） |
 | 复测/发现 | run/evidence/from-node（3） | ✅（run 只校验证据，不重跑 exploit；from-node 由 0016 唯一索引防重复） |
 | 报告 | markdown/html/docx/pdf 扩展 | ✅（PDF 依赖阅读器 CJK 字体；DOCX 最小合法） |
 
 - 迁移：0010 mcp、0011 skills、0012 agents、0013 workspace（空操作）、0014 evidence_access_log、0015 sync（3 表）。
-- B7 后：证据轮换重签 ✅、sync 恢复/保留 ✅、workspace 跨进程锁 ✅、LLM 正文采集 ✅；仍未完成：Agents 接入执行（🟡）、通知事件推送/加密（🟡）、证据审计全埋点（🟡）、stdio Windows CI（🟡）。
+- B8 后：Agents 接入、通知加密/推送、审计 create/rotate、stdio Windows CI 均已完成；剩余仅为已知设计限制（§5.6.3）。
 
 ### B6：硬化与可观测性（✅ 已实现/部分 2026-10-22）
 
@@ -1441,16 +1455,16 @@ B6 新增 3 条 feature 路由（总数 140→**143**），并硬化既有能力
 | 全局活动流 `GET /activity` | ✅ | mission_events 跨任务倒序；limit 50/200；before_id/mission_id/type；不存在任务过滤返回 [] |
 | Skills 版本 `GET /skills/{name}/versions`、`POST .../{versions}/{timestamp}/restore` | ✅ | .versions 快照、保留 5 份、restore 先快照再恢复；.versions 对文件接口隐藏/400；B7 起 restore 同时回滚 files+meta（description/version） |
 | 流量重放走 executor | ✅ | 经策略门/审批/审计/证据采集；未接线 503 executor_unavailable；deny/拒绝 403、超时 409、未知工具/其它 502；返回 policy_gated/output/status/traffic_id(best-effort) |
-| 证据密钥轮换 | ✅/🟡 | POST /evidence/rotate {new_key_hex}→200 {rotated,new_key_hex_not_stored,notice}；全程写锁、逐文件重加密、失败 best-effort 回滚；新密钥不落盘需更新 env 并重启；**存量 Snapshot 签名失效，无自动重签（🟡）** |
-| 证据审计覆盖 | 🟡 | verify 成功/失败均记 verify；流量正文读取且 blob 被快照引用时记 read；best-effort，仍有路径未埋点 |
-| 作战图分页 | ✅/🟡 | `?after_id=` 取 id>after_id（升序），响应 next_after_id；edges/anchors 全量；过滤仍受 ListNodes 1000 上限（🟡） |
+| 证据密钥轮换 | ✅/🟡 | POST /evidence/rotate {new_key_hex}→200 {rotated,resigned,new_key_hex_not_stored,notice}；写锁重加密+全租户重签；新密钥不落盘需更新 env 并重启；极窄窗口见设计限制 |
+| 证据审计覆盖 | ✅/🟡 | create/rotate/verify/read/export 均埋点；best-effort；export 失败不记（设计限制） |
+| 作战图分页 | ✅ | kind/state/after_id/limit 下推（500/2000），删除 1000 截断；edges/anchors 仍全量；edges 5000 上限（设计） |
 | Dashboard 小时趋势 | ✅ | `hourly` 最近 24 小时 UTC 整点桶（hour/missions_created/missions_done/tokens/approvals_requested，缺失补 0）；旧字段不变 |
-| MCP stdio 沙箱 | 🟡 | 默认禁用；env 白名单、临时工作目录、stdout≤1MiB、超时 kill 进程组、命令白名单/`BEACONX_MCP_STDIO_DIR`；端点显式 env 原样透传；Windows 400 |
-| Workspace 配额 | 🟡 | 默认 100MB（`BEACONX_WORKSPACE_QUOTA_MB`）；PUT/上传预检+后复核，超限 413 quota_exceeded；列表 quota_bytes/used_bytes；per-mission 锁仅进程内 |
+| MCP stdio 沙箱 | ✅/🟡 | 默认禁用；env 白名单、临时目录、stdout≤1MiB、超时 kill；Windows 400；B8 加 windows-test CI |
+| Workspace 配额 | ✅/🟡 | 默认 100MB；B8 pg advisory xact lock 跨进程（仅 handler 路径，设计限制） |
 | from-node 唯一性 | ✅ | 0016 部分唯一索引 `uq_findings_node` 兜底，23505→409 |
 
 - 迁移：0016 仅一条部分唯一索引；无新表。
-- B7 后仍为 🟡：通知事件推送/凭据加密/投递片段脱敏、Agents 接入 engine、证据审计全埋点、LLM 采集保留期、MCP stdio Windows CI、报告字体/图片、graph 1000 过滤、settings 运行中任务语义。
+- B8 后：通知加密/推送、Agents 接入、审计 create/rotate、stdio Windows CI 均已完成；剩余为已知设计限制（§5.6.3）。
 
 ### B7：LLM 采集与收口硬化（✅ 已实现/部分 2026-10-22）
 
@@ -1459,17 +1473,36 @@ B7 新增 **3 条 llm-records 路由**（总数 143→**146**）并收口 B6 遗
 | 能力 | 状态 | 实际实现 |
 | --- | --- | --- |
 | LLM 调用详情/请求/响应 | ✅ | GET `/llm-records/{id}`（不含正文）、`/request`（JSON 已脱敏）、`/response`（text/plain）；404/跨租户同 404 |
-| LLM 正文采集 | ✅/🟡 | planner/worker 6 个调用点写 `llm_exchanges`（失败也记 error）；键级/密钥形态/tool_calls.arguments 脱敏、64KB UTF-8 截断、`BEACONX_LLM_CAPTURE` 默认 true；保留期未做（🟡） |
-| settings 热生效 | ✅/🟡 | 启动读 settings 覆盖 executor/engine；PATCH 即时生效（默认动作/审批超时/并发/任务默认预算）；运行中任务预算不回溯、调低并发不抢占（🟡） |
-| 证据轮换重签 | ✅/🟡 | rotate 后遍历租户快照用新 key 重签，返回 `{rotated,resigned}`；中断 500 `rotate_resign_failed`；短暂 Verify 409 窗口、多租户范围（🟡） |
+| LLM 正文采集 | ✅ | planner/worker 6 个调用点写 `llm_exchanges`；脱敏、64KB 截断、`BEACONX_LLM_CAPTURE` 默认 true；B8 增加 `BEACONX_LLM_RETENTION_DAYS`（默认 7）清理 |
+| settings 热生效 | ✅/🟡 | 启动读 settings、PATCH 即时生效；运行中任务预算不回溯/调低并发不抢占为设计限制（§5.6.3） |
+| 证据轮换重签 | ✅/🟡 | B8 遍历全部租户重签，返回 `{rotated,resigned}`；轮换前收集/轮换后重加密通知配置；极窄窗口见设计限制 |
 | 策略 immutable 加固 | ✅ | 除 enabled 外任何字段提交 409 |
-| sync 恢复/保留 | ✅/🟡 | 启动 running>15min→failed；终态按 `BEACONX_SYNC_RETENTION_DAYS`（默认 30，0=不清理）清理；pending 不恢复（🟡） |
-| 通知 SSRF/掩码 | ✅/🟡 | webhook 发送前/拨号前 SSRF 校验（默认拒私网，`BEACONX_NOTIFY_ALLOW_PRIVATE`）、禁重定向/代理；响应敏感键/url userinfo 掩码；存储明文、真实事件推送未做（🟡） |
-| Skills meta 回滚 | ✅/🟡 | 快照写 meta.json，restore 回滚 files+description/version；旧快照 warning；保留 5 份（🟡） |
-| Workspace 跨进程配额 | ✅/🟡 | pg advisory xact lock（FNV tenant:mission）包住统计+写入；未注入退化进程内锁（🟡） |
+| sync 恢复/保留 | ✅ | 启动 running>15min→failed；B8 追加 pending>15min→failed；终态按 `BEACONX_SYNC_RETENTION_DAYS` 清理 |
+| 通知 SSRF/掩码 | ✅ | webhook SSRF 校验（默认拒私网）、禁重定向/代理；响应敏感键/url userinfo 掩码；B8 起配置加密+事件推送 |
+| Skills meta 回滚 | ✅/🟡 | 快照写 meta.json，restore 回滚 files+description/version；B8 保留数改由 `BEACONX_SKILLS_KEEP_VERSIONS` 控制 |
+| Workspace 跨进程配额 | ✅/🟡 | pg advisory xact lock 包住统计+写入；仅 handler 路径生效（设计限制） |
 
 - 迁移：0017 `llm_exchanges`（1 表 + 2 索引，FK mission CASCADE）；正文含提示词/模型响应，敏感，按租户+任务查询。
-- 仍为 🟡/⬜：通知凭据加密/真实事件推送/投递片段脱敏、Agents 接入 engine、LLM 采集保留期/生产默认、MCP stdio Windows CI、报告 PDF 字体/图片、graph 过滤 1000、证据审计全埋点、settings 运行中任务语义、多租户轮换重签范围。
+- B8 后：通知加密/推送、Agents 接入、LLM 保留、MCP Windows CI 已完成；剩余为已知设计限制（§5.6.3）。
+
+### B8：🟡 清理与设计限制收口（✅ 已实现 2026-10-22）
+
+B8 **无新增路由**（仍 146），新增两迁移与一组行为收口：
+
+| 能力 | 状态 | 实际实现 |
+| --- | --- | --- |
+| 通知渠道凭据加密 | ✅ | Evidence 派生密钥 EncryptSecret/DecryptSecret；敏感 config 整体加密为 `{__enc,payload,url}`，DB 无明文；响应仍掩码；旧明文 best-effort 迁移；Evidence=nil 时 503 |
+| 通知事件推送 | ✅/🟡 | dispatcher 1s 轮询 mission_events（跨租户），推 approval_required/completed/failed/paused；INSERT ON CONFLICT 占位 → 发送（UNIQUE tenant,event_id,channel_id）；deliveries webhook sent/failed、email/generic skipped；detail 脱敏≤512B；at-most-once/停机不补推（设计限制） |
+| 证据审计 create/rotate | ✅/🟡 | action 扩展 read/verify/export/create/rotate；create 快照、rotate 每条重签均记；best-effort；export 失败不记（设计限制） |
+| 全租户轮换重签 | ✅/🟡 | 遍历全部租户快照重签；rotate 前收集全部租户加密通知配置、轮换后重加密回写；极窄窗口新建渠道可能遗漏（设计限制） |
+| 启动维护 | ✅ | `BEACONX_LLM_RETENTION_DAYS`（默认 7）清理 llm_exchanges；sync pending>15min→failed；running 恢复/终态保留沿用 |
+| Agents 接入 | ✅/🟡 | Planner/Worker 按任务解析 role 定义，应用 system_prompt/model/tools 白名单；缓存+InvalidateAgents；无定义行为不变；同角色取 id 最小/无 UI 选择（设计限制） |
+| graph 过滤下推 | ✅/🟡 | kind/state/after_id/limit 下推（500/2000），删除 1000 截断；edges 5000 上限（设计限制） |
+| Skills 保留配置 | ✅ | `BEACONX_SKILLS_KEEP_VERSIONS`（默认 5，1..50）每次裁剪读取；versions 增 has_meta；legacy warning 保留 |
+| MCP Windows CI | ✅/🟡 | ci.yml 增 windows-test（mcp/llm）；Windows stdio 400；无真实 Windows 业务 CI（设计限制） |
+
+- 迁移：`0018_notification_push`（notification_events 1 表 + 2 索引）、`0019_evidence_audit_actions`（CHECK 扩展，无新表）。
+- 剩余**已知设计限制**：PDF 字体/图片、edges 5000、通知 at-most-once/停机不补推、rotate 极窄窗口、Agents 选择/热更新、settings 运行中任务语义、evidence export 失败不记、workspace 锁仅 handler、LLM 采集启发式脱敏/未采 tools。
 
 ## 11. 配置与环境变量
 
@@ -1560,6 +1593,8 @@ B7 新增 **3 条 llm-records 路由**（总数 143→**146**）并收口 B6 遗
 | `BEACONX_LLM_CAPTURE` | 是否采集 LLM 请求/响应正文 | 默认 true；关闭后不写 llm_exchanges |
 | `BEACONX_NOTIFY_ALLOW_PRIVATE` | 通知 webhook 是否允许私网/loopback | 默认 false（SSRF 防护） |
 | `BEACONX_SYNC_RETENTION_DAYS` | sync 终态记录保留天数 | 默认 30；0=不清理 |
+| `BEACONX_LLM_RETENTION_DAYS` | llm_exchanges 正文保留天数 | 默认 7；0=不清理；不动 llm_usage |
+| `BEACONX_SKILLS_KEEP_VERSIONS` | Skills 版本快照保留数 | 默认 5；1..50，非法回退 |
 
 > 这些变量由 B4/B5 功能代码直接读取，不属于 `internal/config` 的 29 个配置项；`BEACONX_TEST_PG_DSN` 仅测试使用。
 
@@ -1672,7 +1707,8 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 2026-10-21 | 提交 38aaeb4（M6.2-B1） | 实现 M6.2-B1：企业/资产/范围/覆盖率/任务资产 API（18 条，总路由 39 条） | §1、§3、§5、§6、§8、§9、§10、§14 |
 | 2026-10-21 | `ad4f3db` | 实现 M6.2-B2：B2a 任务范围/计划/作战图/节点 7 条 + B2b 发现/证据/复测/报告 13 条（共 20 条，总路由 39→59）；新增迁移 0007 三表与 `internal/domain/finding` 状态机 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-21 | `e08401b` | 实现 M6.2-B3：流量列表/详情/正文/删除 5 条 + 命令历史 2 条 + LLM 记录/任务用量/用量聚合 3 条 + Dashboard 1 条（共 11 条，总路由 59→70）；无新迁移；`spent_total`/`today` 口径与 DB 时区说明 | §1、§3、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
-| 2026-10-22 | 本次提交（工作区） | B4+B5 最终文档同步：已实现 140 条（基础 70 + feature 70）；补 0008–0015 共 11 表、B4 24 条 + B5 46 条 pattern、报告多格式扩展、§5.6 状态与实际偏差；OpenAPI 1.0.0 / README / data-model / runtime / evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
+| 2026-10-22 | `2cc079a` | B4+B5 最终文档同步：已实现 140 条（基础 70 + feature 70）；补 0008–0015 共 11 表、B4 24 条 + B5 46 条 pattern、报告多格式扩展、§5.6 状态与实际偏差；OpenAPI 1.0.0 / README / data-model / runtime / evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
 | 2026-10-21 | 本次提交 | 文档补全计划接口与三态标注（未实现，供前端设计）：新增 ✅/🟡/⬜ 图例；§5.2 已实现路由加状态列；§5.6 新增 73 条计划接口草案（B4 26 + B5 47）与 B1/B2/B3 缺口索引；§9 改为三态映射 + 可用性结论 + 21 项前端页面拆分；§10 B4/B5 改为计划明细表；data-model 增加计划表标注 | §1、§5、§9、§10、§14 |
-| 2026-10-22 | 本次提交（工作区） | B6 硬化文档同步：路由 140→143（activity、skills versions/restore）；重放改走 executor、证据轮换实现（签名失效警示）、审计覆盖、graph after_id、Dashboard hourly、stdio/workspace 硬化、0016 部分唯一索引；OpenAPI 1.1.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
-| 2026-10-22 | 本次提交（工作区） | B7 收口文档同步：路由 143→146（llm-records 详情/request/response）；0017 llm_exchanges；settings 热生效、rotate 重签、immutable 加固、sync 恢复/保留、通知 SSRF/掩码、skills meta 回滚、workspace advisory lock；OpenAPI 1.2.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
+| 2026-10-22 | `b754bcc` | B6 硬化文档同步：路由 140→143（activity、skills versions/restore）；重放改走 executor、证据轮换实现（签名失效警示）、审计覆盖、graph after_id、Dashboard hourly、stdio/workspace 硬化、0016 部分唯一索引；OpenAPI 1.1.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
+| 2026-10-22 | `5b52090` | B7 收口文档同步：路由 143→146（llm-records 详情/request/response）；0017 llm_exchanges；settings 热生效、rotate 重签、immutable 加固、sync 恢复/保留、通知 SSRF/掩码、skills meta 回滚、workspace advisory lock；OpenAPI 1.2.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
+| 2026-10-22 | 本次提交 | B8 🟡 清理（含 MCP stdio 瞬时启动错误重试与测试稳定性）：0018 notification_events（推送去重）、0019 审计 action 扩展；通知凭据加密/事件推送、审计 create/rotate、全租户重签、启动维护（LLM 保留/sync pending）、Agents 接入 Planner/Worker、graph 过滤下推、skills 保留配置、MCP Windows CI；文档增加「已知设计限制」；OpenAPI 1.2.1/README/data-model/runtime/evidence/configuration 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |

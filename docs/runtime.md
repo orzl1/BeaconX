@@ -174,3 +174,14 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 - **sync 恢复/保留**：启动 running>15min→failed；终态按 `BEACONX_SYNC_RETENTION_DAYS`（默认 30，0=不清理）清理；pending 不恢复（🟡）。
 - **通知 SSRF**：webhook 发送前/拨号前校验（loopback/私网/link-local/CGNAT→400 webhook_blocked）、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；响应 config 敏感键/url userinfo 掩码，存储明文（🟡）。
 - **Skills/Workspace**：快照含 meta.json，restore 回滚 files+description/version（旧快照 warning）；workspace 配额用 pg advisory xact lock 跨进程，未注入退化进程内锁。
+
+## 13. B8 收口（M6.2-B8）
+
+- **通知加密**：敏感 config 用证据派生密钥 EncryptSecret/DecryptSecret 整体加密为 `{__enc,payload,url}`，DB 无明文；响应仍掩码；旧明文 best-effort 迁移；Evidence=nil 创建/更新敏感配置 503。
+- **通知事件推送**：后台 dispatcher 每 1s 轮询 mission_events（跨租户），仅 approval_required/completed/failed/paused；先 INSERT ON CONFLICT 占位（UNIQUE tenant,event_id,channel_id）再发送，多副本单发送者；deliveries webhook sent/failed、email/generic skipped；detail 片段脱敏≤512B；**at-most-once，启动游标取当前最大 event id（停机不补推）**。
+- **证据审计**：action 扩展 read/verify/export/create/rotate；create/rotate 均 best-effort；export 失败不记（设计限制）。
+- **全租户重签**：rotate 遍历全部租户快照重签；轮换前收集全部租户加密通知配置、轮换后重加密回写，收集失败拒绝轮换；极窄窗口新建渠道可能遗漏（需重跑）。
+- **启动维护**：`BEACONX_LLM_RETENTION_DAYS`（默认 7，0=不清理）清理 llm_exchanges（不动 llm_usage）；sync pending>15min→failed；running 恢复/终态保留沿用。
+- **Agents 接入**：Planner/Worker 按任务解析启用 role=planner/worker 定义，应用 system_prompt/model/tools 白名单（未知工具忽略+Warn）；每任务每角色缓存，InvalidateAgents 热失效；首次记 agent_applied；无定义行为不变；`WithModel` 优先/同端点异模型/回退默认并 Warn。
+- **graph 下推**：kind/state/after_id/limit 下推到 SQL（500/2000），删除 1000 静默截断；edges 仍 5000 上限。
+- **Skills/Windows**：`BEACONX_SKILLS_KEEP_VERSIONS`（默认 5，1..50，非法回退）每次裁剪读取；versions 增 has_meta；CI 增 windows-test（mcp/llm），Windows stdio 400。

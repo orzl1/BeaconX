@@ -22,6 +22,8 @@ var evidenceAccessActions = map[string]bool{
 	"read":   true,
 	"verify": true,
 	"export": true,
+	"create": true,
+	"rotate": true,
 }
 
 // EvidenceAccessLog 是一条证据访问审计记录。

@@ -34,6 +34,7 @@ type Worker struct {
 	toolRunner    ToolRunner
 	toolDefs      []llm.ToolDef
 	maxToolRounds int
+	agents        *agentResolver
 }
 
 // NewWorker 创建执行器。
@@ -41,7 +42,11 @@ func NewWorker(store *pg.Store, client LLM, model string, log *slog.Logger) *Wor
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Worker{store: store, client: client, model: model, log: log.With("component", "ai-worker"), maxToolRounds: 6}
+	return &Worker{
+		store: store, client: client, model: model,
+		log: log.With("component", "ai-worker"), maxToolRounds: 6,
+		agents: newAgentResolver(store, log),
+	}
 }
 
 // SetTools 装配工具调用能力；未装配时退化为纯文本观察模式。
@@ -51,32 +56,73 @@ func (w *Worker) SetTools(runner ToolRunner, defs []llm.ToolDef) *Worker {
 	return w
 }
 
+// InvalidateAgents 清空本实例的 Agent 定义缓存（测试/热更新用）。
+func (w *Worker) InvalidateAgents() {
+	if w != nil && w.agents != nil {
+		w.agents.invalidate()
+	}
+}
+
+// workerRun 解析本任务启用的 worker Agent 定义并合并默认配置。
+//
+// tools 非空时只保留定义里列出的工具；未注册的工具忽略并 Warn。
+// 没有启用定义时返回默认（请求内容与接入前逐字节一致）。
+func (w *Worker) workerRun(ctx context.Context, mission pg.Mission) workerAgentRun {
+	run := workerAgentRun{client: w.client, model: w.model, toolDef: w.toolDefs}
+	agent := w.agents.resolve(ctx, mission, agentRoleWorker)
+	if agent == nil {
+		return run
+	}
+	run.system = strings.TrimSpace(agent.SystemPrompt)
+	if agent.Model != "" {
+		// 与 Planner 一致：模型名先生效于本次运行的用量/审计字段；请求能否真正
+		// 换模型取决于 clientForModel 是否能派生客户端（失败时已 Warn 并回退）。
+		run.model = agent.Model
+		if agent.Model != w.model {
+			if client, ok := w.agents.clientForModel(w.client, agent.Model); ok {
+				run.client = client
+			}
+		}
+	}
+	if len(agent.Tools) > 0 {
+		run.toolDef = filterToolDefs(w.toolDefs, agent.Tools, w.log, mission.ID)
+	}
+	return run
+}
+
 // Execute 实现 runner.Worker。
 func (w *Worker) Execute(ctx context.Context, mission pg.Mission, action pg.Node) (graph.NodeState, error) {
 	stepKey, kind, target, detail := actionPayload(action)
+	run := w.workerRun(ctx, mission)
 	user := fmt.Sprintf("任务：%s\n目标：%s\n动作类型：%s\n目标：%s\n动作要求：%s\n",
 		mission.Name, mission.Goal, kind, target, detail)
+	system := workerSystem
+	if strings.TrimSpace(run.system) != "" {
+		system = run.system
+	}
 	messages := []llm.Message{
-		{Role: "system", Content: workerSystem},
+		{Role: "system", Content: system},
 		{Role: "user", Content: user},
 	}
 
 	var final string
-	if w.toolRunner != nil && len(w.toolDefs) > 0 {
-		messages[0].Content = workerToolSystem
+	if w.toolRunner != nil && len(run.toolDef) > 0 {
+		if strings.TrimSpace(run.system) == "" {
+			messages[0].Content = workerToolSystem
+		}
 		var err error
-		final, err = w.runToolLoop(ctx, mission, action, messages)
+		final, err = w.runToolLoop(ctx, mission, action, messages, run)
 		if err != nil {
 			return graph.StateBlocked, err
 		}
 	} else {
-		resp, err := w.client.CompleteJSON(ctx, messages)
+		resp, err := run.client.CompleteJSON(ctx, messages)
 		if err != nil {
 			w.captureExchange(ctx, mission.TenantID, mission.ID, "worker", messages, llm.Response{}, err)
 			return graph.StateBlocked, fmt.Errorf("执行器调用模型失败: %w", err)
 		}
 		w.captureExchange(ctx, mission.TenantID, mission.ID, "worker", messages, resp, nil)
-		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker", w.model, resp.Usage); err != nil {
+		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker", run.model, resp.Usage); err != nil {
 			w.log.Warn("记录模型用量失败", "mission_id", mission.ID, "error", err)
 		}
 		final = resp.Content
@@ -90,19 +136,19 @@ func (w *Worker) Execute(ctx context.Context, mission pg.Mission, action pg.Node
 }
 
 // runToolLoop 执行「模型 → 工具 → 模型」循环，返回最终文本。
-func (w *Worker) runToolLoop(ctx context.Context, mission pg.Mission, action pg.Node, messages []llm.Message) (string, error) {
+func (w *Worker) runToolLoop(ctx context.Context, mission pg.Mission, action pg.Node, messages []llm.Message, run workerAgentRun) (string, error) {
 	if w.maxToolRounds <= 0 {
 		w.maxToolRounds = 6
 	}
 	var final string
 	for round := 0; round < w.maxToolRounds; round++ {
-		resp, err := w.client.CompleteWithTools(ctx, messages, w.toolDefs, "auto")
+		resp, err := run.client.CompleteWithTools(ctx, messages, run.toolDef, "auto")
 		if err != nil {
 			w.captureToolExchange(ctx, mission.TenantID, mission.ID, "worker-tool", messages, llm.ToolResponse{}, err)
 			return "", fmt.Errorf("执行器调用模型失败: %w", err)
 		}
 		w.captureToolExchange(ctx, mission.TenantID, mission.ID, "worker-tool", messages, resp, nil)
-		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker-tool", w.model, resp.Usage); err != nil {
+		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker-tool", run.model, resp.Usage); err != nil {
 			w.log.Warn("记录模型用量失败", "mission_id", mission.ID, "error", err)
 		}
 		if len(resp.ToolCalls) == 0 {

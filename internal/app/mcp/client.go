@@ -569,24 +569,38 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	cmd := exec.CommandContext(ctx, command, srv.Args...)
-	cmd.Dir = workDir
-	cmd.Env = sandboxEnv(srv.Env)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("创建子进程输入管道失败：%w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("创建子进程输出管道失败：%w", err)
-	}
-	// stderr 只保留尾部少量字节用于诊断；同样不回显 env。
-	var stderr limitedBuffer
-	cmd.Stderr = &stderr
-	// 独立进程组：超时可整组终止，防止子进程继续持有 stdout 管道。
-	configureProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("启动 stdio MCP 失败：%w", err)
+	// CI/高并发下 fork/exec 偶发 EAGAIN（resource temporarily unavailable），
+	// 这属于可重试的瞬时错误；重试时重建 Cmd（exec.Cmd 不可复用）。
+	var (
+		cmd    *exec.Cmd
+		stdin  io.WriteCloser
+		stdout io.ReadCloser
+		stderr limitedBuffer
+	)
+	for attempt := 0; ; attempt++ {
+		cmd = exec.CommandContext(ctx, command, srv.Args...)
+		cmd.Dir = workDir
+		cmd.Env = sandboxEnv(srv.Env)
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return nil, fmt.Errorf("创建子进程输入管道失败：%w", err)
+		}
+		stdout, err = cmd.StdoutPipe()
+		if err != nil {
+			return nil, fmt.Errorf("创建子进程输出管道失败：%w", err)
+		}
+		// stderr 只保留尾部少量字节用于诊断；同样不回显 env。
+		stderr = limitedBuffer{}
+		cmd.Stderr = &stderr
+		// 独立进程组：超时可整组终止，防止子进程继续持有 stdout 管道。
+		configureProcessGroup(cmd)
+		if err = cmd.Start(); err == nil {
+			break
+		}
+		if attempt >= 2 || ctx.Err() != nil {
+			return nil, fmt.Errorf("启动 stdio MCP 失败：%w", err)
+		}
+		time.Sleep(time.Duration(attempt+1) * 20 * time.Millisecond)
 	}
 	// 取消/超时时主动断开管道并杀掉进程组，保证 Read 立即返回而不是等到
 	// 目标进程自然退出（否则一个 sleep 子进程就能拖住整个发现流程）。
@@ -646,7 +660,7 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 			}()
 			select {
 			case <-done:
-			case <-time.After(500 * time.Millisecond):
+			case <-time.After(2 * time.Second):
 			}
 			if msg := strings.TrimSpace(stderr.String()); msg != "" {
 				return fmt.Errorf("写入子进程失败：%w（stderr：%s）", err, msg)

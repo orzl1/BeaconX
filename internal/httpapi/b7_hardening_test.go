@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
 
@@ -108,7 +109,12 @@ func TestB7NotificationWebhookSSRF(t *testing.T) {
 // TestB7NotificationMasking 验证响应中的 config 敏感值被掩码，而存储保留原值。
 func TestB7NotificationMasking(t *testing.T) {
 	store, tenantID := findingsHTTPEnv(t)
-	opts := Options{Store: store, TenantID: tenantID}
+	// B8 起敏感配置必须加密存储，需要 Evidence 提供子密钥。
+	ev, err := evidence.New(evidence.Config{Dir: t.TempDir(), Key: b6Key(5)})
+	if err != nil {
+		t.Fatalf("创建证据存储失败: %v", err)
+	}
+	opts := Options{Store: store, Evidence: ev, TenantID: tenantID}
 
 	body := `{"name":"掩码渠道","type":"webhook","config":{
 		"url":"http://user:pass@example.com/hook",
@@ -159,16 +165,27 @@ func TestB7NotificationMasking(t *testing.T) {
 		t.Fatalf("列表掩码不正确: %+v", listed.Channels)
 	}
 
-	// 存储保持原值（掩码只发生在响应投影）。
+	// 存储为加密态：DB 中不得出现明文敏感值，url 去掉 userinfo 仅用于校验。
 	stored, err := store.GetNotificationChannel(context.Background(), tenantID, channel.ID)
 	if err != nil {
 		t.Fatalf("读取存储渠道失败: %v", err)
 	}
-	if stored.Config["token"] != "s3cr3t-token" {
-		t.Fatalf("存储被掩码污染: %v", stored.Config["token"])
+	if marker, _ := stored.Config["__enc"].(bool); !marker {
+		t.Fatalf("敏感配置应以加密标记存储: %v", stored.Config)
 	}
-	if urlText, _ := stored.Config["url"].(string); !strings.Contains(urlText, "user:pass@") {
-		t.Fatalf("存储的 URL 被改写: %q", urlText)
+	rawStored, _ := json.Marshal(stored.Config)
+	for _, plaintext := range []string{"s3cr3t-token", "nested-key", "pass@"} {
+		if strings.Contains(string(rawStored), plaintext) {
+			t.Fatalf("存储态泄漏明文 %q: %s", plaintext, rawStored)
+		}
+	}
+	// 解密后存储的完整配置仍保留 url userinfo（只加密不丢信息）。
+	plainConfig, encrypted, err := notificationPlaintextConfig(ev, stored.Config)
+	if err != nil || !encrypted {
+		t.Fatalf("存储配置应可解密: encrypted=%v err=%v", encrypted, err)
+	}
+	if urlText, _ := plainConfig["url"].(string); !strings.Contains(urlText, "user:pass@") {
+		t.Fatalf("解密后的 URL 被改写: %q", urlText)
 	}
 }
 
