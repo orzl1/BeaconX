@@ -1,5 +1,8 @@
 # BeaconX
 
+[![ci](https://github.com/orzl1/BeaconX/actions/workflows/ci.yml/badge.svg)](https://github.com/orzl1/BeaconX/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 自主安全测试平台（Autonomous Security Testing Platform）。目标是在**可控授权范围**内，用多 Agent 完成从目标分解、侦察、验证到证据留存的完整流程；人负责审批与复核，而不是逐条输入命令。
 
 > **当前状态：M0（骨架）**。已具备可运行的进程、声明式 HTTP 层、版本化迁移、租户预留、健康检查与 CI；业务能力（资产/作战图/Agent/审批/证据）按 [路线图](docs/roadmap.md) 逐步加入。**M0 不等于可用产品**，请勿用于真实目标。
