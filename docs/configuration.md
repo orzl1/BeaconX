@@ -63,6 +63,10 @@
   "evidence": {
     "dir": "",
     "key_hex": ""
+  },
+  "selfupdate": {
+    "enabled": true,
+    "repo": "orzl1/BeaconX"
   }
 }
 ```
@@ -100,6 +104,8 @@
 | `BEACONX_APPROVAL_TIMEOUT` | `policy.approval_timeout` | `60s` | ask 的默认审批等待超时 |
 | `BEACONX_EVIDENCE_DIR` | `evidence.dir` | 空 | 证据根目录；为空时用 `<state.dir>/tenants/<tenant_id>/evidence` |
 | `BEACONX_EVIDENCE_KEY` | `evidence.key_hex` | 空 | 64 位十六进制证据主密钥；为空时使用/生成 `<state.dir>/evidence.key` |
+| `BEACONX_UPDATE_ENABLED` | `selfupdate.enabled` | `true` | 是否启用自更新（布尔值，非法值启动失败） |
+| `BEACONX_UPDATE_REPO` | `selfupdate.repo` | `orzl1/BeaconX` | GitHub `owner/repo`；启用时不能为空 |
 
 环境变量值为空时视为未设置，不会覆盖配置文件或默认值。
 
@@ -154,6 +160,16 @@
 - `dir`：证据根目录，默认 `<state.dir>/tenants/<tenant_id>/evidence`；目录以 0700、blob 文件以 0600 创建。
 - `key_hex`：64 位十六进制（32 字节）主密钥；为空时读取或生成 `<state.dir>/evidence.key`（0600）。格式非法会在启动校验阶段失败；密钥不会打印到日志。
 - **密钥轮换暂不支持**（M5.1）：更换密钥会让存量 blob 无法解密、快照验签失败（表现为 tampered）。
+
+## 自更新
+
+`selfupdate` 段控制内置自更新（详见 [发布与自更新](release.md)）：
+
+- `enabled`：默认 `true`；关闭后检查/应用接口在检查阶段失败（502 `update_check_failed`，错误信息“自更新已禁用”），回滚接口仍可用（只依赖 `.old` 备份）。503 `update_unavailable` 只会在 HTTP 层未装配 Updater 时出现（正常 `serve` 总会装配）。
+- `repo`：GitHub `owner/repo`，默认 `orzl1/BeaconX`；`enabled=true` 时不能为空，否则启动校验失败。
+- 自更新会访问 GitHub latest release API 并下载本平台 zip，校验 SHA256SUMS、先跑 `--version` 冒烟再替换二进制；当前二进制备份为 `<binary>.old`，可通过 rollback 接口还原；替换后需重启进程生效。
+- **容器部署建议关闭**（`BEACONX_UPDATE_ENABLED=false`）：镜像内二进制归 root 所有且容器会被重建，升级应通过重新拉取镜像。
+- GitHub API 对未认证请求有速率限制（约 60 次/小时/IP），频繁检查会失败并返回 `update_check_failed`。
 
 ## 状态目录
 

@@ -26,16 +26,23 @@ const DefaultPath = "config.json"
 
 // Config 是完整的启动配置。
 type Config struct {
-	Server   Server   `json:"server"`
-	Database Database `json:"database"`
-	Tenant   Tenant   `json:"tenant"`
-	State    State    `json:"state"`
-	Log      Log      `json:"log"`
-	Engine   Engine   `json:"engine"`
-	Auth     Auth     `json:"auth"`
-	LLM      LLM      `json:"llm"`
-	Policy   Policy   `json:"policy"`
-	Evidence Evidence `json:"evidence"`
+	Server     Server     `json:"server"`
+	Database   Database   `json:"database"`
+	Tenant     Tenant     `json:"tenant"`
+	State      State      `json:"state"`
+	Log        Log        `json:"log"`
+	Engine     Engine     `json:"engine"`
+	Auth       Auth       `json:"auth"`
+	LLM        LLM        `json:"llm"`
+	Policy     Policy     `json:"policy"`
+	Evidence   Evidence   `json:"evidence"`
+	SelfUpdate SelfUpdate `json:"selfupdate"`
+}
+
+// SelfUpdate 是自更新配置。
+type SelfUpdate struct {
+	Enabled bool   `json:"enabled"`
+	Repo    string `json:"repo"`
 }
 
 // Evidence 是证据存储配置。
@@ -176,6 +183,10 @@ func Default() Config {
 			DefaultAction:   "ask",
 			ApprovalTimeout: Duration(60 * time.Second),
 		},
+		SelfUpdate: SelfUpdate{
+			Enabled: true,
+			Repo:    "orzl1/BeaconX",
+		},
 		LLM: LLM{
 			MaxTokens:  2048,
 			Timeout:    Duration(60 * time.Second),
@@ -247,6 +258,15 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return parseDuration(v, &cfg.Engine.HeartbeatInterval, "BEACONX_HEARTBEAT_INTERVAL")
 		}},
 		{"BEACONX_ADMIN_TOKEN", func(v string) error { cfg.Auth.AdminToken = v; return nil }},
+		{"BEACONX_UPDATE_ENABLED", func(v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("BEACONX_UPDATE_ENABLED 不是布尔值: %w", err)
+			}
+			cfg.SelfUpdate.Enabled = b
+			return nil
+		}},
+		{"BEACONX_UPDATE_REPO", func(v string) error { cfg.SelfUpdate.Repo = v; return nil }},
 		{"BEACONX_EVIDENCE_DIR", func(v string) error { cfg.Evidence.Dir = v; return nil }},
 		{"BEACONX_EVIDENCE_KEY", func(v string) error { cfg.Evidence.KeyHex = v; return nil }},
 		{"BEACONX_POLICY_DEFAULT_ACTION", func(v string) error { cfg.Policy.DefaultAction = v; return nil }},
@@ -341,6 +361,9 @@ func (c Config) Validate() error {
 	}
 	if c.Policy.ApprovalTimeout.Value() <= 0 {
 		return errors.New("policy.approval_timeout 必须为正数")
+	}
+	if c.SelfUpdate.Enabled && strings.TrimSpace(c.SelfUpdate.Repo) == "" {
+		return errors.New("selfupdate.repo 不能为空")
 	}
 	if c.Evidence.KeyHex != "" {
 		key, err := hex.DecodeString(c.Evidence.KeyHex)

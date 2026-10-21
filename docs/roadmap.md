@@ -1,6 +1,6 @@
 # 路线图
 
-每个里程碑都以「可验收」为准，不以「代码写完」为准。M0–M5 已完成（M5 于 2026-10-21 收官），下一阶段为 **M6**（未开始）；M4 与 M5 的部分增强项分别列入 [M4.1 延期项](#m41-延期项) 与 [M5.1 延期项](#m51-延期项)。
+每个里程碑都以「可验收」为准，不以「代码写完」为准。M0–M6 已完成（M6 于 2026-10-21 收官），后续增强项列入 [M4.1](#m41-延期项)、[M5.1](#m51-延期项) 与 [M6.1](#m61-延期项) 延期项，长期方向见文末「后续方向（v2）」。
 
 | 阶段 | 目标 | 验收标准 |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | **M3 规划与执行**（已完成 2026-10-21） | 目标分解、态势快照、结构化规划决策、计划依赖图、过程检索、上下文压缩、预算与收尾。实际交付：迁移 0004（plan_steps / step_dependencies / llm_usage / 任务预算列）；`internal/infra/llm`（OpenAI 兼容客户端：超时、重试、JSON 模式回退、错误体脱敏）；`internal/domain/plan`（Decision / Step / 依赖校验 / 就绪判定）；`internal/app/ai`（LLM Planner 与 Worker、追问、完成时 skipped、用量记录）；预算与超限事件 | 同一组靶场任务的完成率达标；规划输出 100% 通过 schema 校验；依赖派发用例通过（实测：`go test ./...` 13 个测试包全绿；假 LLM 端到端通过；DeepSeek `deepseek-flash` 真实冒烟约 50s 完成、3 动作 / 3 fact / 5 次调用约 3.8k tokens） |
 | **M4 工具与策略**（已完成 2026-10-21） | 工具注册表（schema 生成）、MCP 连接池、技能版本化；策略规则 + 审批 + 模型兜底 + 审计；统一拦截入口与启动自检。实际交付：迁移 0005（policy_rules / approvals / audit_events）；`internal/app/tools`（Registry + `http_probe` / `shell_exec`，JSON Schema 与风险级别）；`internal/domain/policy`（Rule / Evaluate / SeedDefaults：五条内置规则、优先级匹配、fail closed）；`internal/app/executor`（取规则 → allow/ask/deny → 审批等待 → 执行 → 审计，工具调用唯一入口）；`internal/app/ai` Worker 工具循环（最多 6 轮）；审批与审计 HTTP 接口；MCP/技能/模型兜底/规则 CRUD 延期到 M4.1 | 工具面按角色收敛；审批/超时/审计用例通过；所有执行型 Agent 均受策略检查（实测：`go test ./...` 16 个测试包全绿；执行器集成测试 4 项通过；DeepSeek `deepseek-flash` 真实冒烟 14 次工具调用全部经策略判定与审批，GET 走 allow、shell 走 ask 并批准，目标不可达时如实记录 TCP 失败，审计可见 allow/ask 与 executed/tool_error） |
 | **M5 证据与模型路由**（已完成 2026-10-21） | 采集两阶段、脱敏与加密、证据版本令牌、复测；单层模型路由 + 结构化错误 + 预算。实际交付：迁移 0006（traffic_exchanges / evidence_snapshots）；`internal/app/evidence`（AES-256-GCM 内容寻址 blob、HMAC-SHA256 快照签名、ErrTampered、RedactHeaders/RedactJSON）；`internal/app/executor` 两阶段采集（intent→result，工具调用前置捕获）；证据三接口（traffic 列表 / 冻结快照 / 校验）；`internal/infra/llm` 的 Router + ErrorKind/ClassifyError（auth/quota/rate_limit/transient 切换，context_overflow/fatal 立即失败）；引擎 token 预算超限暂停；MITM/复测/密钥轮换/纯文本脱敏列入 M5.1 | 篡改证据必失败；预算超限可暂停；模型故障切换有单一来源日志（实测：`go test ./...` 17 个测试包全绿；evidence 包 36 个测试含 13 类篡改场景；执行器采集+篡改集成测试、预算暂停测试、Router/错误分类测试通过；POST 快照→verify 正常，改数据库字段或改 blob 后 409 tampered） |
-| **M6 前端与交付**（下一阶段，未开始） | 由 OpenAPI 生成客户端、页面按功能域拆分、SSE/查询 hooks、图可视化、e2e；自更新与发布链（macOS/Linux） | 5 条 e2e 全绿；发布包带校验和；升级回滚演练通过 |
+| **M6 前端与交付**（已完成 2026-10-21） | 由 OpenAPI 生成客户端、页面按功能域拆分、SSE/查询 hooks、图可视化、e2e；自更新与发布链（macOS/Linux）。实际交付：`web/`（Next.js 16 静态导出 + TypeScript + 原生 CSS 的单页控制台：任务/审批/系统三区、SSE、流量证据、自更新）；`internal/webui` 的 go:embed 同源托管、静态回退与占位页；`internal/infra/selfupdate`（检查/下载/SHA256SUMS 校验/冒烟/备份 `.old`/回滚/`update.json`）与 update 三接口；`release.yml` 前端构建 + 5 平台交叉编译 + SHA256SUMS + gh release；`Dockerfile` 多阶段内嵌前端；浏览器 e2e/URL 路由/CORS/发布签名/Windows 自更新列入 M6.1 | 发布包带校验和（release.yml 生成 SHA256SUMS）；自更新检查/校验/冒烟/回滚有单测（selfupdate 4 项 + update API 1 项）；`go test ./...` 19 个测试包全绿；前端构建产物与 Go 静态回退（`/`、`/missions/123`、`/_next/*`、`/api/v1/nope`）验证通过；**浏览器级 5 条 e2e 未实现（延后 M6.1）**，发布流水线未在 GitHub 实际执行（静态审阅） |
 
 ## M1 交付明细
 
@@ -55,6 +55,14 @@
 - **预算暂停**：引擎在每轮循环检查 token 预算，超限把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），不硬失败，可用 `resume` 继续。
 - **验收**：`go test ./...` 17 个测试包全绿；evidence 36 个测试（含 13 类篡改场景）、执行器采集+篡改集成测试、预算暂停测试、Router/错误分类测试通过；快照创建→verify 正常，改库/改文件后返回 409。
 
+## M6 交付明细
+
+- **前端**：`web/` 使用 Next.js 16 App Router + React + TypeScript + 原生 CSS，单页控制台含令牌栏、任务（列表/创建/暂停/恢复/取消/删除、5s 轮询）、任务详情（SSE 14 类事件、按 id 去重、200 条上限、断线重连、流量→冻结证据→校验）、审批（pending 列表与决策）、系统（探针与自更新）；`NEXT_EXPORT=1` 输出纯静态 `web/out`。
+- **托管**：`internal/webui` 通过 `go:embed all:dist` 把前端嵌入二进制；静态文件直出、非 API 路径回退 `index.html`、`/api/` 未知路径返回 JSON 404；未构建前端时显示占位页。`make web` 完成 `npm ci`、静态构建与复制。
+- **自更新**：`internal/infra/selfupdate` 实现检查 GitHub latest release → 下载平台 zip → SHA256SUMS 校验 → `--version` 冒烟 → 备份 `.old` → 原子替换 → 写 `update.json`；失败不改当前文件，`rollback` 用 `.old` 还原；三个 API 端点（check/apply/rollback）需要管理令牌。
+- **发布与镜像**：`.github/workflows/release.yml` 在 `v*` tag 上先构建前端，再交叉编译 5 个平台、打包 zip、生成 `SHA256SUMS` 并创建 Release；`Dockerfile` 多阶段构建（Node 构建前端 → Go 嵌入 → alpine 运行），单镜像同时提供 API 与前端（6969）。
+- **验收**：`go test ./...` 19 个测试包全绿（新增 selfupdate 与 webui 测试；update API 测试通过）；`make web` + `make build` 可产出内嵌前端二进制；Go 端 `/`、`/missions/123` 回退、`/_next/*` 200、`/api/v1/nope` JSON 404 验证通过。
+
 ## M4.1 延期项
 
 以下 M4 增强项未在本里程碑实现，已明确延后：
@@ -75,12 +83,26 @@
 - 纯文本输出脱敏，以及把 `RedactHeaders` 接入真实抓包链路。
 - 证据保留策略/GC 与批量导出。
 
-## 后续方向
+## M6.1 延期项
 
-- **v1.1**：审批推送（IM/Webhook）、审计导出、审批工作台增强。
-- **v2**：执行期授权策略（动作 × 目标编译）、fail-closed 默认、不可删除的安全底线、策略快照 API。
+以下 M6 增强项未在本里程碑实现，已明确延后：
+
+- 浏览器级 e2e 测试（当前没有浏览器自动化用例）。
+- URL 级路由与深链接（单页刷新会丢失选中任务）。
+- 跨源部署所需的 CORS 支持。
+- 发布包签名（当前只有 SHA256 校验和，没有 GPG/cosign）。
+- Windows 自更新的实际验证（运行中可执行文件替换、备份与回滚）。
+- 非 Windows 发布包内文件名（`beaconx-<goos>-<goarch>`）与 selfupdate 解压匹配规则（只认 `beaconx`/`beaconx.exe`）不一致的问题修复。
+- 常规 CI（ci.yml）补前端构建 job（目前只有发布流水线构建前端）。
+
+## 后续方向（v2）
+
 - **多租户**：从字段预留升级为行级隔离（RLS + 租户级认证），不需要数据搬迁。
-- **Windows 正式支持**：服务化、安装器、证书存储集成；v1 仅保证可编译。
+- **Windows 正式支持**：服务化、安装器、证书存储集成与自更新验证。
+- **MCP 与外部工具**：MCP 连接池、技能版本化与外部工具接入（M4.1）。
+- **证据复测**：MITM 真实流量、retester、证据版本令牌与密钥轮换（M5.1）。
+- **策略与审计增强**：规则 CRUD、模型兜底审批、审批推送与审计导出。
+- **前端与交付完善**：浏览器 e2e、URL 路由、CORS、发布签名与自更新完善（M6.1）。
 
 ## 非目标（v1）
 

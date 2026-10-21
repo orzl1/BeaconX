@@ -72,6 +72,24 @@ jobs:
           BEACONX_TEST_PG_DSN: postgres://beaconx:beaconx@127.0.0.1:5432/beaconx?sslmode=disable
         run: go test -count=1 ./...
 
+  web:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 构建静态前端
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          NEXT_EXPORT=1 npm run build
+          test -f out/index.html
+
   build:
     name: 构建（${{ matrix.goos }}/${{ matrix.goarch }}）
     runs-on: ubuntu-latest

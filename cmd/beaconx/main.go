@@ -31,10 +31,12 @@ import (
 	"github.com/orzl1/BeaconX/internal/infra/llm"
 	"github.com/orzl1/BeaconX/internal/infra/migrate"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
+	"github.com/orzl1/BeaconX/internal/infra/selfupdate"
 	"github.com/orzl1/BeaconX/internal/logging"
 	platformstate "github.com/orzl1/BeaconX/internal/platform"
 	"github.com/orzl1/BeaconX/internal/tenant"
 	"github.com/orzl1/BeaconX/internal/version"
+	"github.com/orzl1/BeaconX/internal/webui"
 	"github.com/orzl1/BeaconX/migrations"
 )
 
@@ -292,6 +294,14 @@ func serve(args []string) int {
 		return 1
 	}
 
+	exePath, _ := os.Executable()
+	updater := selfupdate.New(selfupdate.Config{
+		Repo:           cfg.SelfUpdate.Repo,
+		CurrentVersion: version.Version,
+		BinaryPath:     exePath,
+		StateDir:       filepath.Join(cfg.State.Dir, "selfupdate"),
+		Enabled:        cfg.SelfUpdate.Enabled,
+	})
 	handler, err := httpapi.NewHandler(httpapi.Options{
 		Logger:         log,
 		RequestTimeout: cfg.Server.RequestTimeout.Value(),
@@ -301,6 +311,8 @@ func serve(args []string) int {
 		Store:          store,
 		Engine:         engine,
 		Evidence:       evStore,
+		Updater:        updater,
+		WebUI:          webui.Handler(),
 		Broker:         broker,
 		TenantID:       cfg.Tenant.DefaultID,
 		Info:           func(ctx context.Context) any { return sys.NewInfo(ctx) },

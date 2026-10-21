@@ -8,10 +8,14 @@ LDFLAGS     := -s -w \
   -X $(MODULE)/internal/version.Commit=$(COMMIT) \
   -X $(MODULE)/internal/version.BuildTime=$(BUILD_TIME)
 
-.PHONY: help build run test test-race cover lint fmt tidy brand docker-build up down clean
+.PHONY: help build web run test test-race cover lint fmt tidy brand docker-build up down clean
 
 help: ## 显示可用目标
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+web: ## 构建前端并嵌入（需要 Node.js 与 npm）
+	cd web && npm_config_cache=../.cache/npm npm ci && NEXT_EXPORT=1 npm run build
+	rm -rf internal/webui/dist && cp -r web/out internal/webui/dist
 
 build: ## 构建二进制到 bin/
 	@mkdir -p bin

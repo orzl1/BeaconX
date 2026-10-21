@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1
 
+# ---- 前端构建阶段 ----
+FROM node:22-alpine AS web
+
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN NEXT_EXPORT=1 npm run build
+
 # ---- 构建阶段 ----
 FROM golang:1.24-alpine AS build
 
@@ -12,6 +21,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+COPY --from=web /web/out ./internal/webui/dist
 
 ARG VERSION=dev
 ARG COMMIT=unknown

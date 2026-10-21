@@ -84,6 +84,9 @@ func TestInvalidJSON(t *testing.T) {
 
 func TestEngineAndAuthDefaults(t *testing.T) {
 	cfg := Default()
+	if !cfg.SelfUpdate.Enabled || cfg.SelfUpdate.Repo == "" {
+		t.Fatalf("自更新默认值不符: %+v", cfg.SelfUpdate)
+	}
 	if cfg.Engine.MaxConcurrent != 2 {
 		t.Fatalf("engine.max_concurrent 默认值 = %d", cfg.Engine.MaxConcurrent)
 	}

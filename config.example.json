@@ -55,5 +55,9 @@
   "evidence": {
     "dir": "",
     "key_hex": ""
+  },
+  "selfupdate": {
+    "enabled": true,
+    "repo": "orzl1/BeaconX"
   }
 }

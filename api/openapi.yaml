@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.5.0
+  version: 0.6.0
   description: |
-    BeaconX M5 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
-    流量采集与证据校验、SSE 事件流。
+    BeaconX M6 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
+    流量采集与证据校验、自更新与 SSE 事件流。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -22,6 +22,8 @@ tags:
     description: 工具调用的审批列表与决策（需要令牌）
   - name: evidence
     description: 流量采集记录、证据快照与完整性校验（需要令牌）
+  - name: update
+    description: 自更新检查、安装与回滚（需要令牌）
 paths:
   /healthz:
     get:
@@ -449,6 +451,65 @@ paths:
           $ref: "#/components/responses/Tampered"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/system/update/check:
+    get:
+      tags: [update]
+      summary: 检查新版本
+      description: 查询 GitHub 最新 Release，比较版本并返回本平台资产信息；未配置自更新时返回 503 update_unavailable。
+      operationId: updateCheck
+      responses:
+        "200":
+          description: 检查结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateCheckResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/system/update/apply:
+    post:
+      tags: [update]
+      summary: 下载并安装新版本
+      description: 检查 → 下载本平台 zip → SHA256SUMS 校验 → --version 冒烟 → 备份 .old → 替换二进制；成功需重启生效，失败返回 409 update_failed。
+      operationId: updateApply
+      responses:
+        "200":
+          description: 安装结果（有更新或无更新）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateApplyResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/UpdateConflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/system/update/rollback:
+    post:
+      tags: [update]
+      summary: 回滚到上一版本
+      description: 用 <binary>.old 还原上一版本；无备份或回滚失败返回 409 rollback_failed，需重启生效。
+      operationId: updateRollback
+      responses:
+        "200":
+          description: 回滚结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RollbackResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/UpdateConflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -528,6 +589,18 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    BadGateway:
+      description: 上游（GitHub API 或下载地址）访问失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpdateConflict:
+      description: 更新或回滚失败（校验和不匹配、冒烟失败、无备份等）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     InternalError:
       description: 服务器内部错误
       content:
@@ -535,7 +608,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Unavailable:
-      description: 任务运行时或事件流未就绪
+      description: 任务运行时、事件流或自更新未就绪
       content:
         application/json:
           schema:
@@ -853,6 +926,62 @@ components:
           type: integer
           format: int64
         signature:
+          type: string
+    ReleaseInfo:
+      type: object
+      required: [version, tag, url, published_at, asset_url, asset_name, checksum_url]
+      properties:
+        version:
+          type: string
+          description: 去掉 v 前缀的版本号。
+        tag:
+          type: string
+          description: GitHub Release tag。
+        url:
+          type: string
+          description: Release 页面地址。
+        notes:
+          type: string
+          description: Release 说明（截断到 2000 字符）。
+        published_at:
+          type: string
+          format: date-time
+        asset_url:
+          type: string
+          description: 本平台发布包下载地址。
+        asset_name:
+          type: string
+          description: 本平台发布包文件名。
+        checksum_url:
+          type: string
+          description: SHA256SUMS 下载地址。
+    UpdateCheckResult:
+      type: object
+      required: [has_update, release]
+      properties:
+        has_update:
+          type: boolean
+        release:
+          $ref: "#/components/schemas/ReleaseInfo"
+    UpdateApplyResult:
+      type: object
+      required: [updated, version, message]
+      properties:
+        updated:
+          type: boolean
+          description: 是否实际安装了新版本。
+        version:
+          type: string
+        message:
+          type: string
+          description: 面向人的结果说明（成功需重启生效）。
+    RollbackResult:
+      type: object
+      required: [rolled_back, message]
+      properties:
+        rolled_back:
+          type: boolean
+        message:
           type: string
     Error:
       type: object

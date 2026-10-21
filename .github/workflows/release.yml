@@ -1,0 +1,106 @@
+name: 发布
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: "1.24"
+
+jobs:
+  web:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 安装依赖并构建
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          NEXT_EXPORT=1 npm run build
+          test -f out/index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/out
+
+  build:
+    name: 构建 ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: web
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: internal/webui/dist
+      - name: 构建
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p pkg
+          OUT=pkg/beaconx
+          if [ "${{ matrix.goos }}" = "windows" ]; then OUT=pkg/beaconx.exe; fi
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags="-s -w \
+              -X github.com/orzl1/BeaconX/internal/version.Version=${VERSION} \
+              -X github.com/orzl1/BeaconX/internal/version.Commit=${GITHUB_SHA} \
+              -X github.com/orzl1/BeaconX/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o "$OUT" ./cmd/beaconx
+      - name: 打包
+        run: |
+          cd pkg
+          zip ../beaconx-${{ matrix.goos }}-${{ matrix.goarch }}.zip beaconx*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: beaconx-${{ matrix.goos }}-${{ matrix.goarch }}.zip
+
+  release:
+    name: 创建 Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: 生成校验和
+        run: |
+          cd dist
+          sha256sum *.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: 上传 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "BeaconX ${GITHUB_REF_NAME}" \
+            --notes "自动发布：${GITHUB_SHA}" \
+            --verify-tag

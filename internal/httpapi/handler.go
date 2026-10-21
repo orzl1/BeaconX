@@ -20,6 +20,7 @@ import (
 	"github.com/orzl1/BeaconX/internal/app/evidence"
 	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/infra/pg"
+	"github.com/orzl1/BeaconX/internal/infra/selfupdate"
 	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
@@ -68,6 +69,8 @@ type Options struct {
 	Engine   *runner.Engine
 	Broker   *events.Broker
 	Evidence *evidence.Store
+	Updater  *selfupdate.Updater
+	WebUI    http.Handler
 	TenantID int64
 }
 
@@ -105,6 +108,9 @@ func Routes() []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/traffic", Summary: "任务流量采集记录"},
 		{Method: http.MethodPost, Pattern: "/api/v1/traffic/{id}/evidence", Summary: "把采集记录冻结为证据"},
 		{Method: http.MethodGet, Pattern: "/api/v1/evidence/{id}/verify", Summary: "校验证据完整性"},
+		{Method: http.MethodGet, Pattern: "/api/v1/system/update/check", Summary: "检查新版本"},
+		{Method: http.MethodPost, Pattern: "/api/v1/system/update/apply", Summary: "下载并安装新版本"},
+		{Method: http.MethodPost, Pattern: "/api/v1/system/update/rollback", Summary: "回滚到上一版本"},
 	}
 }
 
@@ -124,6 +130,9 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 
 	mux := http.NewServeMux()
+	if opts.WebUI != nil {
+		mux.Handle("/", opts.WebUI)
+	}
 	for _, rt := range Routes() {
 		handler, err := opts.bind(rt)
 		if err != nil {
@@ -182,6 +191,12 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleCreateEvidence, nil
 	case "/api/v1/evidence/{id}/verify":
 		return o.handleVerifyEvidence, nil
+	case "/api/v1/system/update/check":
+		return o.handleUpdateCheck, nil
+	case "/api/v1/system/update/apply":
+		return o.handleUpdateApply, nil
+	case "/api/v1/system/update/rollback":
+		return o.handleUpdateRollback, nil
 	default:
 		return nil, ErrUnboundRoute
 	}
