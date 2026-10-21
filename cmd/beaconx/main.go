@@ -40,6 +40,36 @@ import (
 	"github.com/orzl1/BeaconX/migrations"
 )
 
+// recoverSyncRuns 处理进程重启遗留的同步运行，并按保留期清理终态记录。
+//
+// 保留天数来自环境变量 BEACONX_SYNC_RETENTION_DAYS（默认 30，0=不清理）；
+// 非法值记录告警后回退默认，避免因为一个笔误停掉启动或误删历史。
+func recoverSyncRuns(ctx context.Context, store *pg.Store, tenantID int64, log *slog.Logger) {
+	if recovered, err := store.RecoverStaleSyncRuns(ctx, tenantID, 15*time.Minute); err != nil {
+		log.Warn("恢复中断的同步运行失败", "error", err)
+	} else if recovered > 0 {
+		log.Info("已恢复中断的同步运行", "count", recovered)
+	}
+
+	retentionDays := 30
+	if raw := strings.TrimSpace(os.Getenv("BEACONX_SYNC_RETENTION_DAYS")); raw != "" {
+		days, err := strconv.Atoi(raw)
+		if err != nil || days < 0 {
+			log.Warn("BEACONX_SYNC_RETENTION_DAYS 非法，使用默认 30 天", "value", raw)
+		} else {
+			retentionDays = days
+		}
+	}
+	if retentionDays == 0 {
+		return
+	}
+	if deleted, err := store.DeleteOldSyncRuns(ctx, tenantID, time.Duration(retentionDays)*24*time.Hour); err != nil {
+		log.Warn("清理过期同步运行失败", "error", err, "retention_days", retentionDays)
+	} else if deleted > 0 {
+		log.Info("已清理过期同步运行", "count", deleted, "retention_days", retentionDays)
+	}
+}
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -195,6 +225,9 @@ func serve(args []string) int {
 	// 任务运行时：内存事件总线 + 引擎（M2 默认使用空闲规划器与空执行器）。
 	broker := events.NewBroker(512)
 	store := pg.NewStore(db)
+	// 同步运行的崩溃恢复与保留：把上次进程遗留的 running 记录标记失败，并按
+	// 保留期清理终态记录。放在引擎启动前执行，避免恢复记录与调度并发。
+	recoverSyncRuns(ctx, store, cfg.Tenant.DefaultID, log)
 	sink := func(ev pg.MissionEvent) {
 		var payload json.RawMessage
 		if ev.Payload != nil {
@@ -236,10 +269,26 @@ func serve(args []string) int {
 		log.Error("初始化工具注册表失败", "error", err)
 		return 1
 	}
+	// 启动配置作为 settings 表缺省键的回退值；在构造 executor/engine 之前读取
+	// 持久化设置，把有效值直接写进它们的 Config，保证首次启动就按数据库值运行。
+	settingsFallback := httpapi.RuntimeSettings{
+		MaxConcurrent:   cfg.Engine.MaxConcurrent,
+		DefaultAction:   policy.Action(cfg.Policy.DefaultAction),
+		ApprovalTimeout: cfg.Policy.ApprovalTimeout.Value(),
+	}
+	effectiveSettings, err := httpapi.LoadPersistedRuntimeSettings(ctx, store, cfg.Tenant.DefaultID, settingsFallback)
+	if err != nil {
+		log.Warn("读取运行时设置失败，沿用启动配置", "error", err)
+		effectiveSettings = settingsFallback
+	}
+	log.Info("运行时设置就绪", "max_concurrent", effectiveSettings.MaxConcurrent,
+		"default_action", string(effectiveSettings.DefaultAction),
+		"approval_timeout", effectiveSettings.ApprovalTimeout.String())
+	runtimeCfg := httpapi.NewRuntimeConfig(effectiveSettings)
 	exec := executor.New(store, registry, executor.Config{
 		TenantID:      cfg.Tenant.DefaultID,
-		DefaultAction: policy.Action(cfg.Policy.DefaultAction),
-		AskTimeout:    cfg.Policy.ApprovalTimeout.Value(),
+		DefaultAction: effectiveSettings.DefaultAction,
+		AskTimeout:    effectiveSettings.ApprovalTimeout,
 		Evidence:      evStore,
 	}, log)
 
@@ -275,7 +324,7 @@ func serve(args []string) int {
 	}
 	engine := runner.New(runner.Config{
 		TenantID:          cfg.Tenant.DefaultID,
-		MaxConcurrent:     cfg.Engine.MaxConcurrent,
+		MaxConcurrent:     effectiveSettings.MaxConcurrent,
 		PlannerInterval:   cfg.Engine.PlannerInterval.Value(),
 		WorkerInterval:    cfg.Engine.WorkerInterval.Value(),
 		LeaseTTL:          cfg.Engine.LeaseTTL.Value(),
@@ -303,20 +352,22 @@ func serve(args []string) int {
 		Enabled:        cfg.SelfUpdate.Enabled,
 	})
 	handler, err := httpapi.NewHandler(httpapi.Options{
-		Logger:         log,
-		RequestTimeout: cfg.Server.RequestTimeout.Value(),
-		MaxBodyBytes:   cfg.Server.MaxBodyBytes,
-		TenantResolver: httpapi.StaticTenant(tenant.ID(cfg.Tenant.DefaultID)),
-		Authenticator:  httpapi.NewTokenAuthenticator(adminToken),
-		Store:          store,
-		Engine:         engine,
-		Evidence:       evStore,
-		Executor:       exec,
-		Updater:        updater,
-		WebUI:          webui.Handler(),
-		Broker:         broker,
-		TenantID:       cfg.Tenant.DefaultID,
-		Info:           func(ctx context.Context) any { return sys.NewInfo(ctx) },
+		Logger:           log,
+		RequestTimeout:   cfg.Server.RequestTimeout.Value(),
+		MaxBodyBytes:     cfg.Server.MaxBodyBytes,
+		TenantResolver:   httpapi.StaticTenant(tenant.ID(cfg.Tenant.DefaultID)),
+		Authenticator:    httpapi.NewTokenAuthenticator(adminToken),
+		Store:            store,
+		Engine:           engine,
+		Evidence:         evStore,
+		Executor:         exec,
+		Runtime:          runtimeCfg,
+		SettingsFallback: settingsFallback,
+		Updater:          updater,
+		WebUI:            webui.Handler(),
+		Broker:           broker,
+		TenantID:         cfg.Tenant.DefaultID,
+		Info:             func(ctx context.Context) any { return sys.NewInfo(ctx) },
 		Ready: func(ctx context.Context) (any, bool) {
 			r := sys.Readiness(ctx)
 			return r, r.Ready

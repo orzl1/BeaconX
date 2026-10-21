@@ -1,8 +1,8 @@
-# 数据模型（M1–M6.2-B6）
+# 数据模型（M1–M6.2-B7）
 
 本文描述 BeaconX M1–M6.2-B6 的数据层：资产图与作战图（0002）、任务生命周期（0003）、计划与模型用量（0004）、工具策略/审批/审计（0005）、流量采集与证据快照（0006）、发现/证据关联/复测（0007）、B4/B5 的设置/通知/MCP/Skills/Agents/证据审计/Sync（0008–0015）、B6 的发现节点唯一索引（0016）。
 
-权威来源是 `migrations/0001_init.sql` 至 `migrations/0016_findings_node_unique.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
+权威来源是 `migrations/0001_init.sql` 至 `migrations/0017_llm_exchanges.sql` 与 `internal/infra/pg` 的写入路径；本文只做解释，若与迁移或代码不一致，以迁移与代码为准，并回来修正本文。
 
 ## 1. 多租户约定
 
@@ -50,6 +50,7 @@
 | 0015 | `sync_projects` | 外部项目（幂等 upsert） |
 | 0015 | `sync_runs` | 同步运行记录（pending→running→终态） |
 | 0016 | 索引 `uq_findings_node` | 同一作战图节点最多一条发现（node_id IS NOT NULL 部分唯一） |
+| 0017 | `llm_exchanges` | LLM 请求/响应正文（脱敏/截断/token/字节数） |
 
 ### 2.1 租户根表（0001）
 
@@ -80,7 +81,7 @@
 
 ### 2.6 索引与触发器
 
-所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引，0016 新增 1 个部分唯一索引（合计 38 个）。
+所有索引都以 `tenant_id` 打头，覆盖类型过滤、父子查询、任务范围、节点/边/锚点与覆盖度查询路径。`updated_at` 由 `set_updated_at()` 触发器维护，当前挂在 `tenants`、`companies`、`assets`、`missions`、`operation_nodes`、`findings`、`settings`、`notification_channels`、`mcp_servers`、`skills`、`agents`、`sync_sources`、`sync_projects` 共 13 张表上；枚举值一律由 `CHECK` 约束在写入时校验。0007 新增 4 个索引，0008–0015 新增 13 个索引，0016 新增 1 个部分唯一索引，0017 新增 2 个索引（合计 40 个）。
 
 ### 2.7 运行时变更（0003）
 
@@ -142,7 +143,7 @@
 
 | 迁移 | 表 | 关键列 / 约束 / 索引 | 说明 |
 | --- | --- | --- | --- |
-| 0008 | `settings` | PK(tenant,key)；`value JSONB`；`updated_at` 触发器；FK tenants CASCADE | 运行时设置；只持久化+可读，运行时未热生效（🟡） |
+| 0008 | `settings` | PK(tenant,key)；`value JSONB`；`updated_at` 触发器；FK tenants CASCADE | 运行时设置；B7 起启动/ PATCH 即时热生效（运行中任务预算不回溯 🟡） |
 | 0009 | `notification_channels` | PK(tenant,id)；UNIQUE(tenant,name)；`type` CHECK webhook/email/generic；`config JSONB`；索引 + 触发器 | 通知渠道；webhook 真发、email/generic 测试 skipped |
 | 0009 | `notification_deliveries` | PK(tenant,id)；FK channel CASCADE；`status` CHECK pending/sent/failed/skipped；2 索引 | 投递事实（只追加） |
 | 0010 | `mcp_servers` | PK(tenant,id)；UNIQUE(tenant,name)；`transport` CHECK http/stdio；`args/env/headers JSONB`；`last_status` CHECK unknown/ok/error；索引 + 触发器 | env/headers 响应掩码、stdio 默认禁用 |
@@ -157,9 +158,27 @@
 
 - **资产/节点为什么不做复合 FK**（沿用 findings）：`ON DELETE SET NULL` 会把复合键的 `tenant_id` 置空，违反 `NOT NULL`；`findings.asset_id/node_id`、`sync_runs.project_id` 等由应用层校验同租户/同任务。
 - **文件沙箱**：Skills/Workspace 不建文件表，正文在状态目录；路径 Clean+前缀校验、拒绝符号链接/穿越、大小限制（Skills zip≤10MB/≤200 文件；Workspace 单文件≤1MB、上传≤10MB、默认总配额 100MB，超限 413 quota_exceeded）。
-- **Skills 版本**：快照在技能目录 `.versions/<timestamp>/`，保留最近 5 份；`.versions` 对文件列表/文件接口隐藏（直接访问 400）；restore 只回滚文件内容，不回滚 DB 元数据（🟡）。
+- **Skills 版本**：快照在技能目录 `.versions/<timestamp>/`，保留最近 5 份；`.versions` 对文件列表/文件接口隐藏（直接访问 400）；快照含 meta.json，restore 同时回滚文件与 description/version（旧快照无 meta 给 warning）。
 - **SSRF**：Sync 保存/解析/拨号三层校验，默认拒绝 loopback/私网；仅 `BEACONX_SYNC_ALLOW_PRIVATE` 放开。
-- 0008–0015 共新增 11 张表（0013 空操作）；索引共 38 个（0016 追加 `uq_findings_node` 部分唯一索引）、`updated_at` 触发器共 13 个。
+- 0008–0015 共新增 11 张表（0013 空操作）；索引共 40 个（0016 追加 `uq_findings_node`，0017 追加 llm_exchanges 两索引）、`updated_at` 触发器共 13 个。
+
+### 2.14 LLM 正文采集（0017 `llm_exchanges`）
+
+| 列 | 类型/约束 | 说明 |
+| --- | --- | --- |
+| `tenant_id,id` | PK | 租户 + 自增 |
+| `mission_id` | FK missions(tenant_id,id) ON DELETE CASCADE | 任务删除级联删调用记录 |
+| `role,model` | TEXT | planner/worker 等调用角色与模型 |
+| `request` | JSONB | 已脱敏 messages（键级/密钥形态/tool_calls.arguments） |
+| `response` | TEXT | 已脱敏响应；失败时为空 |
+| `error` | TEXT | 失败错误文本（脱敏/截断） |
+| `prompt_tokens/completion_tokens/total_tokens` | INTEGER | 与 llm_usage 口径独立 |
+| `request_bytes/response_bytes` | INTEGER | **截断后**字节数 |
+| `truncated/redacted` | BOOLEAN | 是否截断/已脱敏 |
+| `created_at` | timestamptz | 索引 (tenant,mission,id DESC)、(tenant,created_at DESC) |
+
+- 单条正文 64KB（UTF-8 安全截断）；采集开关 `BEACONX_LLM_CAPTURE`（默认 true）；写失败 Warn 不阻塞主流程。
+- 敏感数据：只存脱敏后内容；未采集 tools 定义/原始 HTTP；**保留期清理未实现（🟡）**，当前依赖任务级联删除。
 
 ## 3. 资产身份与归一化
 

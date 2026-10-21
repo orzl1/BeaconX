@@ -63,6 +63,8 @@ const (
 	skillVersionsDirName = ".versions"
 	// skillMaxVersions 是保留的版本数上限。
 	skillMaxVersions = 5
+	// skillVersionMetaFileName 是版本目录内保存元数据的文件名。
+	skillVersionMetaFileName = "meta.json"
 	// skillVersionTimestampFormat 是版本目录名格式（UTC，精确到纳秒）。
 	// 注意：Go 的纳秒占位必须跟在「秒 + 小数点」后面，否则 000 是字面量，
 	// 会让同一秒内的多次快照重名并互相覆盖。
@@ -157,6 +159,65 @@ type skillVersionView struct {
 	Size      int64  `json:"size"`
 }
 
+// skillVersionMeta 是版本快照里保存的技能元数据（用于 restore 时回滚 DB）。
+type skillVersionMeta struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Version     string    `json:"version"`
+	SavedAt     time.Time `json:"saved_at"`
+}
+
+// skillVersionMetaFrom 把当前技能行转成快照元数据。
+func skillVersionMetaFrom(skill pg.Skill) skillVersionMeta {
+	return skillVersionMeta{
+		Name:        skill.Name,
+		Description: skill.Description,
+		Version:     skill.Version,
+		SavedAt:     time.Now().UTC(),
+	}
+}
+
+// skillVersionMetaFor 在「目录存在但数据库行缺失」等场景下兜底构造元数据。
+func skillVersionMetaFor(name string, skill pg.Skill, exists bool) skillVersionMeta {
+	meta := skillVersionMetaFrom(skill)
+	if !exists || strings.TrimSpace(meta.Name) == "" {
+		meta.Name = name
+	}
+	return meta
+}
+
+// writeSkillVersionMeta 把元数据写进版本目录；失败视为快照失败。
+func writeSkillVersionMeta(versionDir string, meta skillVersionMeta) error {
+	raw, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("编码版本元数据失败：%w", err)
+	}
+	path := filepath.Join(versionDir, skillVersionMetaFileName)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return fmt.Errorf("写入版本元数据失败：%w", err)
+	}
+	return nil
+}
+
+// readSkillVersionMeta 读取版本目录里的 meta.json。
+//
+// 返回 found=false 表示这是「旧版本」（B7 之前打的快照），调用方只回滚文件并
+// 给出 warning，不修改数据库元数据。
+func readSkillVersionMeta(versionDir string) (meta skillVersionMeta, found bool, err error) {
+	path := filepath.Join(versionDir, skillVersionMetaFileName)
+	data, readErr := os.ReadFile(path)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return skillVersionMeta{}, false, nil
+	}
+	if readErr != nil {
+		return skillVersionMeta{}, false, fmt.Errorf("读取版本元数据失败：%w", readErr)
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return skillVersionMeta{}, false, fmt.Errorf("解析版本元数据失败：%w", err)
+	}
+	return meta, true, nil
+}
+
 // skillView 是对外技能视图；files 是磁盘实际文件数，missing 是
 // 「元数据记录的文件数 − 磁盘实际文件数」（≥0），用于提示文件被外部删除。
 type skillView struct {
@@ -168,6 +229,15 @@ type skillView struct {
 	Missing     int       `json:"missing"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// skillRestoreResponse 是 restore 接口的响应：技能对象 + 可选 warning。
+//
+// warning 只在「旧版本快照缺少 meta.json、仅回滚文件」时出现，前端可提示用户
+// 元数据未回滚。
+type skillRestoreResponse struct {
+	skillView
+	Warning string `json:"warning,omitempty"`
 }
 
 // skillsRootDir 解析技能根目录。
@@ -358,6 +428,20 @@ func skillVersionsRoot(skillDir string) string {
 //
 // 返回复制的文件数与字节数；src 不存在时返回 ErrNotFound 语义由调用方处理。
 func copySkillTree(src, dst string) (int, int64, error) {
+	return copySkillTreeSkipping(src, dst, nil)
+}
+
+// copySkillContent 复制版本快照的「内容部分」：跳过 .versions、符号链接以及
+// 根级 meta.json（meta 由调用方单独恢复，不能写回技能目录）。
+func copySkillContent(src, dst string) (int, int64, error) {
+	return copySkillTreeSkipping(src, dst, func(rel string) bool {
+		return rel == skillVersionMetaFileName
+	})
+}
+
+// copySkillTreeSkipping 是 copySkillTree 的实现：skip 返回 true 的根级相对路径
+// 会被跳过（只支持根级精确匹配，足够覆盖 meta.json 的场景）。
+func copySkillTreeSkipping(src, dst string, skip func(rel string) bool) (int, int64, error) {
 	files := 0
 	var size int64
 	err := filepath.WalkDir(src, func(current string, entry os.DirEntry, walkErr error) error {
@@ -383,6 +467,9 @@ func copySkillTree(src, dst string) (int, int64, error) {
 		rel, err := filepath.Rel(src, current)
 		if err != nil {
 			return err
+		}
+		if skip != nil && skip(rel) {
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
@@ -430,8 +517,9 @@ func copySkillFile(src, dst string) (int64, error) {
 
 // snapshotSkillVersion 给技能目录打一份快照（内部调用；prune 控制是否清理旧版本）。
 //
-// 目录不存在时返回空时间戳且不报错（新建技能还没内容可快照）。
-func snapshotSkillVersion(tenantID int64, name string, prune bool) (string, error) {
+// meta 会写入快照目录的 meta.json，供 restore 时同时回滚数据库元数据；目录不存在
+// 时返回空时间戳且不报错（新建技能还没内容可快照）。
+func snapshotSkillVersion(tenantID int64, name string, meta skillVersionMeta, prune bool) (string, error) {
 	dir := skillDirFor(tenantID, name)
 	if !dirExists(dir) {
 		return "", nil
@@ -457,6 +545,10 @@ func snapshotSkillVersion(tenantID int64, name string, prune bool) (string, erro
 	if _, _, err := copySkillTree(dir, dst); err != nil {
 		_ = os.RemoveAll(dst)
 		return "", fmt.Errorf("写入版本快照失败：%w", err)
+	}
+	if err := writeSkillVersionMeta(dst, meta); err != nil {
+		_ = os.RemoveAll(dst)
+		return "", err
 	}
 	if prune {
 		pruneSkillVersions(tenantID, name)
@@ -518,6 +610,10 @@ func countVersionFiles(dir string) (int, int64) {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
+		rel, relErr := filepath.Rel(dir, current)
+		if relErr == nil && rel == skillVersionMetaFileName {
+			return nil // meta.json 不是技能内容，不计入版本文件数与体积
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil
@@ -533,42 +629,52 @@ func countVersionFiles(dir string) (int, int64) {
 //
 // 顺序：先给当前状态打快照（恢复本身可回滚）→ 清空除 .versions 外的内容 →
 // 把目标快照复制回来 → 清理旧版本。目标版本在快照之后复制，避免被 prune 删掉。
-func restoreSkillVersion(tenantID int64, name, stamp string) error {
+//
+// 返回值：版本快照里的元数据（旧版本没有 meta.json 时 found=false，此时只回滚
+// 文件内容，调用方应给出 warning）。数据库写入由 HTTP 层完成，保持本函数只做
+// 文件系统操作。
+func restoreSkillVersion(tenantID int64, name, stamp string, currentMeta skillVersionMeta) (skillVersionMeta, bool, error) {
 	dir := skillDirFor(tenantID, name)
 	source := filepath.Join(skillVersionsRoot(dir), stamp)
 	if !dirExists(source) {
-		return fmt.Errorf("%w：版本 %q 不存在", pg.ErrNotFound, stamp)
+		return skillVersionMeta{}, false, fmt.Errorf("%w：版本 %q 不存在", pg.ErrNotFound, stamp)
 	}
-	// 先把目标版本复制到临时目录：后续快照可能触发 prune，不能直接引用原路径。
+	versionMeta, hasMeta, err := readSkillVersionMeta(source)
+	if err != nil {
+		return skillVersionMeta{}, false, err
+	}
+	// 先把目标版本复制到临时目录：后续快照可能触发 prune，不能直接引用原路径；
+	// copySkillContent 会跳过 meta.json，避免它被写回技能目录。
 	tmpRoot := filepath.Join(skillTenantDir(tenantID), "."+name+".restore."+strconv.FormatInt(time.Now().UnixNano(), 10))
 	if err := os.MkdirAll(tmpRoot, 0o700); err != nil {
-		return fmt.Errorf("创建恢复临时目录失败：%w", err)
+		return skillVersionMeta{}, false, fmt.Errorf("创建恢复临时目录失败：%w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpRoot) }()
-	if _, _, err := copySkillTree(source, tmpRoot); err != nil {
-		return fmt.Errorf("读取版本快照失败：%w", err)
+	if _, _, err := copySkillContent(source, tmpRoot); err != nil {
+		return skillVersionMeta{}, false, fmt.Errorf("读取版本快照失败：%w", err)
 	}
-	// 当前状态先入历史（不 prune，避免把要恢复的那份挤掉）。
-	if _, err := snapshotSkillVersion(tenantID, name, false); err != nil {
-		return err
+	// 当前状态先入历史（不 prune，避免把要恢复的那份挤掉），并带上当前元数据，
+	// 这样「恢复」本身也可以再被恢复回去。
+	if _, err := snapshotSkillVersion(tenantID, name, currentMeta, false); err != nil {
+		return skillVersionMeta{}, false, err
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("读取技能目录失败：%w", err)
+		return skillVersionMeta{}, false, fmt.Errorf("读取技能目录失败：%w", err)
 	}
 	for _, entry := range entries {
 		if entry.Name() == skillVersionsDirName {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
-			return fmt.Errorf("清理当前内容失败：%w", err)
+			return skillVersionMeta{}, false, fmt.Errorf("清理当前内容失败：%w", err)
 		}
 	}
-	if _, _, err := copySkillTree(tmpRoot, dir); err != nil {
-		return fmt.Errorf("恢复版本内容失败：%w", err)
+	if _, _, err := copySkillContent(tmpRoot, dir); err != nil {
+		return skillVersionMeta{}, false, fmt.Errorf("恢复版本内容失败：%w", err)
 	}
 	pruneSkillVersions(tenantID, name)
-	return nil
+	return versionMeta, hasMeta, nil
 }
 
 // snapshotBeforeReplace 在整体替换技能目录（上传覆盖）前打快照。
@@ -576,12 +682,12 @@ func restoreSkillVersion(tenantID int64, name, stamp string) error {
 // 返回 carry：把 .versions 目录挪到技能目录之外的暂存路径——随后的
 // os.RemoveAll(target) 会把技能目录连同 .versions 一起删掉。替换完成后按
 // carryMoveBack 放回新的技能目录。
-func snapshotBeforeReplace(tenantID int64, name string) (carry string, err error) {
+func snapshotBeforeReplace(tenantID int64, name string, meta skillVersionMeta) (carry string, err error) {
 	dir := skillDirFor(tenantID, name)
 	if !dirExists(dir) {
 		return "", nil
 	}
-	if _, err := snapshotSkillVersion(tenantID, name, true); err != nil {
+	if _, err := snapshotSkillVersion(tenantID, name, meta, true); err != nil {
 		return "", err
 	}
 	versions := skillVersionsRoot(dir)
@@ -807,7 +913,8 @@ func (o Options) handleRestoreSkillVersion(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if _, err := o.Store.GetSkill(r.Context(), o.TenantID, name); err != nil {
+	current, err := o.Store.GetSkill(r.Context(), o.TenantID, name)
+	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
@@ -816,9 +923,22 @@ func (o Options) handleRestoreSkillVersion(w http.ResponseWriter, r *http.Reques
 		writeStoreError(w, r, fmt.Errorf("%w：版本时间戳格式不合法", pg.ErrInvalidInput))
 		return
 	}
-	if err := restoreSkillVersion(o.TenantID, name, timestamp); err != nil {
+	versionMeta, hasMeta, err := restoreSkillVersion(o.TenantID, name, timestamp,
+		skillVersionMetaFrom(current))
+	if err != nil {
 		writeStoreError(w, r, err)
 		return
+	}
+	warning := ""
+	if hasMeta {
+		// 同时回滚数据库元数据（description/version）；name 是主键不改。
+		if _, err := o.Store.RestoreSkillMeta(r.Context(), o.TenantID, name,
+			versionMeta.Description, versionMeta.Version); err != nil {
+			writeStoreError(w, r, err)
+			return
+		}
+	} else {
+		warning = "该版本快照没有 meta.json，仅回滚文件内容，元数据保持当前值"
 	}
 	o.syncSkillFileCount(r, name)
 	skill, err := o.Store.GetSkill(r.Context(), o.TenantID, name)
@@ -826,7 +946,7 @@ func (o Options) handleRestoreSkillVersion(w http.ResponseWriter, r *http.Reques
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, skillToView(skill))
+	writeJSON(w, http.StatusOK, skillRestoreResponse{skillView: skillToView(skill), Warning: warning})
 }
 
 // handleListSkillFiles 文件列表。
@@ -915,7 +1035,8 @@ func (o Options) handleWriteSkillFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := o.Store.GetSkill(r.Context(), o.TenantID, name); err != nil {
+	skill, err := o.Store.GetSkill(r.Context(), o.TenantID, name)
+	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
@@ -963,7 +1084,7 @@ func (o Options) handleWriteSkillFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// 写入前给旧内容打一份版本快照；快照失败不阻塞写入（版本历史是增强能力），
 	// 但会记日志，便于运维发现磁盘问题。
-	if _, snapErr := snapshotSkillVersion(o.TenantID, name, true); snapErr != nil {
+	if _, snapErr := snapshotSkillVersion(o.TenantID, name, skillVersionMetaFrom(skill), true); snapErr != nil {
 		o.Logger.Warn("技能版本快照失败", "skill", name, "error", snapErr)
 	}
 	if err := os.WriteFile(full, content, 0o600); err != nil {
@@ -1121,7 +1242,7 @@ func (o Options) handleUploadSkill(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, "conflict", "技能目录 "+name+" 已存在（可用 ?overwrite=true 覆盖）")
 			return
 		}
-		snapshotCarry, snapErr := snapshotBeforeReplace(o.TenantID, name)
+		snapshotCarry, snapErr := snapshotBeforeReplace(o.TenantID, name, skillVersionMetaFor(name, existing, exists))
 		if snapErr != nil {
 			writeError(w, r, http.StatusInternalServerError, "internal_error", "创建版本快照失败")
 			return

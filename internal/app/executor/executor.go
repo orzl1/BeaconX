@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/app/evidence"
@@ -45,8 +46,12 @@ func (c Config) withDefaults() Config {
 type Executor struct {
 	store    *pg.Store
 	registry *tools.Registry
-	cfg      Config
 	log      *slog.Logger
+
+	// cfgMu 保护可热更新的运行时参数（DefaultAction / AskTimeout）。
+	// 这些字段在每次 Execute 时读取，settings 热生效通过 setter 写入。
+	cfgMu sync.RWMutex
+	cfg   Config
 }
 
 // New 创建执行器。
@@ -55,6 +60,47 @@ func New(store *pg.Store, registry *tools.Registry, cfg Config, log *slog.Logger
 		log = slog.Default()
 	}
 	return &Executor{store: store, registry: registry, cfg: cfg.withDefaults(), log: log.With("component", "executor")}
+}
+
+// SetDefaultAction 热更新默认策略动作；非法值忽略（Settings API 已做校验）。
+func (e *Executor) SetDefaultAction(action policy.Action) {
+	if !action.Valid() {
+		return
+	}
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.cfg.DefaultAction = action
+}
+
+// SetApprovalTimeout 热更新人工审批等待超时；<=0 忽略。
+func (e *Executor) SetApprovalTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	e.cfgMu.Lock()
+	defer e.cfgMu.Unlock()
+	e.cfg.AskTimeout = timeout
+}
+
+// DefaultAction 返回当前默认策略动作（用于测试/观测）。
+func (e *Executor) DefaultAction() policy.Action {
+	e.cfgMu.RLock()
+	defer e.cfgMu.RUnlock()
+	return e.cfg.DefaultAction
+}
+
+// ApprovalTimeout 返回当前审批等待超时（用于测试/观测）。
+func (e *Executor) ApprovalTimeout() time.Duration {
+	e.cfgMu.RLock()
+	defer e.cfgMu.RUnlock()
+	return e.cfg.AskTimeout
+}
+
+// policyRuntime 一次性读取默认动作与审批超时，保证同一次 Execute 内取值一致。
+func (e *Executor) policyRuntime() (policy.Action, time.Duration) {
+	e.cfgMu.RLock()
+	defer e.cfgMu.RUnlock()
+	return e.cfg.DefaultAction, e.cfg.AskTimeout
 }
 
 // Execute 执行一次工具调用。
@@ -68,7 +114,8 @@ func (e *Executor) Execute(ctx context.Context, missionID, nodeID int64, toolNam
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("读取策略规则失败: %w", err)
 	}
-	decision, err := policy.Evaluate(toolName, args, rules, e.cfg.DefaultAction)
+	defaultAction, askTimeout := e.policyRuntime()
+	decision, err := policy.Evaluate(toolName, args, rules, defaultAction)
 	if err != nil {
 		return tools.Result{}, fmt.Errorf("策略判定失败: %w", err)
 	}
@@ -79,7 +126,7 @@ func (e *Executor) Execute(ctx context.Context, missionID, nodeID int64, toolNam
 		return tools.Result{}, fmt.Errorf("策略拒绝执行 %s：%s", toolName, decision.Reason)
 
 	case policy.Ask:
-		timeout := e.cfg.AskTimeout
+		timeout := askTimeout
 		for _, r := range rules {
 			if r.Name == decision.RuleName && r.TimeoutSeconds > 0 {
 				timeout = time.Duration(r.TimeoutSeconds) * time.Second

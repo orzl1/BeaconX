@@ -739,3 +739,59 @@ func (s *Store) ListSyncRuns(ctx context.Context, tenantID int64, f SyncRunFilte
 	}
 	return out, nil
 }
+
+// syncRunRecoveredError 是进程重启恢复写入的固定错误文案（便于运维检索）。
+const syncRunRecoveredError = "进程重启恢复"
+
+// RecoverStaleSyncRuns 把超时仍停在 running 的同步运行标记为 failed。
+//
+// 进程崩溃会留下 status='running' 且永不结束的记录；启动时用固定的 staleAfter
+// 判定（默认 15 分钟）避免把刚刚启动、正常执行的运行误判。只按 started_at 判断，
+// started_at 为 NULL 的历史脏数据保持原状（无法判断开始时间，交给人工处理）。
+func (s *Store) RecoverStaleSyncRuns(ctx context.Context, tenantID int64, staleAfter time.Duration) (int64, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return 0, err
+	}
+	if staleAfter <= 0 {
+		return 0, fmt.Errorf("%w：恢复阈值必须大于 0", ErrInvalidInput)
+	}
+	tag, err := s.db.pool.Exec(ctx, `
+		UPDATE sync_runs
+		SET status = 'failed', error = $2, finished_at = now()
+		WHERE tenant_id = $1 AND status = 'running'
+		  AND started_at IS NOT NULL
+		  AND started_at < now() - make_interval(secs => $3::double precision)`,
+		tenantID, syncRunRecoveredError, staleAfter.Seconds())
+	if err != nil {
+		return 0, fmt.Errorf("恢复中断的同步运行失败: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteOldSyncRuns 删除超过保留期的终态同步运行（succeeded/failed）。
+//
+// retention <= 0 表示不清理（保留全部历史）；只删 finished_at 明确早于阈值的行，
+// 未结束（pending/running）与 finished_at 为空的行永不清理，避免误删运行中数据。
+func (s *Store) DeleteOldSyncRuns(ctx context.Context, tenantID int64, retention time.Duration) (int64, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return 0, err
+	}
+	if retention <= 0 {
+		return 0, nil
+	}
+	days := retention / (24 * time.Hour)
+	if days <= 0 {
+		days = 1
+	}
+	tag, err := s.db.pool.Exec(ctx, `
+		DELETE FROM sync_runs
+		WHERE tenant_id = $1
+		  AND status IN ('succeeded', 'failed')
+		  AND finished_at IS NOT NULL
+		  AND finished_at < now() - make_interval(days => $2::int)`,
+		tenantID, int(days))
+	if err != nil {
+		return 0, fmt.Errorf("清理过期同步运行失败: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

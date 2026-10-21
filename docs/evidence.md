@@ -179,3 +179,10 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 - **必须警示**：新密钥不落盘；运维需更新 `BEACONX_EVIDENCE_KEY` 或 `<state>/evidence.key` 并重启。主密钥切换会同时改变签名子密钥，**存量 Snapshot 的 HMAC 签名失效（Verify 返回 ErrTampered）**；当前没有自动重签流程，生产轮换须先备份 PostgreSQL+证据目录，并按离线重签流程处理（🟡）。
 - **审计覆盖**：`GET /evidence/{id}/audit` 读 `evidence_access_log`；B6 起 `GET /evidence/{id}/verify` 成功/失败均记 verify，流量正文读取且 blob 被快照引用时记 read；均 best-effort，仍有路径未埋点（🟡）。
 - **复测/重放**：复测 run 只做签名/解密证据校验（不重跑 exploit）；流量重放已走 executor（策略门/审批），旧文档中的“绕过策略”已失效（B6 修正）。
+
+## 13. B7 轮换重签与审计（M6.2-B7）
+
+- **轮换重签已实现**：rotate 成功后遍历租户全部快照，用新 key 重算 ID/Signature 并写回，返回 `{rotated,resigned}`；重签中断返回 500 `rotate_resign_failed` + 已完成数。轮换期间存在短暂 Verify 409 窗口，生产应停机/只读操作；多租户未来需全租户重签（🟡）。
+- **LLM 正文采集**：0017 `llm_exchanges` 保存脱敏后的 messages/response/error（64KB 截断、`BEACONX_LLM_CAPTURE` 默认 true），用于排障/审计；**无保留期清理（🟡）**，任务删除级联删除。
+- **通知 SSRF**：webhook 发送前解析 URL 并拒绝私网/loopback/link-local/CGNAT，拨号前校验真实 IP、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；存储的 config 仍明文（加密未做 🟡）、投递 detail 响应片段未脱敏（🟡）。
+- **证据审计**：verify 成功/失败、正文 read（blob 被快照引用）继续 best-effort 记录，仍有路径未埋点（🟡）。

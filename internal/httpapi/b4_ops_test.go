@@ -406,6 +406,9 @@ func TestNotificationChannelsCRUD(t *testing.T) {
 // TestNotificationChannelTestDelivery 覆盖测试发送的 sent/failed/skipped 语义
 // 与投递记录过滤、级联删除。
 func TestNotificationChannelTestDelivery(t *testing.T) {
+	// B7 硬化后 webhook 默认拒绝回环/私网目标；本测试用 httptest（127.0.0.1）
+	// 验证真实投递链路，因此显式放开私网访问。
+	t.Setenv("BEACONX_NOTIFY_ALLOW_PRIVATE", "true")
 	store, tenantID := findingsHTTPEnv(t)
 	opts := Options{Store: store, TenantID: tenantID}
 

@@ -148,7 +148,7 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 
 - **模块位置**：策略/审批/设置/日志/通知/资产补全在 `internal/httpapi/{policy_api,settings_api,logs_api,notifications_api,assets_extra}.go`；MCP/Skills/Agents/Workspace/Sync/报告/流量/证据增强在 `{mcp_api,skills_api,agents_api,workspace_api,sync_api,traffic_extra,evidence_extra,report_extra,retest_extra}.go`；领域/存储见 `internal/app/{mcp,report,syncdata,workspace}` 与 `internal/infra/pg/store_*`。
 - **日志**：进程级环形缓冲（2000）由 `internal/logging` 提供，SSE 先订阅后写头、20s 心跳、慢订阅丢帧；无跨进程聚合/after_id。
-- **设置**：`settings` 表持久化 + 可读，**runner/executor 仍读启动 config，未热生效（🟡）**。
+- **设置**：`settings` 表持久化 + 可读；B7 起启动读 settings 覆盖 executor/engine，PATCH 即时热生效；运行中任务预算不回溯、调低并发不抢占（🟡）。
 - **通知**：webhook 真实 POST、email/generic 记 skipped；无真实事件触发、无出站 URL 白名单、config 明文（🟡）。
 - **文件沙箱**：Skills/Workspace 用状态目录 + 路径 Clean/前缀校验/符号链接拒绝 + 大小限制；非空目录删除需 recursive。
 - **Sync**：异步运行 ≤60s、manual/http_json、SSRF 三层校验默认拒私网、逐条容错 skipped；无崩溃恢复/保留策略（🟡）。
@@ -162,5 +162,15 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 - **证据轮换**：`POST /evidence/rotate` 在 Store 写锁下逐 blob 旧解密→新加密，失败 best-effort 回滚；新密钥不落盘，需更新 `BEACONX_EVIDENCE_KEY`/evidence.key 并重启；**存量 Snapshot HMAC 签名随主密钥切换失效，Verify→ErrTampered，当前无自动重签（🟡）**，生产轮换必须备份 PG+证据目录并走离线重签。
 - **证据审计**：verify 成功/失败都写 `evidence_access_log`；流量正文读取在 blob 被证据快照引用时写 read（hash 反查）；均为 best-effort，仍有路径未埋点（🟡）。
 - **可观测**：新增全局活动流 `GET /activity`（mission_events 跨任务倒序，before_id 游标）；Dashboard 新增 `hourly` 最近 24 小时 UTC 桶；`GET /missions/{id}/graph` 增加 `after_id`/`next_after_id`（节点升序，取 id>after_id；edges/anchors 全量，过滤仍受 ListNodes 1000 上限 🟡）。
-- **MCP/Workspace/Skills 硬化**：stdio 默认禁用、env 白名单、独立临时工作目录、stdout≤1MiB、超时 kill 进程组、命令白名单/`BEACONX_MCP_STDIO_DIR`、Windows 400；Workspace 默认 100MB 配额（`BEACONX_WORKSPACE_QUOTA_MB`），PUT/上传预检+复核，超限 413 quota_exceeded，per-mission 锁仅进程内；Skills `.versions` 保留 5 份，restore 先快照当前状态，restore 不回滚 DB 元数据（🟡）。
+- **MCP/Workspace/Skills 硬化**：stdio 默认禁用、env 白名单、独立临时工作目录、stdout≤1MiB、超时 kill 进程组、命令白名单/`BEACONX_MCP_STDIO_DIR`、Windows 400；Workspace 默认 100MB 配额（`BEACONX_WORKSPACE_QUOTA_MB`），PUT/上传预检+复核，超限 413 quota_exceeded，per-mission 锁仅进程内；Skills `.versions` 保留 5 份，restore 先快照当前状态；B7 起快照含 meta.json，restore 同时回滚 files+description/version（旧快照 warning）。
 - **from-node 唯一性**：0016 `uq_findings_node` 部分唯一索引兜底，并发重复→409。
+
+## 12. B7 收口（M6.2-B7）
+
+- **settings 热生效**：启动读 settings 覆盖 executor/engine 配置；PATCH 即时生效（executor 默认动作/审批超时、engine max_concurrent、mission 默认预算共享 RuntimeConfig）。新任务未给预算用默认（0=默认，默认 0=不限制）；运行中任务预算不回溯、调低并发不抢占（🟡）。
+- **LLM 正文采集**：`internal/app/ai/llm_capture.go` 在 planner/worker 6 个调用点写 `llm_exchanges`（失败也记 error）；messages/响应脱敏（键级+密钥形态+tool_calls.arguments）、单条 64KB UTF-8 截断；`BEACONX_LLM_CAPTURE` 默认 true，写失败 Warn 不阻塞；**无保留期清理（🟡）**，任务删除级联删除。
+- **证据轮换重签**：rotate 成功后遍历租户全部快照用新 key 重签，返回 `{rotated,resigned}`；中断 500 `rotate_resign_failed` + 已完成数；存在短暂 Verify 409 窗口；多租户需全租户范围（🟡）。
+- **策略 immutable**：除 `enabled` 外任何字段提交 409。
+- **sync 恢复/保留**：启动 running>15min→failed；终态按 `BEACONX_SYNC_RETENTION_DAYS`（默认 30，0=不清理）清理；pending 不恢复（🟡）。
+- **通知 SSRF**：webhook 发送前/拨号前校验（loopback/私网/link-local/CGNAT→400 webhook_blocked）、禁重定向/环境代理；`BEACONX_NOTIFY_ALLOW_PRIVATE` 默认 false；响应 config 敏感键/url userinfo 掩码，存储明文（🟡）。
+- **Skills/Workspace**：快照含 meta.json，restore 回滚 files+description/version（旧快照 warning）；workspace 配额用 pg advisory xact lock 跨进程，未注入退化进程内锁。

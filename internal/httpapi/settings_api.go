@@ -1,14 +1,19 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/orzl1/BeaconX/internal/app/executor"
+	"github.com/orzl1/BeaconX/internal/app/runner"
 	"github.com/orzl1/BeaconX/internal/domain/policy"
+	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
 
 // M6.2-B4 运行时设置接口（P-B4-18..19）。
@@ -24,9 +29,10 @@ import (
 //	   "approval_timeout":"60s"
 //	}}
 //
-// 实现状态：当前只做「持久化 + 可读」，运行时热生效未接入——executor/runner
-// 仍读启动配置（config.default）。文档需要标注「部分实现」，避免前端误以为
-// 改完立即影响正在运行的任务。
+// 热生效：启动时 main 用 ApplyPersistedRuntimeSettings 从 settings 表恢复运行参数
+// （缺省键沿用 config 注入的 SettingsFallback）；PATCH 成功后立即调用
+// executor/engine/runtime 的线程安全 setter。任务默认预算保存在 RuntimeConfig，
+// 创建任务未显式给预算时使用。
 
 func init() {
 	RegisterFeatureRoutes(
@@ -75,51 +81,189 @@ type settingsResponse struct {
 	Settings settingsView `json:"settings"`
 }
 
-// defaultSettingsView 返回内置默认设置。
-func defaultSettingsView() settingsView {
-	return settingsView{
-		MaxConcurrent:   defaultMaxConcurrent,
-		DefaultBudget:   settingsBudgetView{MaxTokens: 0, MaxSteps: 0},
-		DefaultAction:   string(policy.Ask),
-		ApprovalTimeout: formatTimeout(time.Duration(defaultApprovalSeconds) * time.Second),
+// RuntimeSettings 是运行期可热更新的有效参数快照。
+//
+// 它同时承担两个职责：启动时合并「settings 表值 + config 回退」，PATCH 后作为
+// executor/engine/runtime 的即时应用输入。
+type RuntimeSettings struct {
+	MaxConcurrent    int
+	DefaultAction    policy.Action
+	ApprovalTimeout  time.Duration
+	DefaultMaxTokens int64
+	DefaultMaxSteps  int
+}
+
+// DefaultRuntimeSettings 返回与 config.Default 一致的内置默认值。
+func DefaultRuntimeSettings() RuntimeSettings {
+	return RuntimeSettings{
+		MaxConcurrent:    defaultMaxConcurrent,
+		DefaultAction:    policy.Ask,
+		ApprovalTimeout:  time.Duration(defaultApprovalSeconds) * time.Second,
+		DefaultMaxTokens: 0,
+		DefaultMaxSteps:  0,
 	}
 }
 
-// loadSettingsView 读取持久化设置并投影成视图；缺省键用默认值，损坏值回退默认。
-func (o Options) loadSettingsView(r *http.Request) (settingsView, error) {
-	view := defaultSettingsView()
-	raw, err := o.Store.GetSettingsMap(r.Context(), o.TenantID)
+// normalized 用内置默认修正零值/非法字段（settings 表无值或 config 回退时）。
+func (s RuntimeSettings) normalized() RuntimeSettings {
+	def := DefaultRuntimeSettings()
+	if s.MaxConcurrent <= 0 {
+		s.MaxConcurrent = def.MaxConcurrent
+	}
+	if !s.DefaultAction.Valid() {
+		s.DefaultAction = def.DefaultAction
+	}
+	if s.ApprovalTimeout <= 0 {
+		s.ApprovalTimeout = def.ApprovalTimeout
+	}
+	if s.DefaultMaxTokens < 0 {
+		s.DefaultMaxTokens = 0
+	}
+	if s.DefaultMaxSteps < 0 {
+		s.DefaultMaxSteps = 0
+	}
+	return s
+}
+
+// view 把有效参数投影成 HTTP 设置视图。
+func (s RuntimeSettings) view() settingsView {
+	return settingsView{
+		MaxConcurrent:   s.MaxConcurrent,
+		DefaultBudget:   settingsBudgetView{MaxTokens: s.DefaultMaxTokens, MaxSteps: s.DefaultMaxSteps},
+		DefaultAction:   string(s.DefaultAction),
+		ApprovalTimeout: formatTimeout(s.ApprovalTimeout),
+	}
+}
+
+// RuntimeConfig 保存创建任务时使用的默认预算，可被 PATCH 热更新。
+//
+// 用独立对象而不是直接改 Options：Options 是值传递，handler 各自拿到副本，
+// 必须有一个指针对象承载跨请求可见的运行时状态。
+type RuntimeConfig struct {
+	mu        sync.RWMutex
+	maxTokens int64
+	maxSteps  int
+}
+
+// NewRuntimeConfig 用回退设置初始化默认预算。
+func NewRuntimeConfig(fallback RuntimeSettings) *RuntimeConfig {
+	fallback = fallback.normalized()
+	return &RuntimeConfig{maxTokens: fallback.DefaultMaxTokens, maxSteps: fallback.DefaultMaxSteps}
+}
+
+// MissionDefaults 返回创建任务时使用的默认预算；RuntimeConfig 为 nil 时返回零值。
+func (c *RuntimeConfig) MissionDefaults() (int64, int) {
+	if c == nil {
+		return 0, 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maxTokens, c.maxSteps
+}
+
+// SetMissionDefaults 热更新任务默认预算。
+func (c *RuntimeConfig) SetMissionDefaults(maxTokens int64, maxSteps int) {
+	if c == nil {
+		return
+	}
+	if maxTokens < 0 {
+		maxTokens = 0
+	}
+	if maxSteps < 0 {
+		maxSteps = 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxTokens = maxTokens
+	c.maxSteps = maxSteps
+}
+
+// effectiveRuntimeSettings 合并 settings 表与回退配置；非法/损坏的持久化值回退。
+func effectiveRuntimeSettings(ctx context.Context, store *pg.Store, tenantID int64, fallback RuntimeSettings) (RuntimeSettings, error) {
+	effective := fallback.normalized()
+	raw, err := store.GetSettingsMap(ctx, tenantID)
 	if err != nil {
-		return settingsView{}, err
+		return RuntimeSettings{}, err
 	}
 	if v, ok := raw[settingKeyMaxConcurrent]; ok {
 		if n, parseErr := parseJSONInt(v); parseErr == nil && n >= 1 && n <= 64 {
-			view.MaxConcurrent = n
+			effective.MaxConcurrent = n
 		}
 	}
 	if v, ok := raw[settingKeyDefaultAction]; ok {
 		var action string
 		if json.Unmarshal(v, &action) == nil && policy.Action(action).Valid() {
-			view.DefaultAction = action
+			effective.DefaultAction = policy.Action(action)
 		}
 	}
 	if v, ok := raw[settingKeyApprovalTimeout]; ok {
 		if d, parseErr := parseTimeoutValue(v); parseErr == nil {
-			view.ApprovalTimeout = formatTimeout(d)
+			effective.ApprovalTimeout = d
 		}
 	}
 	if v, ok := raw[settingKeyDefaultMaxTokens]; ok {
 		var n int64
 		if json.Unmarshal(v, &n) == nil && n >= 0 {
-			view.DefaultBudget.MaxTokens = n
+			effective.DefaultMaxTokens = n
 		}
 	}
 	if v, ok := raw[settingKeyDefaultMaxSteps]; ok {
 		if n, parseErr := parseJSONInt(v); parseErr == nil && n >= 0 {
-			view.DefaultBudget.MaxSteps = n
+			effective.DefaultMaxSteps = n
 		}
 	}
-	return view, nil
+	return effective, nil
+}
+
+// loadSettingsView 读取「settings 表 + config 回退」合并后的有效视图。
+func (o Options) loadSettingsView(r *http.Request) (settingsView, error) {
+	effective, err := effectiveRuntimeSettings(r.Context(), o.Store, o.TenantID, o.SettingsFallback)
+	if err != nil {
+		return settingsView{}, err
+	}
+	return effective.view(), nil
+}
+
+// applyRuntimeSettings 把有效参数即时应用到运行时组件（nil 组件跳过）。
+func (o Options) applyRuntimeSettings(effective RuntimeSettings) {
+	applyRuntimeTo(effective, o.Engine, o.Executor, o.Runtime)
+}
+
+// applyRuntimeTo 把有效参数写入 executor/engine/runtime；供 PATCH 与 main 启动共用。
+func applyRuntimeTo(effective RuntimeSettings, engine *runner.Engine, exec *executor.Executor, runtime *RuntimeConfig) {
+	effective = effective.normalized()
+	if exec != nil {
+		exec.SetDefaultAction(effective.DefaultAction)
+		exec.SetApprovalTimeout(effective.ApprovalTimeout)
+	}
+	if engine != nil {
+		engine.SetMaxConcurrent(effective.MaxConcurrent)
+	}
+	if runtime != nil {
+		runtime.SetMissionDefaults(effective.DefaultMaxTokens, effective.DefaultMaxSteps)
+	}
+}
+
+// LoadPersistedRuntimeSettings 只读取并合并「settings 表 + 回退配置」，不应用。
+//
+// main 在构造 executor/engine 之前调用，把有效值直接写进它们的 Config；这样
+// 进程首次启动就不会先按旧值构造再覆盖一次。
+func LoadPersistedRuntimeSettings(ctx context.Context, store *pg.Store, tenantID int64, fallback RuntimeSettings) (RuntimeSettings, error) {
+	return effectiveRuntimeSettings(ctx, store, tenantID, fallback)
+}
+
+// ApplyPersistedRuntimeSettings 在进程启动时从 settings 表恢复运行参数并应用。
+//
+// fallback 是 config 的有效值；settings 缺省键沿用 fallback。main 在 engine.Start
+// 之前调用，保证首次调度就使用持久化的并发上限。
+func ApplyPersistedRuntimeSettings(ctx context.Context, store *pg.Store, tenantID int64,
+	fallback RuntimeSettings, engine *runner.Engine, exec *executor.Executor, runtime *RuntimeConfig) (RuntimeSettings, error) {
+	effective, err := effectiveRuntimeSettings(ctx, store, tenantID, fallback)
+	if err != nil {
+		return RuntimeSettings{}, err
+	}
+	applyRuntimeTo(effective, engine, exec, runtime)
+	return effective, nil
 }
 
 // handleSettingsGet 返回生效设置（持久化值 + 默认值补齐）。
@@ -166,12 +310,15 @@ func (o Options) handleSettingsPatch(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, r, err)
 		return
 	}
-	view, err := o.loadSettingsView(r)
+	effective, err := effectiveRuntimeSettings(r.Context(), o.Store, o.TenantID, o.SettingsFallback)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, settingsResponse{Settings: view})
+	// 持久化成功后再应用：executor/engine/runtime 都是线程安全 setter，
+	// 正在运行的任务/调度循环读取的是新值，无需重启。
+	o.applyRuntimeSettings(effective)
+	writeJSON(w, http.StatusOK, settingsResponse{Settings: effective.view()})
 }
 
 // normalizeSettingsPatch 把请求里的扁平键（也接受点号键）规范化为持久化键值。

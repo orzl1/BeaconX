@@ -331,7 +331,7 @@ func TestB4PolicyRulesAPI(t *testing.T) {
 			t.Fatalf("重名更新状态码 = %d，期望 409（body=%s）", status, raw)
 		}
 
-		// 内置 immutable 规则：改动作 409，改优先级允许。
+		// 内置 immutable 规则：除 enabled 外任何字段（含优先级/参数正则/超时）都 409。
 		var list b4PolicyRuleListJSON
 		_, raw = h.do(t, http.MethodGet, "/api/v1/policy/rules", testAPIToken, "")
 		b4PolicyDecode(t, raw, &list)
@@ -349,10 +349,23 @@ func TestB4PolicyRulesAPI(t *testing.T) {
 		if status != http.StatusConflict {
 			t.Fatalf("改不可变规则动作状态码 = %d，期望 409（body=%s）", status, raw)
 		}
+		for _, body := range []string{
+			`{"priority":201}`,
+			`{"arg_pattern":".*"}`,
+			`{"timeout_seconds":1}`,
+			`{"name":"改名"}`,
+			`{"tool":"http_probe"}`,
+		} {
+			status, raw = h.do(t, http.MethodPatch, fmt.Sprintf("/api/v1/policy/rules/%d", immutable.ID), testAPIToken, body)
+			if status != http.StatusConflict {
+				t.Fatalf("改不可变规则字段 %s 状态码 = %d，期望 409（body=%s）", body, status, raw)
+			}
+		}
+		// enabled 是唯一允许的字段。
 		status, raw = h.do(t, http.MethodPatch, fmt.Sprintf("/api/v1/policy/rules/%d", immutable.ID), testAPIToken,
-			`{"priority":201}`)
+			`{"enabled":false}`)
 		if status != http.StatusOK {
-			t.Fatalf("改不可变规则优先级状态码 = %d，期望 200（body=%s）", status, raw)
+			t.Fatalf("启停不可变规则状态码 = %d，期望 200（body=%s）", status, raw)
 		}
 
 		status, raw = h.do(t, http.MethodGet, "/api/v1/policy/rules/999999999", testAPIToken, "")

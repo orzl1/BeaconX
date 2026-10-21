@@ -281,3 +281,64 @@ func (s *Store) EvidenceSnapshotIDByBlobHash(ctx context.Context, tenantID int64
 	}
 	return id, true, nil
 }
+
+// ListEvidenceSnapshotsForResign 返回租户全部证据快照（按 id 升序）。
+//
+// 证据密钥轮换后签名子密钥变化，需要遍历全部快照用新密钥重算 Signature；
+// 这里不做分页：单租户 v1 的证据快照量级可控，且重签必须是完整一遍。
+func (s *Store) ListEvidenceSnapshotsForResign(ctx context.Context, tenantID int64) ([]EvidenceSnapshot, error) {
+	if err := checkTenant(tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.pool.Query(ctx, `
+		SELECT `+`tenant_id, id, mission_id, tool, request_hash, request_size,
+		       response_hash, response_size, signature, redaction, created_at
+		FROM evidence_snapshots
+		WHERE tenant_id = $1
+		ORDER BY id`, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("读取证据快照列表失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]EvidenceSnapshot, 0, 16)
+	for rows.Next() {
+		var snap EvidenceSnapshot
+		if err := rows.Scan(&snap.TenantID, &snap.ID, &snap.MissionID, &snap.Tool,
+			&snap.RequestHash, &snap.RequestSize, &snap.ResponseHash, &snap.ResponseSize,
+			&snap.Signature, &snap.Redaction, &snap.CreatedAt); err != nil {
+			return nil, fmt.Errorf("解析证据快照失败: %w", err)
+		}
+		out = append(out, snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历证据快照失败: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateEvidenceSignature 只更新签名列；轮换重签使用。
+//
+// 元数据（mission/tool/refs/redaction/created_at）不允许经由此方法修改：签名是
+// 对元数据的 HMAC，改元数据必须走 CreateEvidenceSnapshot 重新冻结。
+func (s *Store) UpdateEvidenceSignature(ctx context.Context, tenantID, snapshotID int64, signature string) error {
+	if err := checkTenant(tenantID); err != nil {
+		return err
+	}
+	if snapshotID <= 0 {
+		return fmt.Errorf("%w：证据标识必须为正数", ErrInvalidInput)
+	}
+	if strings.TrimSpace(signature) == "" {
+		return fmt.Errorf("%w：签名不能为空", ErrInvalidInput)
+	}
+	tag, err := s.db.pool.Exec(ctx,
+		`UPDATE evidence_snapshots SET signature = $3 WHERE tenant_id = $1 AND id = $2`,
+		tenantID, snapshotID, signature)
+	if err != nil {
+		return fmt.Errorf("更新证据签名失败: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w：证据快照不存在", ErrNotFound)
+	}
+	return nil
+}

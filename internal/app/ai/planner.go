@@ -223,8 +223,10 @@ func (p *Planner) followup(ctx context.Context, tenantID, missionID int64, snap 
 	}
 	resp, err := p.client.CompleteJSON(ctx, messages)
 	if err != nil {
+		p.captureExchange(ctx, tenantID, missionID, "planner-followup", messages, llm.Response{}, err)
 		return plan.Decision{}, err
 	}
+	p.captureExchange(ctx, tenantID, missionID, "planner-followup", messages, resp, nil)
 	p.recordUsage(ctx, tenantID, missionID, "planner-followup", resp)
 	return plan.ParseDecisionWithKnown(resp.Content, knownStepSet(snap.Steps))
 }
@@ -261,8 +263,10 @@ func (p *Planner) decide(ctx context.Context, tenantID, missionID int64, snap sn
 	}
 	resp, err := p.client.CompleteJSON(ctx, messages)
 	if err != nil {
+		p.captureExchange(ctx, tenantID, missionID, "planner", messages, llm.Response{}, err)
 		return plan.Decision{}, err
 	}
+	p.captureExchange(ctx, tenantID, missionID, "planner", messages, resp, nil)
 	p.recordUsage(ctx, tenantID, missionID, "planner", resp)
 
 	known := knownStepSet(snap.Steps)
@@ -278,8 +282,10 @@ func (p *Planner) decide(ctx context.Context, tenantID, missionID int64, snap sn
 	)
 	resp2, err2 := p.client.CompleteJSON(ctx, retry)
 	if err2 != nil {
+		p.captureExchange(ctx, tenantID, missionID, "planner-retry", retry, llm.Response{}, err2)
 		return plan.Decision{}, err2
 	}
+	p.captureExchange(ctx, tenantID, missionID, "planner-retry", retry, resp2, nil)
 	p.recordUsage(ctx, tenantID, missionID, "planner-retry", resp2)
 	return plan.ParseDecisionWithKnown(resp2.Content, known)
 }

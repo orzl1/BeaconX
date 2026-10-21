@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/orzl1/BeaconX/internal/app/workspace"
+	"github.com/orzl1/BeaconX/internal/infra/pg"
 )
 
 // M6.2-B5 工作区文件接口（P-B5-24..28）。
@@ -53,19 +55,37 @@ var (
 )
 
 // workspaceService 返回当前状态目录对应的服务；目录变化（测试注入）时重建。
-func workspaceService() (*workspace.Service, error) {
+//
+// store 非空时注入 PG advisory lock 作为跨进程配额锁：多实例部署下「统计配额 +
+// 写入」由数据库串行化，避免两个实例各自认为还有空间而超卖。单实例行为不变。
+func workspaceService(store *pg.Store) (*workspace.Service, error) {
 	dir := workspace.DefaultStateDir()
 	workspaceSvcMu.Lock()
 	defer workspaceSvcMu.Unlock()
 	if workspaceSvc != nil && workspaceSvcDir == dir {
+		if store != nil {
+			workspaceSvc.SetQuotaLocker(workspaceAdvisoryLocker(store))
+		}
 		return workspaceSvc, nil
 	}
 	svc, err := workspace.New(dir)
 	if err != nil {
 		return nil, err
 	}
+	if store != nil {
+		svc.SetQuotaLocker(workspaceAdvisoryLocker(store))
+	}
 	workspaceSvc, workspaceSvcDir = svc, dir
 	return svc, nil
+}
+
+// workspaceAdvisoryLocker 把 pg.Store 的 advisory lock 适配成 workspace.LockFunc。
+func workspaceAdvisoryLocker(store *pg.Store) workspace.LockFunc {
+	return func(ctx context.Context, tenantID, missionID int64, fn func() error) error {
+		return store.WithWorkspaceLock(ctx, tenantID, missionID, func(context.Context) error {
+			return fn()
+		})
+	}
 }
 
 // workspaceMissionID 解析并校验 ?mission_id=，同时确认任务属于当前租户。
@@ -91,7 +111,7 @@ func (o Options) handleWorkspaceList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	svc, err := workspaceService()
+	svc, err := workspaceService(o.Store)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "工作区未就绪")
 		return
@@ -137,7 +157,7 @@ func (o Options) handleWorkspaceRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	svc, err := workspaceService()
+	svc, err := workspaceService(o.Store)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "工作区未就绪")
 		return
@@ -163,7 +183,7 @@ func (o Options) handleWorkspaceWrite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	svc, err := workspaceService()
+	svc, err := workspaceService(o.Store)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "工作区未就绪")
 		return
@@ -183,7 +203,7 @@ func (o Options) handleWorkspaceWrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusRequestEntityTooLarge, "too_large", "文件超过 1MB 上限")
 		return
 	}
-	entry, err := svc.Write(o.TenantID, missionID, r.PathValue("path"), data)
+	entry, err := svc.Write(r.Context(), o.TenantID, missionID, r.PathValue("path"), data)
 	if err != nil {
 		writeWorkspaceError(w, r, err)
 		return
@@ -202,7 +222,7 @@ func (o Options) handleWorkspaceUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	svc, err := workspaceService()
+	svc, err := workspaceService(o.Store)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "工作区未就绪")
 		return
@@ -236,7 +256,7 @@ func (o Options) handleWorkspaceUpload(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(dir) == "" {
 		dir = r.FormValue("dir")
 	}
-	entry, err := svc.Upload(o.TenantID, missionID, dir, header.Filename, file, header.Size)
+	entry, err := svc.Upload(r.Context(), o.TenantID, missionID, dir, header.Filename, file, header.Size)
 	if err != nil {
 		writeWorkspaceError(w, r, err)
 		return
@@ -253,7 +273,7 @@ func (o Options) handleWorkspaceDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	svc, err := workspaceService()
+	svc, err := workspaceService(o.Store)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "工作区未就绪")
 		return

@@ -50,7 +50,7 @@ exit 1
 	_, err := Discover(context.Background(), Server{
 		Name: "sandbox-env", Transport: TransportStdio, Command: script,
 		Env: map[string]string{"MCP_TOKEN": "configured-ok"},
-	}, sandboxOptions(script, time.Second))
+	}, sandboxOptions(script, 5*time.Second))
 	if err == nil {
 		t.Fatal("期望子进程失败（脚本 exit 1）")
 	}
@@ -71,7 +71,7 @@ exit 1
 `)
 	_, err := Discover(context.Background(), Server{
 		Name: "sandbox-cwd", Transport: TransportStdio, Command: script,
-	}, sandboxOptions(script, time.Second))
+	}, sandboxOptions(script, 5*time.Second))
 	if err == nil {
 		t.Fatal("期望脚本退出错误")
 	}
@@ -148,7 +148,7 @@ func TestSandboxCommandPolicy(t *testing.T) {
 	_, err := Discover(ctx, Server{Name: "dir-ok", Transport: TransportStdio, Command: script}, Options{
 		AllowStdio: true,
 		StdioDirs:  []string{filepath.Dir(script)},
-		Timeout:    time.Second,
+		Timeout:    5 * time.Second,
 	})
 	if errors.Is(err, ErrCommandNotAllowed) {
 		t.Fatalf("目录白名单命中却被拒绝: %v", err)

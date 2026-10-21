@@ -72,8 +72,10 @@ func (w *Worker) Execute(ctx context.Context, mission pg.Mission, action pg.Node
 	} else {
 		resp, err := w.client.CompleteJSON(ctx, messages)
 		if err != nil {
+			w.captureExchange(ctx, mission.TenantID, mission.ID, "worker", messages, llm.Response{}, err)
 			return graph.StateBlocked, fmt.Errorf("执行器调用模型失败: %w", err)
 		}
+		w.captureExchange(ctx, mission.TenantID, mission.ID, "worker", messages, resp, nil)
 		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker", w.model, resp.Usage); err != nil {
 			w.log.Warn("记录模型用量失败", "mission_id", mission.ID, "error", err)
 		}
@@ -96,8 +98,10 @@ func (w *Worker) runToolLoop(ctx context.Context, mission pg.Mission, action pg.
 	for round := 0; round < w.maxToolRounds; round++ {
 		resp, err := w.client.CompleteWithTools(ctx, messages, w.toolDefs, "auto")
 		if err != nil {
+			w.captureToolExchange(ctx, mission.TenantID, mission.ID, "worker-tool", messages, llm.ToolResponse{}, err)
 			return "", fmt.Errorf("执行器调用模型失败: %w", err)
 		}
+		w.captureToolExchange(ctx, mission.TenantID, mission.ID, "worker-tool", messages, resp, nil)
 		if err := w.store.RecordLLMUsage(ctx, mission.TenantID, mission.ID, "worker-tool", w.model, resp.Usage); err != nil {
 			w.log.Warn("记录模型用量失败", "mission_id", mission.ID, "error", err)
 		}

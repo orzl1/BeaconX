@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orzl1/BeaconX/internal/domain/graph"
@@ -80,6 +81,9 @@ type Engine struct {
 	log     *slog.Logger
 	sink    EventSink
 
+	// maxConcurrent 是可热更新的准入并发上限；调度循环每次准入读取最新值。
+	maxConcurrent atomic.Int64
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -105,7 +109,7 @@ func New(cfg Config, store *pg.Store, planner Planner, worker Worker, log *slog.
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Engine{
+	engine := &Engine{
 		cfg:     cfg.withDefaults(),
 		store:   store,
 		planner: planner,
@@ -114,6 +118,21 @@ func New(cfg Config, store *pg.Store, planner Planner, worker Worker, log *slog.
 		sink:    sink,
 		runs:    map[int64]*missionRun{},
 	}
+	engine.maxConcurrent.Store(int64(engine.cfg.MaxConcurrent))
+	return engine
+}
+
+// SetMaxConcurrent 热更新准入并发上限；<=0 忽略。
+func (e *Engine) SetMaxConcurrent(n int) {
+	if n <= 0 {
+		return
+	}
+	e.maxConcurrent.Store(int64(n))
+}
+
+// MaxConcurrent 返回当前准入并发上限（用于测试/观测）。
+func (e *Engine) MaxConcurrent() int {
+	return int(e.maxConcurrent.Load())
 }
 
 // Start 执行恢复并启动调度循环。
@@ -135,7 +154,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	if err != nil {
 		e.log.Error("恢复遗留任务失败", "error", err)
 	}
-	e.log.Info("运行时就绪", "回收动作", expired, "恢复任务", recovered, "最大并发", e.cfg.MaxConcurrent)
+	e.log.Info("运行时就绪", "回收动作", expired, "恢复任务", recovered, "最大并发", e.MaxConcurrent())
 
 	e.wg.Add(1)
 	go e.scheduleLoop()
@@ -194,7 +213,7 @@ func (e *Engine) admitOnce() {
 	if closed {
 		return
 	}
-	slots := e.cfg.MaxConcurrent - running
+	slots := e.MaxConcurrent() - running
 	if slots <= 0 {
 		return
 	}

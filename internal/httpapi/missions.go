@@ -78,8 +78,20 @@ func (o Options) handleCreateMission(w http.ResponseWriter, r *http.Request) {
 		writeMissionError(w, r, err)
 		return
 	}
-	if req.MaxTokens > 0 || req.MaxSteps > 0 {
-		if err := o.Store.SetMissionBudget(r.Context(), o.TenantID, mission.ID, req.MaxTokens, req.MaxSteps); err != nil {
+	// 未显式给预算时使用设置里的默认预算（PATCH /settings 可热更新）；显式字段优先，
+	// 只给一个字段时另一个字段仍用默认值，避免默认预算被显式值部分覆盖后归零。
+	maxTokens, maxSteps := req.MaxTokens, req.MaxSteps
+	if o.Runtime != nil {
+		defaultTokens, defaultSteps := o.Runtime.MissionDefaults()
+		if maxTokens <= 0 {
+			maxTokens = defaultTokens
+		}
+		if maxSteps <= 0 {
+			maxSteps = defaultSteps
+		}
+	}
+	if maxTokens > 0 || maxSteps > 0 {
+		if err := o.Store.SetMissionBudget(r.Context(), o.TenantID, mission.ID, maxTokens, maxSteps); err != nil {
 			writeMissionError(w, r, err)
 			return
 		}

@@ -17,6 +17,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -85,7 +86,17 @@ type Service struct {
 	// 互斥锁，用于把「统计配额 + 写入」做成临界区，避免并发写超卖。
 	lockMu sync.Mutex
 	locks  map[string]*sync.Mutex
+	// lockerMu 保护 locker；locker 是跨进程配额锁（由 HTTP 层注入 PG advisory
+	// lock 实现），nil 表示只有进程内互斥。
+	lockerMu sync.RWMutex
+	locker   LockFunc
 }
+
+// LockFunc 包装「在跨进程锁内执行 fn」。
+//
+// 由 HTTP 层注入（PG advisory lock）；workspace 包本身不依赖数据库，保持
+// 「只做文件系统」的边界。fn 返回错误时不写入，锁由实现方释放。
+type LockFunc func(ctx context.Context, tenantID, missionID int64, fn func() error) error
 
 // New 创建服务并确保状态目录存在（0700）。
 func New(stateDir string) (*Service, error) {
@@ -115,6 +126,37 @@ func DefaultStateDir() string {
 		return cfg.State.Dir
 	}
 	return "data"
+}
+
+// SetQuotaLocker 注入跨进程锁实现（nil = 仅进程内互斥）。
+func (s *Service) SetQuotaLocker(locker LockFunc) {
+	s.lockerMu.Lock()
+	defer s.lockerMu.Unlock()
+	s.locker = locker
+}
+
+// quotaLocker 读取当前跨进程锁实现。
+func (s *Service) quotaLocker() LockFunc {
+	s.lockerMu.RLock()
+	defer s.lockerMu.RUnlock()
+	return s.locker
+}
+
+// withQuotaLock 在「跨进程锁（可选）+ 进程内 mission 锁」内执行 fn。
+//
+// 进程内锁保证单进程正确性且无需数据库；注入 locker 后，多实例部署会先拿
+// PG advisory lock，再拿本地锁，从而把「统计配额 + 写入」变成跨进程临界区。
+func (s *Service) withQuotaLock(ctx context.Context, tenantID, missionID int64, fn func() error) error {
+	local := func() error {
+		lock := s.missionLock(tenantID, missionID)
+		lock.Lock()
+		defer lock.Unlock()
+		return fn()
+	}
+	if locker := s.quotaLocker(); locker != nil {
+		return locker(ctx, tenantID, missionID, local)
+	}
+	return local()
 }
 
 // QuotaBytes 返回每任务工作区的总大小上限（字节）。
@@ -308,7 +350,9 @@ func (s *Service) Read(tenantID, missionID int64, relFile string) ([]byte, error
 }
 
 // Write 写入 UTF-8 文本文件（自动创建父目录），返回写入后的条目。
-func (s *Service) Write(tenantID, missionID int64, relFile string, data []byte) (Entry, error) {
+//
+// ctx 用于跨进程配额锁（PG advisory lock）；未注入 locker 时只做进程内互斥。
+func (s *Service) Write(ctx context.Context, tenantID, missionID int64, relFile string, data []byte) (Entry, error) {
 	if int64(len(data)) > MaxFileBytes {
 		return Entry{}, fmt.Errorf("%w: 单文件最多 %d 字节", ErrTooLarge, MaxFileBytes)
 	}
@@ -320,40 +364,46 @@ func (s *Service) Write(tenantID, missionID int64, relFile string, data []byte) 
 		return Entry{}, err
 	}
 	// 配额是「统计 + 写入」的复合操作：同一任务的写串行化，避免并发超卖。
-	lock := s.missionLock(tenantID, missionID)
-	lock.Lock()
-	defer lock.Unlock()
-	var replacedBytes int64
-	if info, statErr := os.Lstat(abs); statErr == nil {
-		if info.IsDir() {
-			return Entry{}, fmt.Errorf("%w: 目标是目录", ErrIsDir)
+	var entry Entry
+	err = s.withQuotaLock(ctx, tenantID, missionID, func() error {
+		var replacedBytes int64
+		if info, statErr := os.Lstat(abs); statErr == nil {
+			if info.IsDir() {
+				return fmt.Errorf("%w: 目标是目录", ErrIsDir)
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("%w: 不允许写入符号链接", ErrInvalidPath)
+			}
+			replacedBytes = info.Size()
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return Entry{}, fmt.Errorf("%w: 不允许写入符号链接", ErrInvalidPath)
+		if err := s.checkQuotaLocked(tenantID, missionID, int64(len(data)), replacedBytes); err != nil {
+			return err
 		}
-		replacedBytes = info.Size()
-	}
-	if err := s.checkQuotaLocked(tenantID, missionID, int64(len(data)), replacedBytes); err != nil {
+		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+			return fmt.Errorf("创建父目录失败: %w", err)
+		}
+		// MkdirAll 之后重新校验一次，防止父目录在这一瞬间被替换成指向外部的符号链接。
+		if err := s.verifyInside(tenantID, missionID, abs); err != nil {
+			return err
+		}
+		if err := os.WriteFile(abs, data, 0o600); err != nil {
+			return fmt.Errorf("写入文件失败: %w", err)
+		}
+		written, err := s.entryFor(tenantID, missionID, relFile)
+		entry = written
+		return err
+	})
+	if err != nil {
 		return Entry{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return Entry{}, fmt.Errorf("创建父目录失败: %w", err)
-	}
-	// MkdirAll 之后重新校验一次，防止父目录在这一瞬间被替换成指向外部的符号链接。
-	if err := s.verifyInside(tenantID, missionID, abs); err != nil {
-		return Entry{}, err
-	}
-	if err := os.WriteFile(abs, data, 0o600); err != nil {
-		return Entry{}, fmt.Errorf("写入文件失败: %w", err)
-	}
-	return s.entryFor(tenantID, missionID, relFile)
+	return entry, nil
 }
 
 // Upload 把上传流写入任务工作区的 dir 目录，文件名取 base(filename)。
 //
 // filename 只保留基础名（去掉客户端可能带上的路径），size 是已读取的字节数
-// （调用方应先按 MaxUploadBytes 限制读取长度）。
-func (s *Service) Upload(tenantID, missionID int64, dir, filename string, r io.Reader, size int64) (Entry, error) {
+// （调用方应先按 MaxUploadBytes 限制读取长度）。ctx 用于跨进程配额锁。
+func (s *Service) Upload(ctx context.Context, tenantID, missionID int64, dir, filename string, r io.Reader, size int64) (Entry, error) {
 	base := filepath.Base(strings.TrimSpace(filename))
 	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, 0) {
 		return Entry{}, fmt.Errorf("%w: 文件名不合法", ErrInvalidPath)
@@ -377,53 +427,59 @@ func (s *Service) Upload(tenantID, missionID int64, dir, filename string, r io.R
 	if err != nil {
 		return Entry{}, err
 	}
-	lock := s.missionLock(tenantID, missionID)
-	lock.Lock()
-	defer lock.Unlock()
-	var replacedBytes int64
-	if info, statErr := os.Lstat(abs); statErr == nil && !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		replacedBytes = info.Size()
-	}
-	// 上传大小未知（size<0）时按单文件上限保守估计，宁可多拒不可超卖。
-	projected := size
-	if projected < 0 {
-		projected = MaxUploadBytes
-	}
-	if err := s.checkQuotaLocked(tenantID, missionID, projected, replacedBytes); err != nil {
-		return Entry{}, err
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		return Entry{}, fmt.Errorf("创建上传目录失败: %w", err)
-	}
-	if err := s.verifyInside(tenantID, missionID, abs); err != nil {
-		return Entry{}, err
-	}
-	file, err := os.OpenFile(abs, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return Entry{}, fmt.Errorf("创建上传文件失败: %w", err)
-	}
-	written, copyErr := io.Copy(file, io.LimitReader(r, MaxUploadBytes+1))
-	closeErr := file.Close()
-	if copyErr != nil {
-		return Entry{}, fmt.Errorf("写入上传文件失败: %w", copyErr)
-	}
-	if closeErr != nil {
-		return Entry{}, fmt.Errorf("关闭上传文件失败: %w", closeErr)
-	}
-	if written > MaxUploadBytes {
-		_ = os.Remove(abs)
-		return Entry{}, fmt.Errorf("%w: 上传文件最多 %d 字节", ErrTooLarge, MaxUploadBytes)
-	}
-	// size 可能由调用方低估或为未知：按实际写入量再核对一次配额。
-	if written != replacedBytes {
-		if quotaErr := s.checkQuotaLocked(tenantID, missionID, written, replacedBytes); quotaErr != nil {
-			_ = os.Remove(abs)
-			return Entry{}, quotaErr
+	var entry Entry
+	err = s.withQuotaLock(ctx, tenantID, missionID, func() error {
+		var replacedBytes int64
+		if info, statErr := os.Lstat(abs); statErr == nil && !info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			replacedBytes = info.Size()
 		}
+		// 上传大小未知（size<0）时按单文件上限保守估计，宁可多拒不可超卖。
+		projected := size
+		if projected < 0 {
+			projected = MaxUploadBytes
+		}
+		if err := s.checkQuotaLocked(tenantID, missionID, projected, replacedBytes); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+			return fmt.Errorf("创建上传目录失败: %w", err)
+		}
+		if err := s.verifyInside(tenantID, missionID, abs); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(abs, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("创建上传文件失败: %w", err)
+		}
+		written, copyErr := io.Copy(file, io.LimitReader(r, MaxUploadBytes+1))
+		closeErr := file.Close()
+		if copyErr != nil {
+			return fmt.Errorf("写入上传文件失败: %w", copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("关闭上传文件失败: %w", closeErr)
+		}
+		if written > MaxUploadBytes {
+			_ = os.Remove(abs)
+			return fmt.Errorf("%w: 上传文件最多 %d 字节", ErrTooLarge, MaxUploadBytes)
+		}
+		// size 可能由调用方低估或为未知：按实际写入量再核对一次配额。
+		if written != replacedBytes {
+			if quotaErr := s.checkQuotaLocked(tenantID, missionID, written, replacedBytes); quotaErr != nil {
+				_ = os.Remove(abs)
+				return quotaErr
+			}
+		}
+		// 注意：上传允许任意二进制内容（脚本、字典、工具包等），只有「文本写入」
+		// 与「文本读取」要求 UTF-8；读取二进制文件会返回 ErrBinary。
+		uploaded, err := s.entryFor(tenantID, missionID, rel)
+		entry = uploaded
+		return err
+	})
+	if err != nil {
+		return Entry{}, err
 	}
-	// 注意：上传允许任意二进制内容（脚本、字典、工具包等），只有「文本写入」
-	// 与「文本读取」要求 UTF-8；读取二进制文件会返回 ErrBinary。
-	return s.entryFor(tenantID, missionID, rel)
+	return entry, nil
 }
 
 // Delete 删除文件或目录；目录默认必须为空，recursive=true 时递归删除。

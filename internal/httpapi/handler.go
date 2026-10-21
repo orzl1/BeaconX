@@ -73,9 +73,13 @@ type Options struct {
 	// Executor 是工具调用的唯一执行入口（策略门 + 审批 + 审计 + 采集）。
 	// 依赖它的接口（如流量重放）在未接线时必须返回 503，不能静默旁路。
 	Executor *executor.Executor
-	Updater  *selfupdate.Updater
-	WebUI    http.Handler
-	TenantID int64
+	// Runtime 保存热更新的任务默认预算等运行参数（PATCH /settings 即时应用）。
+	// SettingsFallback 是 settings 表缺省时沿用的启动配置（main 注入，测试可零值）。
+	Runtime          *RuntimeConfig
+	SettingsFallback RuntimeSettings
+	Updater          *selfupdate.Updater
+	WebUI            http.Handler
+	TenantID         int64
 }
 
 type ctxKey int

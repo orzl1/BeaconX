@@ -1,12 +1,12 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
     流量采集与证据校验、自更新、SSE 事件流；M6.2 已补齐 B1–B5：企业/资产/任务资产/
     覆盖率、任务范围/计划/作战图、发现/复测/报告、流量/命令/LLM/用量/Dashboard，以及
-    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强，以及 B6 的活动流、技能版本、重放策略门、证据轮换、graph after_id、Dashboard hourly 与 stdio/配额硬化。
+    B4/B5 的策略规则/审批/日志/通知/设置/MCP/Skills/Agents/Workspace/Sync/证据增强，以及 B6 的活动流、技能版本、重放策略门、证据轮换、graph after_id、Dashboard hourly 与 stdio/配额硬化，B7 的 LLM 正文采集/查看与 settings 热生效、轮换重签、通知 SSRF 硬化。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -45,7 +45,7 @@ tags:
   - name: logs
     description: 应用日志查询与实时流（需要令牌）
   - name: settings
-    description: 运行时设置（🟡 仅持久化+可读，未热生效）
+    description: 运行时设置（B7 起 PATCH 即时热生效；运行中任务预算不回溯）
   - name: policy
     description: 策略规则与裁决试算（需要令牌）
   - name: notifications
@@ -1962,9 +1962,9 @@ paths:
   /api/v1/settings:
     get:
       tags: [settings]
-      summary: 运行时设置（持久化+可读，未热生效）
+      summary: 运行时设置（持久化+可读，B7 起热生效）
       description: |
-        运行时设置（持久化+可读，未热生效）。（部分实现/风险见 project-map §5.6）
+        运行时设置（持久化+可读；B7 起启动/ PATCH 即时热生效，运行中任务预算不回溯）。
       operationId: getSettings
       responses:
         "200":
@@ -1975,9 +1975,9 @@ paths:
                 $ref: "#/components/schemas/Settings"
     patch:
       tags: [settings]
-      summary: 更新运行时设置（白名单键；🟡 运行时未热生效）
+      summary: 更新运行时设置（白名单键；PATCH 即时热生效）
       description: |
-        更新运行时设置（白名单键；🟡 运行时未热生效）。（部分实现/风险见 project-map §5.6）
+        更新白名单设置；B7 起即时热生效（executor 默认动作/审批超时、engine 并发、任务默认预算）。
       operationId: patchSettings
       requestBody:
         required: true
@@ -2045,9 +2045,9 @@ paths:
       tags: [evidence]
       summary: 证据密钥轮换
       description: |
-        用新主密钥重新加密全部证据 blob（写锁、逐文件、失败 best-effort 回滚）。
-        新密钥不落盘，需更新 BEACONX_EVIDENCE_KEY/evidence.key 并重启；存量 Snapshot
-        的 HMAC 签名会失效（Verify→ErrTampered），当前无自动重签（🟡）。
+        用新主密钥重新加密全部证据 blob（写锁、逐文件、失败 best-effort 回滚），
+        成功后遍历租户全部快照用新 key 重签，返回 {rotated,resigned}。重签中断返回
+        500 rotate_resign_failed + 已完成数；存在短暂 Verify 409 窗口（🟡）。
       operationId: rotateEvidence
       requestBody:
         required: true
@@ -2057,7 +2057,7 @@ paths:
               $ref: "#/components/schemas/EvidenceRotateRequest"
       responses:
         "200":
-          description: 轮换结果
+          description: 轮换/重签结果
           content:
             application/json:
               schema:
@@ -2721,7 +2721,8 @@ paths:
       tags: [sync]
       summary: 同步运行记录（?source_id=&status=&limit=）
       description: |
-        同步运行记录（?source_id=&status=&limit=）。
+        同步运行记录（?source_id=&status=&limit=）。启动时把 running 超过 15 分钟的记录置 failed；
+        终态记录按 BEACONX_SYNC_RETENTION_DAYS（默认 30，0=不清理）清理，pending 不恢复。
       operationId: listSyncRuns
       responses:
         "200":
@@ -3318,7 +3319,7 @@ paths:
     post:
       tags: [skills]
       summary: 恢复技能到指定版本
-      description: 先把当前状态打快照，再恢复指定版本的文件内容；不回滚 DB 元数据（🟡）。
+      description: 先把当前状态打快照（含 meta.json），再恢复指定版本的文件与 description/version；旧快照无 meta 时给 warning。
       operationId: restoreSkillVersion
       responses:
         "200":
@@ -3335,6 +3336,93 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/llm-records/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: LLM 调用记录 ID
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [insights]
+      summary: LLM 调用记录详情（不含正文）
+      description: 返回 role/model/token/字节数/truncated/redacted，不返回 request/response 正文；不存在或跨租户 404。
+      operationId: getLLMExchange
+      responses:
+        "200":
+          description: 调用记录详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMExchangeDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/llm-records/{id}/request:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: LLM 调用记录 ID
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [insights]
+      summary: LLM 请求正文（已脱敏 messages JSON）
+      description: 入库前已脱敏（键级/密钥形态/tool_calls.arguments）；原样返回合法 JSON。
+      operationId: getLLMExchangeRequest
+      responses:
+        "200":
+          description: 请求 JSON
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMExchangeRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/llm-records/{id}/response:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: LLM 调用记录 ID
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags: [insights]
+      summary: LLM 响应正文（已脱敏 text/plain）
+      description: 已脱敏响应文本；调用失败时返回错误文本；单条正文 64KB UTF-8 截断。
+      operationId: getLLMExchangeResponse
+      responses:
+        "200":
+          description: 响应文本
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/LLMExchangeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/Unavailable"
 components:
@@ -5858,13 +5946,56 @@ components:
           format: int64
     EvidenceRotateResult:
       type: object
-      required: [rotated, new_key_hex_not_stored, notice]
+      required: [rotated, resigned, new_key_hex_not_stored, notice]
       properties:
         rotated:
           type: integer
           description: 已重加密的 blob 数
+        resigned:
+          type: integer
+          description: 已用新 key 重签的 Snapshot 数
         new_key_hex_not_stored:
           type: boolean
         notice:
           type: string
+    LLMExchangeDetail:
+      type: object
+      required: [id, mission_id, role, model, prompt_tokens, completion_tokens, total_tokens, request_bytes, response_bytes, truncated, redacted, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+        role:
+          type: string
+        model:
+          type: string
+        error:
+          type: string
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        request_bytes:
+          type: integer
+        response_bytes:
+          type: integer
+        truncated:
+          type: boolean
+        redacted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    LLMExchangeRequest:
+      type: object
+      additionalProperties: true
+      description: 已脱敏的 messages JSON（原样输出）
+    LLMExchangeResponse:
+      type: string
+      description: 已脱敏响应/错误文本
 

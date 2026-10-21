@@ -212,9 +212,9 @@ func (s *Store) CreatePolicyRule(ctx context.Context, tenantID int64, in PolicyR
 
 // UpdatePolicyRule 局部更新规则并返回更新后的行。
 //
-// immutable 规则只允许修改 priority / timeout_seconds / enabled / arg_pattern；
-// 名称、工具、动作的变更返回 ErrConflict（内置安全底线不能被改动作）。名称
-// 与其它规则冲突同样返回 ErrConflict。
+// immutable 内置规则只允许修改 enabled（人工启停）；名称、工具、动作、参数正则、
+// 优先级、超时任何一项被显式提交都返回 ErrConflict——内置安全底线不能通过调低
+// 优先级或被放宽参数正则绕过。Enabled 之外的字段即使提交旧值也按越权处理。
 func (s *Store) UpdatePolicyRule(ctx context.Context, tenantID, id int64, in PolicyRuleUpdate) (PolicyRule, error) {
 	if err := checkTenant(tenantID); err != nil {
 		return PolicyRule{}, err
@@ -248,8 +248,9 @@ func (s *Store) UpdatePolicyRule(ctx context.Context, tenantID, id int64, in Pol
 	if err := rule.Validate(); err != nil {
 		return PolicyRule{}, fmt.Errorf("%w：%s", ErrInvalidInput, err.Error())
 	}
-	if current.Immutable && (rule.Name != current.Name || rule.Tool != current.Tool || rule.Action != current.Action) {
-		return PolicyRule{}, fmt.Errorf("%w：内置不可变规则不允许修改名称、工具或动作", ErrConflict)
+	if current.Immutable && (in.Name != nil || in.Tool != nil || in.Action != nil ||
+		in.ArgPattern != nil || in.Priority != nil || in.TimeoutSeconds != nil) {
+		return PolicyRule{}, fmt.Errorf("%w：内置不可变规则只允许修改 enabled", ErrConflict)
 	}
 
 	var (

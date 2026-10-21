@@ -206,10 +206,44 @@ func (o Options) handleEvidenceRotate(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("证据密钥轮换失败（已完成 %d 个，请停机并从备份恢复）：%v", rotated, err))
 		return
 	}
+	// 轮换会同时更换签名子密钥，存量快照的 HMAC 必须用新密钥重签，否则
+	// Verify 全部失败。重签在轮换成功后同步执行；中断时返回 500 并说明已重签数量，
+	// 由运维重试/从备份恢复（重签本身幂等，可重复调用 Seal+Update）。
+	snapshots, listErr := o.Store.ListEvidenceSnapshotsForResign(r.Context(), o.TenantID)
+	if listErr != nil {
+		writeError(w, r, http.StatusInternalServerError, "rotate_resign_failed",
+			fmt.Sprintf("已轮换 %d 个 blob，但读取证据快照失败，签名未更新：%v；请修复数据库后重签", rotated, listErr))
+		return
+	}
+	resigned := 0
+	for _, snapshot := range snapshots {
+		sealed, sealErr := o.Evidence.Seal(evidence.Snapshot{
+			MissionID: snapshot.MissionID,
+			Tool:      snapshot.Tool,
+			Request:   evidence.BlobRef{Hash: snapshot.RequestHash, Size: snapshot.RequestSize},
+			Response:  evidence.BlobRef{Hash: snapshot.ResponseHash, Size: snapshot.ResponseSize},
+			Redaction: snapshot.Redaction,
+			CreatedAt: snapshot.CreatedAt,
+		})
+		if sealErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "rotate_resign_failed",
+				fmt.Sprintf("已轮换 %d 个 blob，但重签中断（已重签 %d/%d 个）：%v；请从备份恢复或重试重签",
+					rotated, resigned, len(snapshots), sealErr))
+			return
+		}
+		if updateErr := o.Store.UpdateEvidenceSignature(r.Context(), o.TenantID, snapshot.ID, sealed.Signature); updateErr != nil {
+			writeError(w, r, http.StatusInternalServerError, "rotate_resign_failed",
+				fmt.Sprintf("已轮换 %d 个 blob，但重签中断（已重签 %d/%d 个）：%v；请从备份恢复或重试重签",
+					rotated, resigned, len(snapshots), updateErr))
+			return
+		}
+		resigned++
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"rotated":                rotated,
+		"resigned":               resigned,
 		"new_key_hex_not_stored": true,
 		"notice": "新密钥仅用于本次进程；请更新 BEACONX_EVIDENCE_KEY 或 evidence.key 并重启；" +
-			"存量证据快照的签名需重签后才能通过 Verify",
+			"本次已用新密钥重签全部证据快照",
 	})
 }
