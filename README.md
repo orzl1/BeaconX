@@ -5,7 +5,7 @@
 
 自主安全测试平台。目标是在**可控授权范围**内，用多 Agent 完成从目标分解、侦察、验证到证据留存的完整流程；人负责审批与复核，而不是逐条输入命令。
 
-> **当前状态：M0（骨架）**。已具备可运行的进程、声明式 HTTP 层、版本化迁移、租户预留、健康检查与 CI；业务能力（资产/作战图/Agent/审批/证据）按 [路线图](docs/roadmap.md) 逐步加入。**M0 不等于可用产品**，请勿用于真实目标。
+> **当前状态：M1（数据与图，已完成）**。已具备可运行的进程、声明式 HTTP 层、版本化迁移、租户预留、健康检查与 CI，并建成数据层与图模型：资产身份归一化、资产图、任务范围、作战图（节点/边/锚点）与覆盖度统计。下一阶段为 M2（运行时与引擎），里程碑见 [路线图](docs/roadmap.md)。**M1 仍不是可用产品**，请勿用于真实目标。
 
 ## 快速开始
 
@@ -48,6 +48,8 @@ make build         # 产出 bin/beaconx
 make docker-build  # 构建镜像
 ```
 
+数据库集成测试需要真实 PostgreSQL：设置 `BEACONX_TEST_PG_DSN` 后运行 `go test -count=1 ./...`；未设置时相关测试自动跳过。
+
 ## 配置
 
 优先级：**环境变量 > 配置文件 > 内置默认值**。配置文件默认 `./config.json`（可用 `BEACONX_CONFIG` 指定），结构见 [config.example.json](config.example.json)；完整说明见 [docs/configuration.md](docs/configuration.md)。
@@ -83,12 +85,13 @@ internal/platform/      状态目录（按租户分区）
 internal/tenant/        租户上下文
 internal/httpapi/       声明式路由 + 中间件 + 处理器
 internal/app/system/    进程与依赖状态
-internal/infra/pg/      PostgreSQL 连接池
+internal/domain/        领域模型（资产身份归一化、作战图枚举与校验）
+internal/infra/pg/      PostgreSQL 连接池 + 资产/作战图 Store
 internal/infra/migrate/ 版本化迁移（校验和 + 咨询锁）
 migrations/             嵌入式 SQL 迁移
 api/                    OpenAPI 契约
 scripts/                CI 辅助脚本（品牌门禁等）
-docs/                   术语、配置、路线图
+docs/                   术语、配置、路线图、数据模型
 ```
 
 ## 工程约定
@@ -102,6 +105,7 @@ docs/                   术语、配置、路线图
 ## 文档
 
 - [路线图](docs/roadmap.md) — M0–M6 里程碑与验收标准
+- [数据模型](docs/data-model.md) — M1 表结构、资产身份、作战图与覆盖度定义
 - [术语表](docs/glossary.md) — 产品与代码统一用词
 - [配置说明](docs/configuration.md) — 配置项、状态目录、迁移机制
 
