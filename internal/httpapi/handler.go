@@ -151,6 +151,18 @@ func Routes() []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/retests/{id}", Summary: "复测详情"},
 		{Method: http.MethodPatch, Pattern: "/api/v1/retests/{id}", Summary: "更新复测结果"},
 		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/report", Summary: "生成任务 Markdown 报告"},
+		// M6.2-B3：流量/命令/LLM 记录/用量/Dashboard。
+		{Method: http.MethodGet, Pattern: "/api/v1/traffic", Summary: "流量采集记录列表（?mission_id=&tool=&phase=&limit=）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/traffic/{id}", Summary: "流量采集详情"},
+		{Method: http.MethodGet, Pattern: "/api/v1/traffic/{id}/request", Summary: "流量请求正文（解密）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/traffic/{id}/response", Summary: "流量响应正文（解密）"},
+		{Method: http.MethodDelete, Pattern: "/api/v1/traffic/{id}", Summary: "删除流量采集记录"},
+		{Method: http.MethodGet, Pattern: "/api/v1/commands", Summary: "命令执行历史（?mission_id=&tool=&outcome=&limit=）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/commands/{id}", Summary: "命令执行详情"},
+		{Method: http.MethodGet, Pattern: "/api/v1/llm-records", Summary: "LLM 调用记录（?mission_id=&role=&model=&limit=）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/missions/{id}/usage", Summary: "任务用量与聚合"},
+		{Method: http.MethodGet, Pattern: "/api/v1/llm-usage/summary", Summary: "LLM 用量聚合（?group_by=model|role|day&mission_id=&days=）"},
+		{Method: http.MethodGet, Pattern: "/api/v1/dashboard", Summary: "Dashboard 聚合计数"},
 	}
 }
 
@@ -351,6 +363,29 @@ func (o Options) bind(rt Route) (HandlerFunc, error) {
 		return o.handleGetRetest, nil
 	case "/api/v1/missions/{id}/report":
 		return o.handleMissionReport, nil
+	case "/api/v1/traffic":
+		return o.handleTrafficList, nil
+	case "/api/v1/traffic/{id}":
+		if rt.Method == http.MethodDelete {
+			return o.handleTrafficDelete, nil
+		}
+		return o.handleTrafficGet, nil
+	case "/api/v1/traffic/{id}/request":
+		return o.handleTrafficRequest, nil
+	case "/api/v1/traffic/{id}/response":
+		return o.handleTrafficResponse, nil
+	case "/api/v1/commands":
+		return o.handleCommandList, nil
+	case "/api/v1/commands/{id}":
+		return o.handleCommandGet, nil
+	case "/api/v1/llm-records":
+		return o.handleLLMRecordList, nil
+	case "/api/v1/missions/{id}/usage":
+		return o.handleMissionUsage, nil
+	case "/api/v1/llm-usage/summary":
+		return o.handleLLMUsageSummary, nil
+	case "/api/v1/dashboard":
+		return o.handleDashboard, nil
 	case "/api/v1/nodes/{id}":
 		return o.handleNodeGet, nil
 	case "/api/v1/nodes/{id}/state":

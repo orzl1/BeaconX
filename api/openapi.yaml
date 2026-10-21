@@ -1,11 +1,12 @@
 openapi: 3.0.3
 info:
   title: BeaconX API
-  version: 0.8.0
+  version: 0.9.0
   description: |
     BeaconX M6.2 HTTP API：系统探针、任务生命周期、AI 规划预算、工具审批与审计、
     流量采集与证据校验、自更新、SSE 事件流；M6.2 补齐企业/资产/任务资产/覆盖率，
-    以及任务范围、计划、作战图、发现、发现证据、复测与 Markdown 报告。
+    任务范围、计划、作战图、发现、复测、Markdown 报告，以及流量详情/正文、命令历史、
+    LLM 记录、任务用量、用量聚合与 Dashboard。
     接口统一在 /api/v1 下版本管理；本文档是生成客户端的唯一来源，
     与 internal/httpapi 中的声明式路由表同步演进。
 servers:
@@ -37,6 +38,10 @@ tags:
     description: 复测请求与结果（需要令牌）
   - name: report
     description: 任务 Markdown 报告（需要令牌）
+  - name: insights
+    description: 流量详情/正文、命令历史、LLM 记录与用量聚合（需要令牌）
+  - name: dashboard
+    description: 首页 Dashboard 聚合计数（需要令牌）
 paths:
   /healthz:
     get:
@@ -1478,6 +1483,357 @@ paths:
           $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/Unavailable"
+  /api/v1/traffic:
+    get:
+      tags: [insights]
+      summary: 全局流量采集记录列表
+      description: |
+        按 id 倒序返回当前租户的流量采集记录；支持 mission_id/tool/phase 过滤。
+        phase 只能是 intent/result（否则 400）；limit 缺省 50、上限 200（非数字/≤0 返回 400，
+        超过上限钳制）。mission_id 不存在时返回空数组而不是 404。
+      operationId: listAllTraffic
+      parameters:
+        - name: mission_id
+          in: query
+          required: false
+          description: 任务过滤；缺省/0 不筛选，其它非法值 400。
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: tool
+          in: query
+          required: false
+          description: 工具名精确过滤。
+          schema:
+            type: string
+        - name: phase
+          in: query
+          required: false
+          description: 采集阶段过滤（intent/result）。
+          schema:
+            type: string
+            enum: [intent, result]
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，缺省 50、上限 200；非数字/≤0 返回 400。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: 流量采集记录列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/traffic/{id}:
+    parameters:
+      - $ref: "#/components/parameters/TrafficID"
+    get:
+      tags: [insights]
+      summary: 流量采集详情
+      description: 返回单条采集记录（不含正文）；不存在 404。
+      operationId: getTraffic
+      responses:
+        "200":
+          description: 采集记录
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrafficExchange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [insights]
+      summary: 删除流量采集记录
+      description: |
+        只删除 traffic_exchanges 行；正文 blob 与已冻结的证据快照保留。成功 204，不存在 404。
+      operationId: deleteTraffic
+      responses:
+        "204":
+          description: 已删除
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/traffic/{id}/request:
+    parameters:
+      - $ref: "#/components/parameters/TrafficID"
+    get:
+      tags: [insights]
+      summary: 流量请求正文（解密）
+      description: |
+        用 evidence.GetBlob 解密请求正文，返回 text/plain; charset=utf-8。
+        Evidence 未装配 503；记录不存在或该阶段无正文（hash 为空）404；
+        blob 缺失/被篡改/密钥不匹配统一 409 tampered（不区分，避免探测）。
+      operationId: getTrafficRequest
+      responses:
+        "200":
+          description: 解密后的请求正文
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Tampered"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/traffic/{id}/response:
+    parameters:
+      - $ref: "#/components/parameters/TrafficID"
+    get:
+      tags: [insights]
+      summary: 流量响应正文（解密）
+      description: 与请求正文相同：text/plain；Evidence 未装配 503；无正文 404；校验失败 409 tampered。
+      operationId: getTrafficResponse
+      responses:
+        "200":
+          description: 解密后的响应正文
+          content:
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Tampered"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/commands:
+    get:
+      tags: [insights]
+      summary: 命令执行历史
+      description: |
+        审计事件（audit_events）只读视图，按 id 倒序；支持 mission_id/tool/outcome 过滤
+        （不校验枚举值）。limit 缺省 50、上限 200；非数字/≤0 返回 400。
+      operationId: listCommands
+      parameters:
+        - name: mission_id
+          in: query
+          required: false
+          description: 任务过滤；缺省/0 不筛选。
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: tool
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: outcome
+          in: query
+          required: false
+          description: 执行结果过滤（如 executed/tool_error/denied_by_rule/rejected_by_user/approval_unavailable）。
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，缺省 50、上限 200；非数字/≤0 返回 400。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: 命令执行记录列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/commands/{id}:
+    parameters:
+      - $ref: "#/components/parameters/AuditEventID"
+    get:
+      tags: [insights]
+      summary: 命令执行详情
+      operationId: getCommand
+      responses:
+        "200":
+          description: 审计事件
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEvent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/llm-records:
+    get:
+      tags: [insights]
+      summary: LLM 调用记录
+      description: |
+        llm_usage 只读视图，按 id 倒序；支持 mission_id/role/model 过滤（不校验枚举）。
+        limit 缺省 50、上限 500；非数字/≤0 返回 400。
+      operationId: listLLMRecords
+      parameters:
+        - name: mission_id
+          in: query
+          required: false
+          description: 任务过滤；缺省/0 不筛选。
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: model
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: 返回条数，缺省 50、上限 500；非数字/≤0 返回 400。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: LLM 调用记录列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMUsageRecordList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/missions/{id}/usage:
+    parameters:
+      - $ref: "#/components/parameters/MissionID"
+    get:
+      tags: [insights]
+      summary: 任务用量与聚合
+      description: 返回任务预算/累计用量、全部调用记录（不分页）与按角色/模型聚合；任务不存在 404。
+      operationId: getMissionUsage
+      responses:
+        "200":
+          description: 任务用量
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionUsage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/llm-usage/summary:
+    get:
+      tags: [insights]
+      summary: LLM 用量聚合
+      description: |
+        group_by 缺省 model，只允许 model/role/day（否则 400）；days 缺省 30，
+        非数字/<1 返回 400、>365 钳制到 365；day 的 key 为 DB 时区的 YYYY-MM-DD。
+      operationId: getLLMUsageSummary
+      parameters:
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [model, role, day]
+            default: model
+        - name: mission_id
+          in: query
+          required: false
+          description: 任务过滤；缺省/0 不筛选。
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: days
+          in: query
+          required: false
+          description: 时间窗口天数，缺省 30、上限 365；非数字/<1 返回 400。
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+      responses:
+        "200":
+          description: 用量聚合
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LLMUsageSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /api/v1/dashboard:
+    get:
+      tags: [dashboard]
+      summary: Dashboard 聚合计数
+      description: |
+        返回任务/用量/审批/发现/资产/流量/最近任务聚合。by_status 固定 7 键、by_severity 固定 5 键；
+        spent_total=SUM(missions.spent_tokens)，calls=COUNT(llm_usage)，today=当天 llm_usage.total_tokens（DB 时区）。
+      operationId: getDashboard
+      responses:
+        "200":
+          description: Dashboard 统计
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
 components:
   securitySchemes:
@@ -1514,6 +1870,15 @@ components:
       in: path
       required: true
       description: 采集记录标识
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+    AuditEventID:
+      name: id
+      in: path
+      required: true
+      description: 命令执行记录（audit_events）标识
       schema:
         type: integer
         format: int64
@@ -2847,3 +3212,236 @@ components:
         note:
           type: string
           description: 非空时更新复测说明；空字符串表示不修改。
+    CommandList:
+      type: object
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+    LLMUsageRecord:
+      type: object
+      required: [tenant_id, id, role, model, prompt_tokens, completion_tokens, total_tokens, created_at]
+      properties:
+        tenant_id:
+          type: integer
+          format: int64
+        id:
+          type: integer
+          format: int64
+        mission_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: 可空（脱离任务的调用）。
+        role:
+          type: string
+          description: 调用角色（planner/planner-retry/planner-followup/worker/worker-tool 等）。
+        model:
+          type: string
+        prompt_tokens:
+          type: integer
+          format: int64
+        completion_tokens:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    LLMUsageRecordList:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/LLMUsageRecord"
+    UsageByRole:
+      type: object
+      required: [role, calls, total_tokens]
+      properties:
+        role:
+          type: string
+        calls:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+    UsageByModel:
+      type: object
+      required: [model, calls, total_tokens]
+      properties:
+        model:
+          type: string
+        calls:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+    MissionUsage:
+      type: object
+      required: [mission_id, max_tokens, spent_tokens, max_steps, steps_used, records, by_role, by_model]
+      properties:
+        mission_id:
+          type: integer
+          format: int64
+        max_tokens:
+          type: integer
+          format: int64
+        spent_tokens:
+          type: integer
+          format: int64
+        max_steps:
+          type: integer
+        steps_used:
+          type: integer
+        records:
+          type: array
+          description: 该任务全部调用记录（不分页，id 倒序）。
+          items:
+            $ref: "#/components/schemas/LLMUsageRecord"
+        by_role:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageByRole"
+        by_model:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageByModel"
+    LLMUsageGroup:
+      type: object
+      required: [key, calls, prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        key:
+          type: string
+          description: 分组键：模型名 / 角色 / YYYY-MM-DD（DB 时区）。
+        calls:
+          type: integer
+          format: int64
+        prompt_tokens:
+          type: integer
+          format: int64
+        completion_tokens:
+          type: integer
+          format: int64
+        total_tokens:
+          type: integer
+          format: int64
+    LLMUsageSummary:
+      type: object
+      required: [group_by, groups]
+      properties:
+        group_by:
+          type: string
+          enum: [model, role, day]
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/LLMUsageGroup"
+    DashboardMissions:
+      type: object
+      required: [total, by_status]
+      properties:
+        total:
+          type: integer
+          format: int64
+        by_status:
+          type: object
+          description: 固定 7 个状态键（queued/running/paused/finalizing/done/failed/cancelled），缺省补 0。
+          additionalProperties:
+            type: integer
+            format: int64
+    DashboardTokens:
+      type: object
+      required: [spent_total, calls, today]
+      properties:
+        spent_total:
+          type: integer
+          format: int64
+          description: SUM(missions.spent_tokens)，任务累计预算消耗。
+        calls:
+          type: integer
+          format: int64
+          description: COUNT(llm_usage)，模型调用次数。
+        today:
+          type: integer
+          format: int64
+          description: 当天 SUM(llm_usage.total_tokens)（DB 时区）。
+    DashboardApprovals:
+      type: object
+      required: [pending]
+      properties:
+        pending:
+          type: integer
+          format: int64
+    DashboardFindings:
+      type: object
+      required: [total, by_severity]
+      properties:
+        total:
+          type: integer
+          format: int64
+        by_severity:
+          type: object
+          description: 固定 5 个严重级别键（info/low/medium/high/critical），缺省补 0。
+          additionalProperties:
+            type: integer
+            format: int64
+    DashboardAssets:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          format: int64
+    DashboardTraffic:
+      type: object
+      required: [total]
+      properties:
+        total:
+          type: integer
+          format: int64
+    DashboardRecentMission:
+      type: object
+      required: [id, name, status, spent_tokens, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        status:
+          type: string
+        spent_tokens:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    DashboardStats:
+      type: object
+      required: [missions, tokens, approvals, findings, assets, traffic, recent_missions]
+      properties:
+        missions:
+          $ref: "#/components/schemas/DashboardMissions"
+        tokens:
+          $ref: "#/components/schemas/DashboardTokens"
+        approvals:
+          $ref: "#/components/schemas/DashboardApprovals"
+        findings:
+          $ref: "#/components/schemas/DashboardFindings"
+        assets:
+          $ref: "#/components/schemas/DashboardAssets"
+        traffic:
+          $ref: "#/components/schemas/DashboardTraffic"
+        recent_missions:
+          type: array
+          description: 最近任务，按 id 倒序最多 5 条。
+          items:
+            $ref: "#/components/schemas/DashboardRecentMission"

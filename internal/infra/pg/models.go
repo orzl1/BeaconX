@@ -258,3 +258,136 @@ type MissionEvidenceStats struct {
 	TrafficCount  int `json:"traffic_count"`
 	SnapshotCount int `json:"snapshot_count"`
 }
+
+// ---------- 洞察 / 用量 / Dashboard（M6.2-B3） ----------
+
+// TrafficFilter 是全局流量列表（GET /api/v1/traffic）的过滤条件。
+// MissionID/Tool/Phase 为空（0/"")表示不按该维度筛选。
+type TrafficFilter struct {
+	MissionID int64
+	Tool      string
+	Phase     string
+	Limit     int
+}
+
+// AuditFilter 是命令历史（GET /api/v1/commands，audit_events 视图）的过滤条件。
+type AuditFilter struct {
+	MissionID int64
+	Tool      string
+	Outcome   string
+	Limit     int
+}
+
+// LLMRecordFilter 是 LLM 调用记录（GET /api/v1/llm-records）的过滤条件。
+type LLMRecordFilter struct {
+	MissionID int64
+	Role      string
+	Model     string
+	Limit     int
+}
+
+// LLMUsageRecord 是 llm_usage 表中的一行模型调用记录。
+//
+// MissionID 可为空（脱离任务的调用），因此用指针并显式输出 null。
+type LLMUsageRecord struct {
+	TenantID         int64     `json:"tenant_id"`
+	ID               int64     `json:"id"`
+	MissionID        *int64    `json:"mission_id"`
+	Role             string    `json:"role"`
+	Model            string    `json:"model"`
+	PromptTokens     int64     `json:"prompt_tokens"`
+	CompletionTokens int64     `json:"completion_tokens"`
+	TotalTokens      int64     `json:"total_tokens"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// UsageByRole 是按角色聚合的一次用量视图。
+type UsageByRole struct {
+	Role        string `json:"role"`
+	Calls       int64  `json:"calls"`
+	TotalTokens int64  `json:"total_tokens"`
+}
+
+// UsageByModel 是按模型聚合的一次用量视图。
+type UsageByModel struct {
+	Model       string `json:"model"`
+	Calls       int64  `json:"calls"`
+	TotalTokens int64  `json:"total_tokens"`
+}
+
+// MissionUsage 是单个任务的预算、用量记录与两种聚合视图。
+type MissionUsage struct {
+	MissionID   int64            `json:"mission_id"`
+	MaxTokens   int64            `json:"max_tokens"`
+	SpentTokens int64            `json:"spent_tokens"`
+	MaxSteps    int              `json:"max_steps"`
+	StepsUsed   int              `json:"steps_used"`
+	Records     []LLMUsageRecord `json:"records"`
+	ByRole      []UsageByRole    `json:"by_role"`
+	ByModel     []UsageByModel   `json:"by_model"`
+}
+
+// LLMUsageGroup 是 GET /api/v1/llm-usage/summary 的一个分组。
+// Key 的含义由 group_by 决定（模型名 / 角色 / YYYY-MM-DD）。
+type LLMUsageGroup struct {
+	Key              string `json:"key"`
+	Calls            int64  `json:"calls"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	TotalTokens      int64  `json:"total_tokens"`
+}
+
+// DashboardMissions 是任务计数与状态分布（by_status 固定 7 个键）。
+type DashboardMissions struct {
+	Total    int64            `json:"total"`
+	ByStatus map[string]int64 `json:"by_status"`
+}
+
+// DashboardTokens 是 token 口径：spent_total=任务累计预算消耗，calls=调用次数，
+// today=当天 llm_usage.total_tokens 之和。
+type DashboardTokens struct {
+	SpentTotal int64 `json:"spent_total"`
+	Calls      int64 `json:"calls"`
+	Today      int64 `json:"today"`
+}
+
+// DashboardApprovals 是待审批数量。
+type DashboardApprovals struct {
+	Pending int64 `json:"pending"`
+}
+
+// DashboardFindings 是发现计数与严重级别分布（by_severity 固定 5 个键）。
+type DashboardFindings struct {
+	Total      int64            `json:"total"`
+	BySeverity map[string]int64 `json:"by_severity"`
+}
+
+// DashboardAssets 是资产数量。
+type DashboardAssets struct {
+	Total int64 `json:"total"`
+}
+
+// DashboardTraffic 是流量采集记录数量。
+type DashboardTraffic struct {
+	Total int64 `json:"total"`
+}
+
+// DashboardRecentMission 是 Dashboard 顶部展示的最近任务。
+type DashboardRecentMission struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	SpentTokens int64     `json:"spent_tokens"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// DashboardStats 是 GET /api/v1/dashboard 的完整返回。
+type DashboardStats struct {
+	Missions       DashboardMissions        `json:"missions"`
+	Tokens         DashboardTokens          `json:"tokens"`
+	Approvals      DashboardApprovals       `json:"approvals"`
+	Findings       DashboardFindings        `json:"findings"`
+	Assets         DashboardAssets          `json:"assets"`
+	Traffic        DashboardTraffic         `json:"traffic"`
+	RecentMissions []DashboardRecentMission `json:"recent_missions"`
+}

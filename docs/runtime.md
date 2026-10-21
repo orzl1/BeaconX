@@ -128,6 +128,8 @@ M3 起由 `internal/app/ai` 提供 LLM 实现：Planner 读取态势快照、调
 
 发现、复测与报告（M6.2-B2）：当前写入路径只有 HTTP API（人工登记发现、绑定证据快照、发起/推进复测），没有自动发现生成器或复测执行器；AI 自动写 finding、复测执行均未实现。报告 `GET /missions/{id}/report` 是只读投影（任务元信息 + 发现 + 计划步骤 + fact 节点 + 证据统计），生成过程不调用模型，除生成时间外同一数据得到同一报告；报告与发现/复测接口的细节见 [项目地图](project-map.md) §5/§6。
 
+洞察接口（M6.2-B3）：流量列表/详情、命令历史、LLM 记录、任务用量、用量聚合与 Dashboard 都是只读投影，不写入运行时状态；流量请求/响应正文按需调用 `evidence.GetBlob` 解密后以 `text/plain` 返回，blob 缺失/篡改/密钥不匹配统一 409 `tampered`；`DELETE /traffic/{id}` 只删采集行，保留正文 blob 与已冻结证据。Dashboard 每次请求实时聚合（Count/Sum/分组），`spent_total` 取任务累计 `spent_tokens`，`today` 按数据库时区当天求和。
+
 ## 9. 验收与本地实测
 
 M2 验收标准：kill -9 后无永久 `running`；暂停/恢复/删除可用；断线补洞无丢失。

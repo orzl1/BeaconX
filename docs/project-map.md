@@ -4,11 +4,11 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 文档版本 | v1.1 |
+| 文档版本 | v1.2 |
 | 更新日期 | 2026-10-21 |
 | 适用 commit | 本次提交（当前工作区，未提交） |
-| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付）+ M6.2-B1（资产/企业/范围/覆盖率）+ M6.2-B2（范围/计划/图/发现/复测/报告） |
-| 路由数量 | 59 条（M0–M6 共 21 条 + M6.2-B1 共 18 条 + M6.2-B2 共 20 条） |
+| 覆盖里程碑 | M0–M6 现状（后端 + 前端 + 交付）+ M6.2-B1（资产/企业/范围/覆盖率）+ M6.2-B2（范围/计划/图/发现/复测/报告）+ M6.2-B3（流量/命令/LLM 记录/用量/Dashboard） |
+| 路由数量 | 70 条（M0–M6 共 21 条 + M6.2-B1 共 18 条 + M6.2-B2 共 20 条 + M6.2-B3 共 11 条） |
 | 校验命令 | `make docs-check`（校验本文档覆盖全部 HTTP 路由） |
 | 文档语言 | 中文；标识符、JSON 字段、错误码、环境变量、SQL、路径保留英文 |
 
@@ -154,7 +154,7 @@ cmd/beaconx
 | `internal/logging` | 结构化日志 | `New(Log)`（slog） | `logging.go` |
 | `internal/platform` | 状态目录 | `New`、`Ensure`、`EnsureTenant`、`TenantDir` | `state.go` |
 | `internal/tenant` | 租户上下文 | `ID`、`With`、`From`、`MustFrom`、`DefaultID=1` | `tenant.go` |
-| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`（59 条）、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产/范围/计划/作战图/节点/发现/复测/报告处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go`、`graph_api.go`、`findings_api.go`、`report_api.go` |
+| `internal/httpapi` | HTTP 路由/中间件/处理器 | `NewHandler`、`Routes`（70 条）、`Options`、`withAuth`、`timeout`、`limitBody`、`writeError/writeJSON`、`recorder`、`newFallbackHandler`（404/405+Allow）、`TokenAuthenticator`、`SSEOptions.Handler`、任务/审批/证据/更新/企业/资产/范围/计划/作战图/节点/发现/复测/报告/洞察处理器 | `handler.go`、`auth.go`、`sse.go`、`missions.go`、`approvals.go`、`evidence_api.go`、`update.go`、`companies.go`、`assets.go`、`graph_api.go`、`findings_api.go`、`report_api.go`、`insights_api.go` |
 | `internal/app/runner` | 任务运行时 | `Engine`、`Config`、`Planner`/`Worker` 接口、`IdlePlanner`、`NoopWorker`、`EventSink`；调度/租约/暂停/恢复/取消/删除/恢复对账/预算暂停 | `engine.go` |
 | `internal/app/ai` | LLM 规划与执行 | `Planner.Plan`、`Worker.Execute`、`Worker.SetTools`、`runToolLoop`、`parseObservation`、`Config`、`LLM` 接口 | `ai.go`、`planner.go`、`worker.go` |
 | `internal/app/executor` | 工具调用唯一入口 | `Executor.Execute/ExecuteText`、`beginCapture/finishCapture`、`waitApproval`、`audit`、`Config` | `executor.go` |
@@ -162,7 +162,7 @@ cmd/beaconx
 | `internal/app/events` | 进程内事件总线 | `Event`、`Broker`（`Subscribe/Publish/Subscribers/Close`） | `broker.go` |
 | `internal/app/evidence` | 证据存储 | `Store`（`PutBlob/GetBlob/Seal/Verify`）、`Snapshot`、`BlobRef`、`ErrTampered`、`RedactHeaders/RedactJSON` | `store.go`、`snapshot.go`、`redact.go` |
 | `internal/app/system` | 系统信息/就绪 | `Service`、`Info`、`Readiness`、`Check`、`BuildInfo` | `service.go` |
-| `internal/infra/pg` | PostgreSQL Store | `DB`、`Store`、`Mission`、`Asset`、`Company`、`CompanyScope`、`AssetIdentity`、`Node/Edge/Anchor`、`MissionEvent`、`PlanStep`、`Approval`、`AuditEvent`、`TrafficExchange`、`EvidenceSnapshot`、`Coverage`、`Finding`、`FindingEvidence`、`Retest`；B1 的企业/资产/任务资产 CRUD；B2 的 `ListMissionScopeEntries/DeleteMissionScope`、`ListFindings/CreateFinding/GetFinding/UpdateFinding/TransitionFinding`、`AddFindingEvidence/RemoveFindingEvidence/ListFindingEvidence`、`CreateRetest/GetRetest/ListRetests/UpdateRetestStatus`、`MissionEvidenceStats` | `pg.go`、`models.go`、`store*.go`、`store_asset_api.go`、`store_scope_api.go`、`store_finding.go`、`mission_runtime.go`、`plan_store.go`、`policy_store.go`、`evidence_store.go` |
+| `internal/infra/pg` | PostgreSQL Store | `DB`、`Store`、`Mission`、`Asset`、`Company`、`CompanyScope`、`AssetIdentity`、`Node/Edge/Anchor`、`MissionEvent`、`PlanStep`、`Approval`、`AuditEvent`、`TrafficExchange`、`EvidenceSnapshot`、`Coverage`、`Finding`、`FindingEvidence`、`Retest`；B1 的企业/资产/任务资产 CRUD；B2 的范围/发现/复测/报告数据；B3 的 `ListTrafficFilter/DeleteTraffic`、`ListAuditFilter/GetAuditEvent`、`ListLLMRecords`、`MissionUsage`、`LLMUsageSummary`、`Dashboard` | `pg.go`、`models.go`、`store*.go`、`store_asset_api.go`、`store_scope_api.go`、`store_finding.go`、`store_insights.go`、`mission_runtime.go`、`plan_store.go`、`policy_store.go`、`evidence_store.go` |
 | `internal/infra/llm` | OpenAI 兼容客户端与路由 | `Client`、`Router`、`Profile`、`Message/ToolDef/ToolCall`、`APIError`、`ErrorKind`、`ClassifyError`、`RouteError` | `client.go`、`chat.go`、`tools.go`、`router.go`、`errors.go` |
 | `internal/infra/selfupdate` | 自更新 | `Updater`（`Check/Apply/Rollback`）、`Release`、`Config`、`ErrNoUpdate` 等 | `selfupdate.go` |
 | `internal/infra/migrate` | 迁移执行 | `Load/Apply/Latest`、`Migration`、`Result` | `migrate.go` |
@@ -324,7 +324,7 @@ HTTP 请求
 - 索引共 24 个（见各表行）：B1 的 20 个 + 0007 的 `idx_findings_mission`/`idx_findings_asset`/`idx_finding_evidence_snapshot`/`idx_retests_mission`。
 - 查询路径约定：所有查询带 `tenant_id`；任务/审批/流量/审计/发现/复测按 `id` 或 `created_at DESC`；B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；任务准入按 `queued_at NULLS FIRST, id`；动作领取按 `priority DESC, id`（`FOR UPDATE SKIP LOCKED`）。
 
-## 5. API 全表（当前 59 条）
+## 5. API 全表（当前 70 条）
 
 ### 5.1 通用约定
 
@@ -338,12 +338,12 @@ HTTP 请求
 | 超时 | 全局 `server.request_timeout`（默认 30s）；超时且未写响应头 → 504 `timeout`；SSE 长连接同样受该超时约束（到期服务端结束流，EventSource 自动重连） |
 | 租户 | 单租户 v1；`StaticTenant(DefaultID)` 注入上下文，所有查询带 `tenant_id` |
 | 请求 ID | `X-Request-ID` 透传或生成，响应头回传并写入错误信封 |
-| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`severity`/`q`/`type` 过滤）；任务/审批/流量/审计按 `id DESC`，发现/复测按 `created_at DESC, id DESC`，B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；`limit` 超上限时回退默认值（见各接口） |
+| 分页 | 无 cursor/offset；列表通过 `limit`（部分接口支持 `status`/`severity`/`q`/`type`/`phase`/`outcome`/`role`/`model`/`mission_id` 过滤）；任务/审批/流量/命令/LLM 记录按 `id DESC`，发现/复测按 `created_at DESC, id DESC`，B1 企业/资产/范围/任务资产与 B2 任务范围/计划/图节点按 `id` 升序；B1 limit 非法静默回默认，**B3 的 traffic/commands/llm-records limit 非法（非数字/≤0）返回 400**，超上限钳制（traffic/commands 200、llm-records 500）；`/missions/{id}/usage` 的 records 不分页（单任务量级可控） |
 | 内容类型 | 请求/响应 `application/json`（SSE 为 `text/event-stream`） |
 | 幂等 | 创建任务非幂等；审批决策用 CAS（仅 pending）；删除任务 204 且重复删除 404；B1 资产按身份键 upsert、任务资产重复登记 409 |
 | 方法/路径不匹配 | 路径存在但方法不支持 → 405 `method_not_allowed` + `Allow` 头；路径完全不存在 → JSON 404 `not_found` |
 
-### 5.2 路由总表（当前 59 条）
+### 5.2 路由总表（当前 70 条）
 
 | # | 方法 | 路径 | 鉴权 | 处理函数（文件） | 请求 | 成功响应 | 主要错误 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -406,6 +406,17 @@ HTTP 请求
 | 57 | GET | `/api/v1/system/update/check` | Bearer | `handleUpdateCheck`（`update.go`） | — | `{"has_update":bool,"release":ReleaseInfo}` | 401/502/503 |
 | 58 | POST | `/api/v1/system/update/apply` | Bearer | `handleUpdateApply` | 空 body | `{"updated":bool,"version":"…","message":"…"}` | 401/409/502/503 |
 | 59 | POST | `/api/v1/system/update/rollback` | Bearer | `handleUpdateRollback` | 空 body | `{"rolled_back":true,"message":"…"}` | 401/409/503 |
+| 60 | GET | `/api/v1/traffic` | Bearer | `handleTrafficList`（`insights_api.go`） | `?mission_id=&tool=&phase=&limit=` | `{"traffic":[TrafficExchange]}`（id DESC） | 400/401/503 |
+| 61 | GET | `/api/v1/traffic/{id}` | Bearer | `handleTrafficGet` | — | `TrafficExchange`（不含正文） | 400/401/404/503 |
+| 62 | GET | `/api/v1/traffic/{id}/request` | Bearer | `handleTrafficRequest` | — | `text/plain; charset=utf-8`（解密正文） | 400/401/404/409/503 |
+| 63 | GET | `/api/v1/traffic/{id}/response` | Bearer | `handleTrafficResponse` | — | `text/plain; charset=utf-8`（解密正文） | 400/401/404/409/503 |
+| 64 | DELETE | `/api/v1/traffic/{id}` | Bearer | `handleTrafficDelete` | — | 204（仅删采集行） | 400/401/404/503 |
+| 65 | GET | `/api/v1/commands` | Bearer | `handleCommandList` | `?mission_id=&tool=&outcome=&limit=` | `{"commands":[AuditEvent]}`（id DESC） | 400/401/503 |
+| 66 | GET | `/api/v1/commands/{id}` | Bearer | `handleCommandGet` | — | `AuditEvent` | 400/401/404/503 |
+| 67 | GET | `/api/v1/llm-records` | Bearer | `handleLLMRecordList` | `?mission_id=&role=&model=&limit=` | `{"records":[LLMUsageRecord]}`（id DESC） | 400/401/503 |
+| 68 | GET | `/api/v1/missions/{id}/usage` | Bearer | `handleMissionUsage` | — | `MissionUsage`（预算+records+by_role/by_model） | 400/401/404/503 |
+| 69 | GET | `/api/v1/llm-usage/summary` | Bearer | `handleLLMUsageSummary` | `?group_by=model|role|day&mission_id=&days=` | `{"group_by":"…","groups":[LLMUsageGroup]}` | 400/401/503 |
+| 70 | GET | `/api/v1/dashboard` | Bearer | `handleDashboard` | — | `DashboardStats` | 401/503 |
 
 > 前端页面 `/` 与 `/_next/*` 由 `internal/webui.Handler` 提供（公开，不经过 `Routes()`）；`/api/` 下未匹配路径由 WebUI 返回 JSON 404。
 
@@ -477,6 +488,18 @@ HTTP 请求
 - 复测：列表按 `created_at DESC, id DESC`，limit 50/200；创建 body `{finding_id,note?,requested_by?}`，finding 必须存在且属于路径任务（否则 404/400），初始 `pending`，requested_by 缺省 `user`，201；详情 200；PATCH `{status,note?}`，status 非法 400、非法迁移 409，进入 running 时写 started_at、进入终态写 finished_at，note 非空才更新。
 - 报告：`text/markdown; charset=utf-8`，只读投影，不调模型；包含任务信息、发现（最多 500）、计划步骤、fact 节点（最多展示 100 条并注明总数）、证据统计；空段落显式输出“无：…”。任务不存在 404。
 
+**流量/命令/LLM 记录/用量/Dashboard**（#60–#70，M6.2-B3；实现见 `insights_api.go`、`store_insights.go`，无新迁移）
+
+- 流量列表：`?mission_id=`（可选正整数；0/缺省=不筛选；非法 400）、`?tool=`（精确）、`?phase=`（仅 intent/result，否则 400）、`?limit=`（缺省 50、超上限 200 钳制；**非数字/≤0 → 400**，与 B1 静默回默认不同）；按 `id DESC`；过滤的 `mission_id` 不存在时返回空数组而不是 404（不校验任务存在）。
+- 流量详情：按 id 返回 `TrafficExchange`（不含正文）；不存在 404。
+- 请求/响应正文：`GET /traffic/{id}/request|response` 用 `evidence.GetBlob` 解密，`Content-Type: text/plain; charset=utf-8`；Evidence 未装配 503 `evidence_unavailable`；记录不存在 404；该阶段 hash 为空（如未完成 intent 的 response）→ 404；blob 缺失、密文被改、密钥不匹配统一 409 `tampered`（不再区分缺失与篡改，避免探测）。正文是脱敏后的明文，可能为空字符串（合法正文）。
+- 删除流量：`DELETE /traffic/{id}` 204；只删 `traffic_exchanges` 行，正文 blob 与已冻结证据快照保留；不存在 404。
+- 命令历史：`GET /commands` 是 `audit_events` 的只读视图，支持 `mission_id`/`tool`/`outcome` 过滤（不校验枚举值）、`limit` 缺省 50/上限 200、`id DESC`、空 `[]`；`GET /commands/{id}` 不存在 404。只读，无重放/取消。
+- LLM 记录：`GET /llm-records` 读 `llm_usage`，支持 `mission_id`/`role`/`model` 过滤（不校验枚举）、`limit` 缺省 50/上限 500、`id DESC`；`mission_id` 可为 null（脱离任务的调用）。
+- 任务用量：`GET /missions/{id}/usage` 先校验任务存在（404）；返回 `mission_id/max_tokens/spent_tokens/max_steps/steps_used/records/by_role/by_model`；records 为**该任务全部记录**（不分页，单任务量级可控），by_role/by_model 按名称升序，空 `[]`。
+- 用量聚合：`GET /llm-usage/summary` 的 `group_by` 缺省 `model`，仅 model/role/day，否则 400；`days` 缺省 30、非数字/<1 → 400、>365 钳制到 365；时间窗为 `now().UTC() - days`；`day` 键为 `date_trunc('day', created_at)` 的 `YYYY-MM-DD`（**DB 会话时区**，容器通常 UTC）；`groups` 按 key 升序、空 `[]`；每项含 `calls/prompt_tokens/completion_tokens/total_tokens`。
+- Dashboard：单次返回 `missions{total,by_status 固定 7 键}`、`tokens{spent_total,calls,today}`、`approvals{pending}`、`findings{total,by_severity 固定 5 键}`、`assets{total}`、`traffic{total}`、`recent_missions(≤5，id DESC)`。口径：`spent_total=SUM(missions.spent_tokens)`（任务累计预算消耗），`calls=COUNT(llm_usage)`，`today=SUM(llm_usage.total_tokens) WHERE created_at >= date_trunc('day', now())`（DB 时区）；分布中未知取值不进入 map，固定键补 0。所有计数均限定当前租户。
+
 **自更新**（#57–#59）
 
 - `check`：调用 GitHub latest release API，比较版本，返回本平台资产与 SHA256SUMS 信息；未装配 Updater → 503 `update_unavailable`；禁用/网络失败 → 502 `update_check_failed`。
@@ -487,12 +510,12 @@ HTTP 请求
 
 | HTTP | code | 场景 |
 | --- | --- | --- |
-| 400 | `bad_request` | 请求体非法、任务/审批/证据/采集/发现/复测 id 非法、名称为空；资产类型/身份键/父资产非法、范围 kind/source 非法、任务资产引用预检失败；图的 kind/state 非法、节点状态非法、发现 severity/status 或资产/节点引用非法 |
+| 400 | `bad_request` | 请求体非法、任务/审批/证据/采集/发现/复测 id 非法、名称为空；资产类型/身份键/父资产非法、范围 kind/source 非法、任务资产引用预检失败；图的 kind/state 非法、节点状态非法、发现 severity/status 或资产/节点引用非法；流量 phase 非法、limit 非数字/≤0、group_by 非法、days 非数字/<1 |
 | 401 | `unauthorized` | 缺少/错误令牌 |
-| 404 | `not_found` | 任务/审批/采集/证据/企业/资产/企业范围条目/任务资产关联/任务范围条目/节点/发现/复测/证据绑定不存在；WebUI 下未知 `/api/` 路径 |
+| 404 | `not_found` | 任务/审批/采集/证据/企业/资产/企业范围条目/任务资产关联/任务范围条目/节点/发现/复测/证据绑定/流量记录/命令记录不存在；流量该阶段无正文（hash 空）；WebUI 下未知 `/api/` 路径 |
 | 405 | `method_not_allowed` | 路径存在但请求方法不在路由表（响应带 `Allow` 头） |
 | 409 | `conflict` | 当前状态不允许该操作（暂停/恢复/取消）；采集未完成冻结证据；审批已处理；企业 slug/范围条目/资产身份键/任务资产/任务范围重复；发现/复测非法状态迁移、证据重复绑定 |
-| 409 | `tampered` | 证据签名或正文哈希校验失败 |
+| 409 | `tampered` | 证据签名或正文哈希校验失败；流量正文 blob 缺失/被篡改/密钥不匹配统一返回该错误 |
 | 409 | `update_failed` / `rollback_failed` | 自更新/回滚失败 |
 | 500 | `internal_error` | 未分类服务端错误 |
 | 500 | `replay_failed` | SSE 回放失败（尚未开始流） |
@@ -513,7 +536,8 @@ HTTP 请求
 - 任务范围/计划/作战图：已随 B2a 暴露（§5 #37–#43）；仍无写入节点/边/锚点的 API（`AddNode/AddEdge/AddAnchor` 仅内部使用），图数据由 AI/执行路径写入。
 - 资产细节：身份键只有 `GET /assets/{id}/identities`（只读）；没有独立新增/删除/修改身份键 API；企业 `attrs` 无 PATCH 入口。
 - 任务事件：除 SSE 外没有分页查询历史事件的 API（`ListMissionEvents` 仅内部使用）。
-- 用量/预算：`MissionBudget`、`RecordLLMUsage`（写入侧）、`llm_usage` 查询、`ReadyPlanSteps`（内部调度）。
+- 流量/命令/LLM：B3 已暴露列表/详情/正文/聚合（§5 #60–#70）；仍缺流量导出、命令重放、LLM 请求/响应正文（仅 token 用量）、趋势按小时聚合。
+- 用量/预算：`MissionBudget`、`RecordLLMUsage`（写入侧）、`ReadyPlanSteps`（内部调度）；查询侧已由 B3 暴露。
 - 策略：`ListPolicyRules`（只读；没有 CRUD API）。
 - 内部维护：`ListQueuedMissions/TransitionMission/SetMissionStatus/ListMissionScope` 等引擎/内部方法。
 
@@ -663,6 +687,14 @@ HTTP 请求
 - **作战图/节点**：`kind` 7 种、`state` 5 种共享；`graph.ValidateNode` 按类型收敛状态：goal 不允许 running/exhausted，fact/finding/hint/digest 不允许 running（知识类节点写入即终态），action/hypothesis 允许全部 5 种；`PATCH /nodes/{id}/state` 非法状态 400，kind 规则不满足 400。
 - **图查询**：只读；`edges` 两端同任务由数据库复合外键保证；节点/边/锚点由 AI/执行路径写入，当前没有写图 API。
 
+### 6.12 洞察口径：流量正文 / 命令 / LLM 记录 / Dashboard（M6.2-B3）
+
+- **流量正文**：`traffic_exchanges` 只存 hash/size；正文经 `evidence.GetBlob` 解密后以 `text/plain` 返回。`request_hash` 为空表示没有请求正文（404）；`response_hash` 为空通常表示采集未完成。blob 缺失/密文被改/密钥不匹配统一 409 `tampered`（不区分缺失与篡改，避免探测）；不装配 Evidence 时 503。
+- **命令历史**：直接投影 `audit_events`（每次工具调用一行），`outcome` 取值 `executed/tool_error/denied_by_rule/rejected_by_user/approval_unavailable`；只读，不改审计、无重放能力。
+- **LLM 记录**：直接投影 `llm_usage`（逐次调用台账，`mission_id` 可空）；与 `missions.spent_tokens` 的区别：记录表逐次，任务字段是累计值。
+- **Dashboard 口径**：`missions.by_status` 固定 7 键（queued/running/paused/finalizing/done/failed/cancelled）且缺省补 0；`findings.by_severity` 固定 5 键（info/low/medium/high/critical）补 0；`tokens.spent_total=SUM(missions.spent_tokens)`、`tokens.calls=COUNT(llm_usage)`、`tokens.today=SUM(llm_usage.total_tokens) WHERE created_at >= date_trunc('day', now())`（DB 会话时区）；`recent_missions` 按 id 倒序最多 5 条。所有统计限定当前租户。
+- **聚合时间窗**：`/llm-usage/summary` 的 `days` 使用 UTC 截止时间；`group_by=day` 的分组键由 DB 的 `date_trunc('day', created_at)` 生成（DB 时区），与 UTC 截止时间可能跨日不一致——前端展示时以返回的 key 为准。
+
 ## 7. 运行时机制
 
 ### 7.1 引擎调度与任务执行
@@ -744,6 +776,13 @@ HTTP 请求
 - **状态机校验位置**：`internal/domain/finding` 纯函数校验，Store 事务内 `FOR UPDATE` 二次校验后写入；API 把非法迁移映射为 409，不修改其它字段。
 - **报告生成器**：`internal/httpapi/report_api.go` 的 `renderMissionReport` 是只读投影，读取任务、发现（≤500）、计划步骤、fact 节点（≤100 展示，标注总数）与证据统计后拼 Markdown；不调用模型、不写库，结论为“同一数据同一报告（除生成时间）”。导出 PDF/Word 未实现。
 
+### 7.10 B3 只读洞察投影（M6.2-B3）
+
+- B3 不新增写入路径：`insights_api.go` 只读 `traffic_exchanges`/`audit_events`/`llm_usage`/`missions`/`approvals`/`findings`/`assets`，客户端读正文时调用 `evidence.GetBlob` 解密。
+- 流量正文读取不缓存、不记录新的审计/采集行；`DELETE /traffic/{id}` 只删采集行，保留 blob 与已冻结快照（证据完整性优先）。
+- Dashboard 每次请求实时聚合（多条 COUNT/SUM/分组 SQL，无物化视图/缓存）；数据量大时是已知性能风险，后续可加缓存或按日汇总。
+- 命令历史与 LLM 记录是审计/台账视图，不触发任务运行时、不改变任务状态。
+
 ## 8. 前端对接指南
 
 ### 8.1 令牌与请求封装
@@ -788,6 +827,9 @@ HTTP 请求
 | 任务范围/计划/作战图/节点 | 10s | B2a 新接口；图较大时降低频率或按需拉取 |
 | 发现/复测 | 5s | B2b 新接口；状态迁移后立即重拉 |
 | 报告 | 按需 | `GET /missions/{id}/report` 返回 Markdown，点击生成/下载，不轮询 |
+| Dashboard | 15s | B3 聚合接口；实时 Count/Sum，无缓存，避免高频 |
+| 流量列表 / 命令历史 / LLM 记录 | 10s 或按需 | B3 只读列表；分页为 `limit`，详情/正文按点击加载 |
+| 流量请求/响应正文 | 按需 | 点击“查看正文”时请求，不预取（可能含敏感明文） |
 
 ### 8.4 字段字典
 
@@ -811,12 +853,18 @@ HTTP 请求
 | `Company` / `Asset`（B1 已暴露） | Company: `tenant_id,id,name,slug,attrs,created_at,updated_at`；Asset: `tenant_id,id,type,label,parent_id,attrs,identities,created_at,updated_at` | 列表 `?q=&limit=`（id 升序）；Asset 的 `identities` 为 `{kind,key}` 数组；创建带 identities 时 upsert；资产类型见 §4.4 |
 | `CompanyScope` / `AssetIdentity`（B1 已暴露） | CompanyScope: `tenant_id,id,company_id,kind,value,source,created_at`；AssetIdentity: `tenant_id,asset_id,kind,key,created_at` | 企业范围 source manual/import；身份键只读列表，写入只能随创建资产 |
 | `Coverage` / `TypeCoverage`（B1 已暴露） | Coverage: `total,tested,percent,by_type`；TypeCoverage: `type,total,tested,percent` | 覆盖度语义见 §4.3/§6.9；percent 为 0–100 浮点 |
+| `TrafficExchange`（列表/详情） | 同上方字段；列表 `{traffic:[]}`（id DESC），详情平铺 | 正文不在 JSON；`GET .../request|response` 返回 `text/plain` |
+| `AuditEvent`（命令历史） | 同上方字段；`GET /commands` 返回 `{commands:[]}`（id DESC），详情平铺 | outcome 见 §6.12；只读审计视图 |
+| `LLMUsageRecord`（B3 已暴露） | `tenant_id,id,mission_id,role,model,prompt_tokens,completion_tokens,total_tokens,created_at` | `mission_id` 可空；列表 `{records:[]}`（id DESC） |
+| `MissionUsage`（B3 已暴露） | `mission_id,max_tokens,spent_tokens,max_steps,steps_used,records,by_role:[{role,calls,total_tokens}],by_model:[{model,calls,total_tokens}]` | records 为该任务全部调用（不分页）；空 `[]` |
+| `LLMUsageGroup` / `LLMUsageSummary`（B3 已暴露） | 单项 `key,calls,prompt_tokens,completion_tokens,total_tokens`；外层 `group_by,groups` | key 由 group_by 决定（model/role/YYYY-MM-DD）；day 用 DB 时区 |
+| `DashboardStats`（B3 已暴露） | `missions{total,by_status}`,`tokens{spent_total,calls,today}`,`approvals{pending}`,`findings{total,by_severity}`,`assets{total}`,`traffic{total}`,`recent_missions:[{id,name,status,spent_tokens,created_at}]` | by_status 固定 7 键、by_severity 固定 5 键；口径见 §6.12 |
 | `SystemInfo` | `service,version,commit,build_time,started_at,uptime,schema_version,latest_migration` | `/api/v1/system/info` |
 | `Readiness` | `ready,checks[{name,ok,error?}]` | `/readyz` |
 | `ReleaseInfo` | `version,tag,url,notes,published_at,asset_url,asset_name,checksum_url` | update/check 的 `release` |
 | `UpdateCheckResult` / `UpdateApplyResult` / `RollbackResult` | check: `has_update,release`；apply: `updated,version,message`；rollback: `rolled_back,message` | 自更新接口 |
 
-> 字段字典中标注「B1/B2 已暴露」的类型可直接从 HTTP 读取；B2 已把 `PlanStep`/`Node`/`Edge`/`Anchor`/`MissionScopeEntry`/`Finding`/`FindingEvidence`/`Retest` 暴露为 API。图写入、AI 自动 finding、复测执行器仍未实现（见 §10 B2 未包含项）。
+> 字段字典中标注「B1/B2/B3 已暴露」的类型可直接从 HTTP 读取；B3 已把 `LLMUsageRecord`/`MissionUsage`/`LLMUsageGroup`/`DashboardStats` 与流量/命令列表/详情暴露为 API。图写入、AI 自动 finding、复测执行器、流量导出/命令重放仍未实现（见 §10）。
 
 ### 8.5 任务可用操作矩阵
 
@@ -869,6 +917,16 @@ HTTP 请求
 - **报告**：`GET /missions/{id}/report` 返回 `text/markdown; charset=utf-8`，前端按 Markdown 渲染（或直接下载）；不是 JSON，不要 `response.json()`；报告只读、不落库。
 - **一致性**：发现/复测的 400 是「参数/引用非法」，409 是「状态机拒绝或重复」，遇到 409 应刷新详情后提示，而不是自动重试。
 
+### 8.9 B3 流量/命令/LLM/用量/Dashboard 对接要点
+
+- **流量正文按需加载**：列表/详情只返回 hash/size；点击“查看请求/响应正文”再请求 `/traffic/{id}/request|response`，不要预取全量正文（明文可能敏感）。
+- **limit 严格校验**：B3 的 traffic/commands/llm-records 对 `limit` 非数字或 ≤0 返回 400（不是回退默认）；traffic/commands 上限 200、llm-records 上限 500，超出会被钳制。
+- **正文错误语义**：404 = 记录不存在或该阶段无正文（hash 为空）；409 tampered = blob 缺失/被篡改/密钥不匹配（不区分，避免探测）；503 = 证据存储未装配。前端应把 409 展示为“证据校验失败”，不要重试。
+- **命令历史/LLM 记录**：都是只读视图，没有“取消/重放”操作；分页只支持 `limit`，需要更多历史时调大 limit（≤200/500）。
+- **任务用量**：`records` 不分页，直接取该任务全部调用；页面数据量大时前端自行折叠/虚拟滚动。
+- **用量聚合**：`group_by` 缺省 model；`days` 默认 30、上限 365、非法 400；day 分组键用 DB 时区，跨时区展示以返回 key 为准。
+- **Dashboard**：建议 15s 轮询或进入首页时拉一次；`spent_total` 是任务累计消耗（不是 LLM 记录求和），`today` 是当天记录求和，两者口径不同，不要混用。
+
 ## 9. 原版 27 页映射与后端缺口
 
 参考产品的页面清单来自 `research/` 下研究资料（gitignored，不随仓库发布）；下表的「原版页面」只是页面职责对照，不代表本仓库包含其代码。
@@ -881,7 +939,7 @@ HTTP 请求
 | 2 | setup | 首次初始化密码 | D | 无 | 初始化流程 | 暂不实现 |
 | 3 | external redirect | 落地跳转 | A | 单页 `/` 已可用 | 无 | 不需要 |
 | 4 | chat | 会话列表 + transcript + @提及 | D | 无会话/消息表 | 会话模型、LLM 对话 API、SSE | 后续 |
-| 5 | dashboard | token 用量、趋势、活动 | B | `llm_usage`/`missions.spent_tokens` 数据已有 | 聚合统计 API | 首页仪表盘（B3） |
+| 5 | dashboard | token 用量、趋势、活动 | A | B3：`GET /dashboard`（任务/用量/审批/发现/资产/流量/最近任务） | 趋势图按小时聚合、活动流（缺口） | 首页仪表盘（B3 基础版） |
 | 6 | tasks | 任务列表/分类/归档/批量/创建 | A/B | 任务 CRUD + 列表 API | 分类/归档/批量（无表） | 任务列表（已实现基础版） |
 | 7 | tasks/detail | 任务头 + 10 Tab 容器 | A | 任务详情/事件/审计/流量/证据；B1 任务资产/覆盖度；B2 范围/计划/图/发现/复测/报告 | 会话 transcript；策略只读/编辑 | 任务详情（B2 已实现基础版） |
 | 8 | tasks/detail/sessions | transcript + 任务 SSE + worker 操作 | C | 仅 `mission_events` | Agent 会话/消息/侧问模型与 API | 后续（需新领域） |
@@ -896,9 +954,9 @@ HTTP 请求
 | 17 | tasks/detail/report | Markdown 报告 | A | B2：`GET /missions/{id}/report`（text/markdown） | PDF/Word 导出（未实现） | 报告（B2 已实现基础版） |
 | 18 | findings | 发现三视图/筛选/导出 | A/B | B2：任务内发现列表/详情/编辑；无跨任务列表 | 跨任务发现列表/导出 API | 发现页（B2 基础版） |
 | 19 | findings/detail | 发现详情/攻击链/流量 | A | B2：发现详情 + 证据绑定；图节点可查 | 攻击链聚合视图（前端组合） | 发现详情（B2 基础版） |
-| 20 | traffic | 抓包列表/详情/删除/清理 | A/B | 流量列表 + 冻结 + 校验 API | 正文读取/删除/按 host 清理 | 流量页（B3） |
-| 21 | commands | 工具执行历史 + 统计 | B | `audit_events` + audit API 已有 | 按工具聚合/分页 API | 工具历史（B3） |
-| 22 | llm-records | LLM 原始记录 + token 聚合 | B | `llm_usage` 数据已有 | 查询/聚合 API | LLM 用量（B3） |
+| 20 | traffic | 抓包列表/详情/删除/清理 | A | B3：全局流量列表/详情/正文/删除；M5 任务流量列表 + 冻结/校验 | 按 host 清理、导出、正文下载（缺口） | 流量页（B3 基础版） |
+| 21 | commands | 工具执行历史 + 统计 | A | B3：`GET /commands`（audit_events 视图）+详情 | 按工具聚合统计、命令重放（缺口） | 工具历史（B3 基础版） |
+| 22 | llm-records | LLM 原始记录 + token 聚合 | A | B3：`GET /llm-records`、`/missions/{id}/usage`、`/llm-usage/summary` | LLM 请求/响应正文记录、按小时趋势（缺口） | LLM 用量（B3 基础版） |
 | 23 | assets | 企业范围 + 资产 CRUD + 搜索 | A | B1：企业/企业范围/资产 CRUD、`?q=`/`?type=` 搜索、身份键只读 | 身份键独立增删改、企业 attrs 更新、游标翻页 | 资产页（B1 已实现基础版） |
 | 24 | sync | 外部数据源同步 | D | 无 | 数据源/项目/任务/同步 API | 后续（B5） |
 | 25 | workspace | workDir 文件管理 | D | 无 | 文件系统 API + 沙箱 | 后续（B5） |
@@ -917,17 +975,17 @@ HTTP 请求
 
 > 表中 #1–#7 与 #18–#37 对应原版 27 个顶层页面；#8–#17 是任务详情页的 10 个 Tab（对照用，不单独计页面）。
 
-**B1 已实现（18 条，§5 #19–#36）**：企业 5 条、企业范围 3 条、资产 6 条、任务资产/覆盖度 4 条。**B2 已实现（20 条，§5 #37–#56）**：B2a 任务范围/计划/作战图/节点 7 条；B2b 发现/证据/复测/报告 13 条。前端可先做「资产/企业/任务资产/覆盖度」+「任务详情范围/计划/图/发现/复测/报告」页面。
+**B1 已实现（18 条，§5 #19–#36）**：企业 5 条、企业范围 3 条、资产 6 条、任务资产/覆盖度 4 条。**B2 已实现（20 条，§5 #37–#56）**：B2a 任务范围/计划/作战图/节点 7 条；B2b 发现/证据/复测/报告 13 条。**B3 已实现（11 条，§5 #60–#70）**：流量列表/详情/正文/删除 5 条、命令历史 2 条、LLM 记录/任务用量/用量聚合 3 条、Dashboard 1 条。前端可先做「资产/企业/任务资产/覆盖度」+「任务详情范围/计划/图/发现/复测/报告」+「流量/命令/LLM/用量/Dashboard」页面。
 
-**仍未暴露的已有数据（B 类）**：跨任务发现列表/导出、LLM 用量查询（`llm_usage` 写入侧已有）、策略规则（`ListPolicyRules` 只读，无 CRUD）、任务事件历史（除 SSE 外无分页查询 API）、图节点/边/锚点写入、身份键独立增删改。
+**仍未暴露的已有数据（B 类）**：跨任务发现列表/导出、策略规则（`ListPolicyRules` 只读，无 CRUD）、任务事件历史（除 SSE 外无分页查询 API）、图节点/边/锚点写入、身份键独立增删改。
 
 **完全未实现/需新领域能力（C/D 类）**：用户与登录、Agent 会话/transcript/侧问、AI 自动写 finding、复测执行器、报告 PDF/Word 导出、任务分类/归档/批量、同步、Workspace、LLM profile 管理、Agent/MCP/Skills 管理、自定义工具、通知、全局资产黑名单、日志流、设置项、GC/搜索自检。
 
-**B 方案前端优先级建议**：任务列表/详情/审批/流量/证据（现成）→ 企业/资产/任务资产/覆盖度（**B1 已完成**）→ 任务范围/计划/作战图/发现/复测/报告（**B2 已完成**）→ 流量详情/命令/LLM 记录（B3）→ 策略/日志/通知/设置（B4）→ MCP/Skills/Agents/Workspace/Sync（B5）。
+**B 方案前端优先级建议**：任务列表/详情/审批/流量/证据（现成）→ 企业/资产/任务资产/覆盖度（**B1 已完成**）→ 任务范围/计划/作战图/发现/复测/报告（**B2 已完成**）→ 流量/命令/LLM 记录/用量/Dashboard（**B3 已完成**）→ 策略/日志/通知/设置（B4）→ MCP/Skills/Agents/Workspace/Sync（B5）。
 
-## 10. M6.2 后端补齐路线（B1/B2 已实现；B3–B5 草案）
+## 10. M6.2 后端补齐路线（B1/B2/B3 已实现；B4–B5 草案）
 
-> B1（18 条）与 B2（20 条）已实现（见 §5 #19–#56）；B3–B5 仍是**未实现的 API 草案**，实际实现时以 OpenAPI 与本文档更新为准。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（默认 50/上限 200，超出回退）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量按 `id DESC`。
+> B1（18 条）、B2（20 条）与 B3（11 条）已实现（见 §5 #19–#70）；B4–B5 仍是**未实现的 API 草案**，实际实现时以 OpenAPI 与本文档更新为准。统一约定：`/api/v1`、Bearer 鉴权、错误信封、`limit`（B1 默认 50/上限 200 且非法静默回退，B3 非法 400、超上限钳制）、写操作返回资源或 204；所有查询带租户。B1 列表按 `id` 升序，发现/复测按 `created_at DESC`，任务/审批/流量/命令/LLM 记录按 `id DESC`。
 
 ### B1：资产 / 企业 / 范围 / 覆盖率 / 任务资产（已实现 2026-10-21）
 
@@ -974,17 +1032,26 @@ HTTP 请求
 - 任务范围编译为策略规则、报告导出 PDF/Word、跨任务发现列表/导出。
 - 验收（已完成）：20 条路由与 §5 一致、`make docs-check` 覆盖全部路由、0007 迁移与发现/复测状态机测试通过。
 
-### B3：流量详情 / 命令历史 / LLM 记录
+### B3：流量 / 命令 / LLM 记录 / 用量 / Dashboard（已实现 2026-10-21）
 
-| 方法/路径 | 用途 | 依赖 |
+已实现 11 条（无新迁移，新增 `insights_api.go`、`store_insights.go`）：
+
+| 分类 | 已实现 API | 实现位置 |
 | --- | --- | --- |
-| `GET /api/v1/traffic/{id}` | 单条采集详情 | `GetTraffic` |
-| `GET /api/v1/traffic/{id}/request` / `response` | 解密读取正文（需授权与审计） | `evidence.GetBlob` + 权限控制 |
-| `DELETE /api/v1/traffic/{id}` / `DELETE /api/v1/missions/{id}/traffic` | 删除采集记录（是否保留证据需明确） | 需补 Store/级联策略 |
-| `GET /api/v1/commands?mission_id=&tool=&limit=` | 工具执行历史（基于 audit/traffic） | `audit_events` + `traffic_exchanges` 聚合查询 |
-| `GET /api/v1/commands/{id}` | 单条执行详情 | 同上 |
-| `GET /api/v1/llm-records?mission_id=&role=&model=&limit=` | LLM 调用记录 | `llm_usage` 查询（需补 Store） |
-| `GET /api/v1/missions/{id}/usage`；`GET /api/v1/llm-usage/summary?group_by=model|role|day` | 用量聚合/趋势 | 新聚合查询 |
+| 流量（5） | `GET /api/v1/traffic`；`GET/DELETE /api/v1/traffic/{id}`；`GET /api/v1/traffic/{id}/request`、`/response` | `internal/httpapi/insights_api.go`、`internal/infra/pg/store_insights.go` |
+| 命令（2） | `GET /api/v1/commands`；`GET /api/v1/commands/{id}` | 同上 |
+| LLM 记录/用量（3） | `GET /api/v1/llm-records`；`GET /api/v1/missions/{id}/usage`；`GET /api/v1/llm-usage/summary` | 同上 |
+| Dashboard（1） | `GET /api/v1/dashboard` | 同上 |
+
+- 正文读取：`/traffic/{id}/request|response` 用 `evidence.GetBlob` 解密，`text/plain; charset=utf-8`；blob 缺失/篡改/密钥不匹配统一 409 `tampered`。
+- 口径：`spent_total=SUM(missions.spent_tokens)`、`calls=COUNT(llm_usage)`、`today=SUM(llm_usage.total_tokens)`（DB 时区当天）；`by_status` 固定 7 键、`by_severity` 固定 5 键。
+- 测试：`internal/httpapi/insights_api_test.go`（列表/详情/正文/用量/Dashboard）。
+
+**B3 未包含（后续批次/前端组合实现）**：
+
+- 流量导出、按 host 清理、正文下载文件；命令重放；LLM 请求/响应正文记录（当前只有 token 用量）。
+- 趋势按小时/自定义粒度、Dashboard 缓存/物化视图；`/missions/{id}/usage` 的 records 不分页。
+- 验收（已完成）：11 条路由与 §5 一致、`make docs-check` 覆盖全部路由、insights 接口测试通过。
 
 ### B4：策略 CRUD / 日志 / 通知 / 设置
 
@@ -1091,7 +1158,7 @@ HTTP 请求
 | --- | --- | --- | --- |
 | 领域（纯函数） | `domain/asset`、`domain/graph`、`domain/task`、`domain/plan`、`domain/policy`、`domain/finding` | 归一化、枚举/校验、状态机穷举、依赖/环、策略匹配、发现/复测迁移矩阵 | 否 |
 | 配置/平台 | `config`、`platform`、`tenant`（无测试）、`logging`（无测试） | 默认值/环境变量/校验、目录权限 | 否 |
-| HTTP | `httpapi` | 路由/鉴权/健康、任务 API 集成、审批、证据、SSE、B1 企业/资产集成、B2 范围/计划/图/发现/复测/报告、docs-check | 部分 |
+| HTTP | `httpapi` | 路由/鉴权/健康、任务 API 集成、审批、证据、SSE、B1 企业/资产集成、B2 范围/计划/图/发现/复测/报告、B3 流量/命令/LLM/用量/Dashboard、docs-check | 部分 |
 | 存储 | `infra/pg` | 资产 upsert/隔离/覆盖度、性能（`BEACONX_PERF=1`） | 是 |
 | AI/执行 | `app/ai`、`app/executor`、`app/tools`、`app/evidence` | 假 LLM 端到端、工具循环、策略/审批/证据采集、加密/签名/篡改 | 部分是 |
 | 运行时 | `app/runner` | 完成/暂停恢复/恢复对账/删除/并发上限/预算暂停 | 是 |
@@ -1145,7 +1212,7 @@ make docs-check
 | 无浏览器级 e2e、无 URL 路由、无 CORS | 前端交付/多源部署 | §8、M6.1 |
 | 发布包文件名与 selfupdate 解压不匹配；无签名；Windows 自更新未验证 | 自更新可用性/供应链 | §7.8、§12.4 |
 | `beaconx help` 未列新变量；compose 未透传新变量 | 部署一致性 | §11.5 |
-| 无规则 CRUD、流量详情/命令历史/LLM 用量查询、跨任务发现列表 API | 前端剩余页面（B3/B4）不可做 | §9、§10 |
+| 无规则 CRUD、跨任务发现列表、流量导出/命令重放、LLM 请求/响应正文记录、趋势按小时 | 前端剩余页面（B4/B5）不可做 | §9、§10 |
 | AI 自动写 finding、复测执行器、图大集合分页、报告导出 PDF/Word 未实现 | B2 只到“人工 API 基础版” | §7.9、§10 |
 | 纯文本输出未脱敏、MITM/真实流量未实现、证据密钥不支持轮换 | 证据/安全边界 | §6.8、M5.1 |
 | LLM 规划诊断事件（planner_*）前端未登记 | 前端看不到诊断事件 | §8.2 |
@@ -1160,6 +1227,7 @@ make docs-check
 | 数据表/迁移 | 本文档 §4/§6 + `docs/data-model.md` |
 | 状态机/事件 | 本文档 §6/§7/§8 操作矩阵 + 前端 `STREAM_EVENT_TYPES` |
 | 发现/复测领域 | 本文档 §4/§6/§7/§8/§10 + `docs/data-model.md` + `internal/domain/finding` 测试 |
+| 洞察/聚合口径 | 本文档 §5/§6.12/§7.10/§8.9 + OpenAPI schemas + `insights_api_test.go` |
 | 配置项 | 本文档 §11 + `docs/configuration.md` + `config.example.json` + `.env.example` |
 | 运行时机制 | 本文档 §7 + `docs/runtime.md`/`docs/ai.md`/`docs/release.md` |
 | 前端字段/接口 | 本文档 §8 + `docs/web.md` |
@@ -1190,3 +1258,4 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 2026-10-21 | `bfb2540` | 创建文档，记录 M0–M6 现状（初始 21 条路由；后端 + 前端 + 交付） | 全部 |
 | 2026-10-21 | 提交 38aaeb4（M6.2-B1） | 实现 M6.2-B1：企业/资产/范围/覆盖率/任务资产 API（18 条，总路由 39 条） | §1、§3、§5、§6、§8、§9、§10、§14 |
 | 2026-10-21 | 本次提交 | 实现 M6.2-B2：B2a 任务范围/计划/作战图/节点 7 条 + B2b 发现/证据/复测/报告 13 条（共 20 条，总路由 39→59）；新增迁移 0007 三表与 `internal/domain/finding` 状态机 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§12、§13、§14 |
+| 2026-10-21 | 本次提交 | 实现 M6.2-B3：流量列表/详情/正文/删除 5 条 + 命令历史 2 条 + LLM 记录/任务用量/用量聚合 3 条 + Dashboard 1 条（共 11 条，总路由 59→70）；无新迁移；`spent_total`/`today` 口径与 DB 时区说明 | §1、§3、§5、§6、§7、§8、§9、§10、§12、§13、§14 |

@@ -110,7 +110,7 @@ make docker-build  # 构建含前端的镜像
 
 token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把任务置为 `paused`（事件 reason=「模型 token 预算超限暂停」），而不是判为失败；确认或调整预算后可用 `resume` 重新排队继续。
 
-## HTTP 接口（M6.2-B2）
+## HTTP 接口（M6.2-B3）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -170,6 +170,17 @@ token 预算是软上限：`spent_tokens` 超过 `max_tokens` 时，引擎会把
 | GET | `/api/v1/retests/{id}` | 复测详情 |
 | PATCH | `/api/v1/retests/{id}` | 更新复测结果（非法迁移 409） |
 | GET | `/api/v1/missions/{id}/report` | 生成任务 Markdown 报告（`text/markdown; charset=utf-8`） |
+| GET | `/api/v1/traffic` | 全局流量采集列表（`?mission_id=&tool=&phase=&limit=`，id 倒序，默认 50/上限 200） |
+| GET | `/api/v1/traffic/{id}` | 流量采集详情（不含正文） |
+| GET | `/api/v1/traffic/{id}/request` | 解密后的请求正文（`text/plain; charset=utf-8`；篡改 409 tampered） |
+| GET | `/api/v1/traffic/{id}/response` | 解密后的响应正文（`text/plain; charset=utf-8`；篡改 409 tampered） |
+| DELETE | `/api/v1/traffic/{id}` | 删除采集记录（仅删行，正文与已冻结证据保留，204） |
+| GET | `/api/v1/commands` | 命令执行历史（audit_events 视图，`?mission_id=&tool=&outcome=&limit=`，默认 50/上限 200） |
+| GET | `/api/v1/commands/{id}` | 命令执行详情 |
+| GET | `/api/v1/llm-records` | LLM 调用记录（`?mission_id=&role=&model=&limit=`，默认 50/上限 500） |
+| GET | `/api/v1/missions/{id}/usage` | 任务用量：预算 + 全部调用记录 + 按角色/模型聚合 |
+| GET | `/api/v1/llm-usage/summary` | 用量聚合（`?group_by=model|role|day&mission_id=&days=`，默认 30 天/上限 365） |
+| GET | `/api/v1/dashboard` | Dashboard 聚合计数（任务/用量/审批/发现/资产/流量/最近任务） |
 | GET | `/api/v1/system/update/check` | 检查 GitHub Release 新版本 |
 | POST | `/api/v1/system/update/apply` | 下载、校验、冒烟并替换二进制（需重启生效） |
 | POST | `/api/v1/system/update/rollback` | 用 `<binary>.old` 回滚上一版本（需重启生效） |
@@ -265,6 +276,7 @@ docs/                   项目真源（project-map）、术语、配置、路线
 - **前端嵌入二进制**：前端是纯静态目录，构建后 `go:embed` 进二进制，运行时不需要 Node；未构建时显示占位页。
 - **自更新只做 SHA256**：发布包没有签名，自更新仅校验 SHA256SUMS 并做 `--version` 冒烟；失败不改当前二进制，支持 `.old` 回滚。
 - **发现/复测状态迁移**：发现与复测的状态机默认拒绝；非法迁移返回 409，同状态不算迁移，终态不可再变。
+- **洞察接口**：流量正文解密失败统一 409 `tampered`；B3 的 traffic/commands/llm-records 对非法 `limit` 返回 400，超上限钳制而非报错。
 - **品牌门禁**：`scripts/check-brand.sh` 在 CI 中阻止第三方项目标识进入代码、依赖与二进制。
 
 ## 文档
