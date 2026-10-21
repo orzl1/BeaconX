@@ -635,6 +635,22 @@ func discoverStdio(ctx context.Context, srv Server, opts Options) ([]Tool, error
 			if ctx.Err() != nil {
 				return readError(err)
 			}
+			// 子进程可能在收到 initialize 前就退出（broken pipe）。此时要等它
+			// 收尾并把 stderr 带进错误信息，否则「环境变量/工作目录」等诊断
+			// 信息会丢失（CI 与本地时序不同，最容易暴露）。
+			_ = stdin.Close()
+			done := make(chan struct{})
+			go func() {
+				_ = cmd.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+			}
+			if msg := strings.TrimSpace(stderr.String()); msg != "" {
+				return fmt.Errorf("写入子进程失败：%w（stderr：%s）", err, msg)
+			}
 			return fmt.Errorf("写入子进程失败：%w", err)
 		}
 		return nil
