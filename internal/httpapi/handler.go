@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beaconx/beaconx/internal/tenant"
+	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
 // Authenticator validates a request. Implementations arrive with the auth

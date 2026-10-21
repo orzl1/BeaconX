@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/beaconx/beaconx/internal/config"
+	"github.com/orzl1/BeaconX/internal/config"
 )
 
 // New returns a slog logger configured from cfg.

@@ -15,7 +15,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/beaconx/beaconx/internal/tenant"
+	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
 // State is a resolved home directory.

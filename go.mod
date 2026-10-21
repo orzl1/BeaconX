@@ -1,4 +1,4 @@
-module github.com/beaconx/beaconx
+module github.com/orzl1/BeaconX
 
 go 1.24.0
 

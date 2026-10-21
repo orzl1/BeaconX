@@ -20,9 +20,9 @@ ARG BUILD_TIME=unknown
 RUN CGO_ENABLED=0 go build \
       -trimpath \
       -ldflags="-s -w \
-        -X github.com/beaconx/beaconx/internal/version.Version=${VERSION} \
-        -X github.com/beaconx/beaconx/internal/version.Commit=${COMMIT} \
-        -X github.com/beaconx/beaconx/internal/version.BuildTime=${BUILD_TIME}" \
+        -X github.com/orzl1/BeaconX/internal/version.Version=${VERSION} \
+        -X github.com/orzl1/BeaconX/internal/version.Commit=${COMMIT} \
+        -X github.com/orzl1/BeaconX/internal/version.BuildTime=${BUILD_TIME}" \
       -o /out/beaconx ./cmd/beaconx
 
 # ---- runtime ----

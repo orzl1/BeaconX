@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/beaconx/beaconx/migrations"
+	"github.com/orzl1/BeaconX/migrations"
 )
 
 func TestLoadOrdersAndHashes(t *testing.T) {

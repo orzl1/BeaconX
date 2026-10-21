@@ -1,8 +1,8 @@
 // Package version exposes build metadata. Values are injected at build time:
 //
-//	go build -ldflags "-X github.com/beaconx/beaconx/internal/version.Version=1.2.3 \
-//	  -X github.com/beaconx/beaconx/internal/version.Commit=$(git rev-parse --short HEAD) \
-//	  -X github.com/beaconx/beaconx/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//	go build -ldflags "-X github.com/orzl1/BeaconX/internal/version.Version=1.2.3 \
+//	  -X github.com/orzl1/BeaconX/internal/version.Commit=$(git rev-parse --short HEAD) \
+//	  -X github.com/orzl1/BeaconX/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 package version
 
 import "time"

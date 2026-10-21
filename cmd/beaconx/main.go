@@ -12,16 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/beaconx/beaconx/internal/app/system"
-	"github.com/beaconx/beaconx/internal/config"
-	"github.com/beaconx/beaconx/internal/httpapi"
-	"github.com/beaconx/beaconx/internal/infra/migrate"
-	"github.com/beaconx/beaconx/internal/infra/pg"
-	"github.com/beaconx/beaconx/internal/logging"
-	platformstate "github.com/beaconx/beaconx/internal/platform"
-	"github.com/beaconx/beaconx/internal/tenant"
-	"github.com/beaconx/beaconx/internal/version"
-	"github.com/beaconx/beaconx/migrations"
+	"github.com/orzl1/BeaconX/internal/app/system"
+	"github.com/orzl1/BeaconX/internal/config"
+	"github.com/orzl1/BeaconX/internal/httpapi"
+	"github.com/orzl1/BeaconX/internal/infra/migrate"
+	"github.com/orzl1/BeaconX/internal/infra/pg"
+	"github.com/orzl1/BeaconX/internal/logging"
+	platformstate "github.com/orzl1/BeaconX/internal/platform"
+	"github.com/orzl1/BeaconX/internal/tenant"
+	"github.com/orzl1/BeaconX/internal/version"
+	"github.com/orzl1/BeaconX/migrations"
 )
 
 func main() {

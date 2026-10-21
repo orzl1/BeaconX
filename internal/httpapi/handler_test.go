@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/beaconx/beaconx/internal/tenant"
+	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
 func testHandler(t *testing.T, opts Options) http.Handler {

@@ -1,5 +1,5 @@
 BINARY      := bin/beaconx
-MODULE      := github.com/beaconx/beaconx
+MODULE      := github.com/orzl1/BeaconX
 VERSION     ?= dev
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)

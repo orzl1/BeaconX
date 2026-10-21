@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/beaconx/beaconx/internal/tenant"
+	"github.com/orzl1/BeaconX/internal/tenant"
 )
 
 func TestEnsureCreatesTenantScopedTree(t *testing.T) {
