@@ -1,27 +1,12 @@
-// BeaconX HTTP API 的响应类型。
-//
-// 来源：internal/infra/pg/{models,policy_store,evidence_store}.go 与
-// internal/app/system/service.go 的 JSON 标签。字段名与后端保持一致（snake_case），
-// 不做前端侧重命名，避免与真实接口悄悄漂移。
+// BeaconX HTTP 响应类型。字段名与后端 JSON 保持一致。
 
-/** 任务状态取值（migrations/0003_runtime.sql 的 CHECK 约束）。 */
-export type MissionStatus =
-  | "queued"
-  | "running"
-  | "paused"
-  | "finalizing"
-  | "done"
-  | "failed"
-  | "cancelled";
-
-/** 一次授权测试任务。 */
 export interface Mission {
   tenant_id: number;
   id: number;
   name: string;
   goal: string;
   description: string;
-  status: MissionStatus | string;
+  status: string;
   queued: boolean;
   queued_at?: string | null;
   started_at?: string | null;
@@ -36,7 +21,6 @@ export interface Mission {
   updated_at: string;
 }
 
-/** 创建任务请求体（对应 internal/httpapi/missions.go 的 missionCreateRequest）。 */
 export interface CreateMissionInput {
   name: string;
   goal: string;
@@ -45,10 +29,6 @@ export interface CreateMissionInput {
   max_steps?: number;
 }
 
-/** 审批状态：pending → approved / rejected / timeout。 */
-export type ApprovalStatus = "pending" | "approved" | "rejected" | "timeout" | string;
-
-/** 等待人工决策的工具调用。 */
 export interface Approval {
   tenant_id: number;
   id: number;
@@ -56,25 +36,38 @@ export interface Approval {
   node_id: number;
   tool: string;
   args: Record<string, unknown> | null;
-  status: ApprovalStatus;
+  status: string;
   note: string;
   decided_by: string;
   decided_at?: string | null;
   expires_at: string;
   created_at: string;
+  node?: OperationNode | null;
+  mission?: Mission | null;
 }
 
-/** 两阶段采集：intent（请求已采集）→ result（执行完成）。 */
-export type TrafficPhase = "intent" | "result" | string;
+export interface AuditEvent {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  node_id?: number | null;
+  tool: string;
+  action: string;
+  rule_name: string;
+  args_digest: string;
+  outcome: string;
+  detail: string;
+  actor: string;
+  created_at: string;
+}
 
-/** 一次工具调用的采集记录。 */
 export interface TrafficExchange {
   tenant_id: number;
   id: number;
   mission_id: number;
   node_id?: number | null;
   tool: string;
-  phase: TrafficPhase;
+  phase: string;
   request_hash: string;
   request_size: number;
   response_hash: string;
@@ -86,7 +79,6 @@ export interface TrafficExchange {
   completed_at?: string | null;
 }
 
-/** 冻结后的证据快照（元数据 + HMAC 签名，正文按内容哈希存储）。 */
 export interface EvidenceSnapshot {
   tenant_id: number;
   id: number;
@@ -101,32 +93,21 @@ export interface EvidenceSnapshot {
   created_at: string;
 }
 
-/** GET /api/v1/evidence/{id}/verify 成功响应。 */
 export interface VerifyResult {
   verified: boolean;
   evidence_id: number;
   signature: string;
 }
 
-/** GET /healthz。 */
 export interface HealthStatus {
   status: string;
 }
 
-/** /readyz 的单项检查。 */
-export interface ReadinessCheck {
-  name: string;
-  ok: boolean;
-  error?: string;
-}
-
-/** GET /readyz（服务未就绪时 HTTP 503，但响应体仍是该结构）。 */
 export interface Readiness {
   ready: boolean;
-  checks: ReadinessCheck[];
+  checks: Array<{ name: string; ok: boolean; error?: string }>;
 }
 
-/** GET /api/v1/system/info。 */
 export interface SystemInfo {
   service: string;
   version: string;
@@ -138,14 +119,422 @@ export interface SystemInfo {
   latest_migration: number;
 }
 
-/** SSE 帧解析后的前端展示结构（不假设后端一定下发完整事件对象）。 */
 export interface StreamEvent {
   key: string;
   id?: number;
   type: string;
-  /** 事件自身的时间（完整事件对象里才有；负载帧通常没有）。 */
   createdAt?: string;
-  /** 浏览器收到该帧的本地时间，保证列表一定有可读时间。 */
   receivedAt: string;
   detail: unknown;
+}
+
+export interface Company {
+  tenant_id: number;
+  id: number;
+  name: string;
+  slug: string;
+  attrs?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CompanyScope {
+  tenant_id: number;
+  id: number;
+  company_id: number;
+  kind: string;
+  value: string;
+  source: string;
+  created_at: string;
+}
+
+export interface AssetIdentity {
+  tenant_id?: number;
+  asset_id?: number;
+  kind: string;
+  key: string;
+  created_at?: string;
+}
+
+export interface Asset {
+  tenant_id: number;
+  id: number;
+  type: string;
+  label: string;
+  parent_id?: number | null;
+  attrs?: Record<string, unknown> | null;
+  identities?: AssetIdentity[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Coverage {
+  total: number;
+  tested: number;
+  percent: number;
+  by_type: Array<{ type: string; total: number; tested: number; percent: number }>;
+}
+
+export interface MissionScopeEntry {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  kind: string;
+  value: string;
+  allowed_actions: string[];
+  note: string;
+  created_at: string;
+}
+
+export interface PlanStep {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  key: string;
+  title: string;
+  detail: string;
+  status: string;
+  priority: number;
+  depends_on: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationNode {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  kind: string;
+  state: string;
+  title: string;
+  body: string;
+  payload?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OperationEdge {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  src_id: number;
+  dst_id: number;
+  rel: string;
+  created_at: string;
+}
+
+export interface OperationAnchor {
+  tenant_id: number;
+  node_id: number;
+  asset_id: number;
+  role: string;
+  created_at: string;
+}
+
+export interface GraphView {
+  nodes: OperationNode[];
+  edges: OperationEdge[];
+  anchors: OperationAnchor[];
+  next_after_id?: number;
+}
+
+export interface Finding {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  asset_id?: number | null;
+  node_id?: number | null;
+  title: string;
+  severity: string;
+  status: string;
+  detail: string;
+  evidence_count: number;
+  created_at: string;
+  updated_at: string;
+  evidence?: FindingEvidence[];
+}
+
+export interface FindingEvidence {
+  tenant_id: number;
+  finding_id: number;
+  snapshot_id: number;
+  created_at: string;
+}
+
+export interface Retest {
+  tenant_id: number;
+  id: number;
+  mission_id: number;
+  finding_id: number;
+  status: string;
+  note: string;
+  requested_by: string;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface LLMUsageRecord {
+  tenant_id: number;
+  id: number;
+  mission_id?: number | null;
+  role: string;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  created_at: string;
+}
+
+export interface LLMExchangeDetail {
+  id: number;
+  mission_id: number;
+  role: string;
+  model: string;
+  error?: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  request_bytes: number;
+  response_bytes: number;
+  truncated: boolean;
+  redacted: boolean;
+  created_at: string;
+}
+
+export interface UsageGroup {
+  key: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface MissionUsage {
+  mission_id: number;
+  max_tokens: number;
+  spent_tokens: number;
+  max_steps: number;
+  steps_used: number;
+  records: LLMUsageRecord[];
+  by_role: Array<{ role: string; calls: number; total_tokens: number }>;
+  by_model: Array<{ model: string; calls: number; total_tokens: number }>;
+}
+
+export interface DashboardHour {
+  hour: string;
+  missions_created: number;
+  missions_done: number;
+  tokens: number;
+  approvals_requested: number;
+}
+
+export interface DashboardStats {
+  missions: { total: number; by_status: Record<string, number> };
+  tokens: { spent_total: number; calls: number; today: number };
+  approvals: { pending: number };
+  findings: { total: number; by_severity: Record<string, number> };
+  assets: { total: number };
+  traffic: { total: number };
+  recent_missions: Array<{ id: number; name: string; status: string; spent_tokens: number; created_at: string }>;
+  hourly?: DashboardHour[];
+}
+
+export interface ActivityItem {
+  id: number;
+  mission_id: number;
+  type: string;
+  payload?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface PolicyRule {
+  tenant_id: number;
+  id: number;
+  name: string;
+  tool: string;
+  arg_pattern: string;
+  action: string;
+  priority: number;
+  timeout_seconds: number;
+  enabled: boolean;
+  immutable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SettingsView {
+  max_concurrent: number;
+  default_budget: { max_tokens: number; max_steps: number };
+  default_action: string;
+  approval_timeout: string;
+}
+
+export interface LogEntry {
+  id: number;
+  time: string;
+  level: string;
+  msg: string;
+  attrs: Record<string, unknown>;
+}
+
+export interface NotificationChannel {
+  tenant_id: number;
+  id: number;
+  name: string;
+  type: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationDelivery {
+  tenant_id: number;
+  id: number;
+  channel_id: number;
+  event: string;
+  status: string;
+  detail: string;
+  created_at: string;
+}
+
+export interface McpServer {
+  id: number;
+  name: string;
+  transport: string;
+  url: string;
+  command: string;
+  args: string[] | null;
+  env: Record<string, string> | null;
+  headers: Record<string, string> | null;
+  enabled: boolean;
+  last_status: string;
+  last_error: string;
+  last_refreshed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface McpTool {
+  server_id: number;
+  name: string;
+  description: string;
+  input_schema?: Record<string, unknown> | null;
+}
+
+export interface Skill {
+  tenant_id: number;
+  name: string;
+  description: string;
+  version: string;
+  file_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillFile {
+  path: string;
+  size: number;
+  updated_at?: string;
+}
+
+export interface SkillVersion {
+  timestamp: string;
+  files: number;
+  size: number;
+  has_meta?: boolean;
+}
+
+export interface Agent {
+  tenant_id: number;
+  id: number;
+  key: string;
+  name: string;
+  role: string;
+  system_prompt: string;
+  tools: string[];
+  model: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentTestResult {
+  key: string;
+  valid_tools: string[];
+  unknown_tools: string[];
+  warnings: string[];
+}
+
+export interface WorkspaceFile {
+  path: string;
+  size: number;
+  modified_at: string;
+  is_dir: boolean;
+}
+
+export interface WorkspaceList {
+  files: WorkspaceFile[];
+  root: string;
+  quota_bytes: number;
+  used_bytes: number;
+}
+
+export interface SyncSource {
+  tenant_id: number;
+  id: number;
+  name: string;
+  type: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SyncProject {
+  tenant_id: number;
+  id: number;
+  source_id: number;
+  external_id: string;
+  name: string;
+  data: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SyncRun {
+  tenant_id: number;
+  id: number;
+  source_id: number;
+  project_id?: number | null;
+  status: string;
+  stats: Record<string, unknown> | null;
+  error: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}
+
+export interface UpdateCheckResult {
+  has_update: boolean;
+  release?: {
+    version: string;
+    tag: string;
+    url: string;
+    notes: string;
+    published_at: string;
+    asset_name: string;
+  } | null;
+}
+
+export interface UpdateApplyResult {
+  updated: boolean;
+  version: string;
+  message: string;
+}
+
+export interface RollbackResult {
+  rolled_back: boolean;
+  message: string;
 }

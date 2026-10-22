@@ -300,8 +300,8 @@ curl -s "http://localhost:6969/api/v1/evidence/1/verify" \
 ## Web 控制台
 
 - 镜像与发布包已内含前端（`go:embed` 同源托管），浏览器访问 `http://localhost:6969/` 即可；本地开发未执行 `make web` 时显示占位页。
-- 令牌保存在本机 `localStorage`；普通请求用 Bearer，SSE 用 `?token=`。页面包含任务（列表/创建/状态操作）、任务详情（SSE 14 类事件、流量→冻结证据→校验）、审批与系统（探针/自更新）三区。
-- 单页无 URL 路由、事件只保留最近 200 条；浏览器 e2e、CORS、URL 路由在 M6.1。详见 [Web 控制台](docs/web.md)。
+- 令牌保存在本机 `localStorage`；普通请求用 Bearer，SSE 用 `?token=`。侧栏覆盖概览、任务、发现、流量、命令、模型记录、资产、工作区、同步、对话，以及模型配置、Agents、MCP、技能、工具、通知、策略、审批、日志、设置。浅色工作区纯白，深色整页纯黑。对话和模型配置没有接口；工具页只说明内置的 `http_probe` 与 `shell_exec`。
+- 地址由前端读取浏览器 location，静态导出仍回退 `index.html`；事件只保留最近 200 条。详见 [Web 控制台](docs/web.md)。
 
 ## 发布与自更新
 

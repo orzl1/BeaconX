@@ -94,7 +94,7 @@
 | `internal/logging/` | slog 结构化日志 |
 | `internal/platform/` | 状态目录（`$BEACONX_HOME`，按租户分区，0700） |
 | `internal/tenant/` | 租户上下文（`tenant.With/From/MustFrom`） |
-| `web/` | Next.js 前端源码（单页控制台） |
+| `web/` | Next.js 前端源码（客户端路由控制台；静态导出后由 Go 回退 `index.html`） |
 | `migrations/` | `0001`–`0006` SQL 迁移 + `embed.go` |
 | `api/` | `openapi.yaml`（API 契约，生成客户端的来源） |
 | `docs/` | 本文档与配套文档 |
@@ -189,7 +189,7 @@ cmd/beaconx
 | `internal/app/workspace` | 工作区文件沙箱（列表/读写/上传/删除、路径安全） | `internal/app/workspace/` |
 | `internal/httpapi`（feature） | `RegisterFeatureRoutes` 注册的 B4/B5 路由（70 条） | `feature_routes.go` + `{policy,settings,logs,notifications,mcp,skills,agents,workspace,sync,assets_extra,findings_extra,evidence_extra,retest_extra,traffic_extra,report_extra}_*.go` |
 | `internal/webui` | 前端托管 | `Handler()`：静态文件、`index.html` 回退、`/api/` JSON 404 | `webui.go` |
-| `web/` | 前端源码 | `src/app/page.tsx`、`components/*`、`lib/api.ts`/`types.ts`/`format.ts`/`hooks.ts` | 见 §8 |
+| `web/` | 前端源码 | `src/app/page.tsx`、`src/views/*`、`components/*`、`lib/api.ts`/`router.tsx`/`format.ts` | 见 §8 |
 
 ### 3.2 调用关系（主要路径）
 
@@ -218,7 +218,7 @@ HTTP 请求
 | 新增/调整策略规则 | `domain/policy.SeedDefaults`（内置规则）或 `policy_rules` 数据；`executor` 自动读取 | 当前没有规则 CRUD API（M4.1 延期） |
 | 新增 HTTP API | `httpapi.Routes()` 加路由 + `bind()` 加处理器 + 新 handler 文件 → 更新 `api/openapi.yaml` + 本文档 §5/§14 | 公开端点要设 `Public: true` |
 | 新增数据库迁移 | `migrations/NNNN_*.sql`（只追加）→ 更新 §4 与 `docs/data-model.md` | 不要修改历史迁移 |
-| 新增前端页面/组件 | `web/src/app`、`web/src/components` → `make web` 重新嵌入 | 当前是单页，无 URL 路由（M6.1） |
+| 新增前端页面/组件 | `web/src/views` 增加视图，并在 `lib/router.tsx` 登记路径 → `make web` 重新嵌入 | 静态导出只有首页 HTML；新地址靠 Go 回退 `index.html`，不要放进 `src/pages`（会被当成 Pages Router） |
 | 新增配置项 | `internal/config` 字段 + Default + applyEnv + Validate → 更新 §11 与三份配置示例 | 空环境变量视为未设置 |
 | 新增任务事件类型 | `domain/task.EventType` + 状态机 + 前端 `STREAM_EVENT_TYPES` + §6/§8 | 事件类型必须同时登记前后端 |
 
@@ -1044,7 +1044,7 @@ HTTP 请求
 
 - `events.Broker`：按 missionID 分发；订阅者独立缓冲（启动时 `NewBroker(512)`）；`Publish` 非阻塞，缓冲满即丢弃并关闭该订阅者；`Close` 关闭全部。
 - SSE 处理器（`internal/httpapi/sse.go`）：先订阅再 `Replay`；游标 `Last-Event-ID` > `?since=`；回放按 id 升序、跳过 ≤游标；回放上限 500；实时按 `lastSentID` 去重；心跳 20s；每帧 flush；写失败/ctx 结束/通道关闭即退出并取消订阅。
-- 任务事件写入 `mission_events` 后通过 `EventSink` 发布；因此 SSE 事件类型 = mission_events.type（可能包含 `planner_error` 等前端未登记的类型，见 §8.2）。
+- 任务事件写入 `mission_events` 后通过 `EventSink` 发布；因此 SSE 事件类型 = mission_events.type。规划诊断三类已在前端 `STREAM_EVENT_TYPES` 登记（§8.2）；再新增类型仍需同步登记，否则 EventSource 收不到。
 
 ### 7.7 LLM 客户端与路由
 
@@ -1108,7 +1108,7 @@ HTTP 请求
 | `started` | 保留未消费 | 是（但后端当前不发送） |
 | `approval_required` | 需要人工审批 | 是 |
 | `budget_exhausted` / `step_budget_exhausted` | 预算事件 | 是 |
-| `planner_error` / `planner_persist_error` / `planner_done_with_pending` | 规划诊断 | **否（缺口：EventSource 只派发已注册命名事件，前端收不到）** |
+| `planner_error` / `planner_persist_error` / `planner_done_with_pending` | 规划诊断 | 是（`web/src/lib/format.ts` 的 `STREAM_EVENT_TYPES`） |
 
 ### 8.3 推荐轮询周期（与当前前端一致）
 
@@ -1339,7 +1339,9 @@ HTTP 请求
 | 系统 | 20 | `/system/logs` | 日志 | 级别筛选、实时流 | #71/#72 | — | ✅ 可开发 |
 | 系统 | 21 | `/system/settings` | 设置 | 自更新、运行参数（PATCH 即时生效） | #57–#59、#73/#74 settings | — | ✅ 可开发（运行中任务语义🟡） |
 
-**推荐排期**：先做 ✅ 页面（Dashboard/任务/审批/流量/命令/LLM/资产/发现/报告），B4/B5 的 ✅ 系统页（策略/日志/通知/MCP/Skills/Workspace/Sync）可并行；🟡 页面按风险提示，⬜ 页面等待后续能力。
+控制台已按上表实现（`web/src/views`）：侧栏两组，地址由前端读取 `location`，静态导出仍只有首页 HTML，深链靠 Go 回退 `index.html`。浅色工作区纯白、深色整页纯黑，主按钮用黑白而不是彩色。已有写接口都有对应按钮（含企业/资产/发现/渠道/MCP/技能/同步/策略的修改、技能文件删除、任务流量清空、证据审计与导出、列表游标加载更多）。对话、模型配置没有接口，工具页只按代码登记说明 `http_probe` 与 `shell_exec`，都不展示假数据。事件流已登记规划诊断三类。详见 [Web 控制台](web.md)。
+
+**推荐排期**：✅ 页面已接入；🟡 页面按接口实际能力提示风险；⬜ 页面保持未开放说明。
 
 ## 10. M6.2 后端补齐路线（B1–B5 已实现/部分实现）
 
@@ -1712,3 +1714,5 @@ BEACONX_TEST_PG_DSN='postgres://beaconx:beaconx@127.0.0.1:55432/beaconx?sslmode=
 | 2026-10-22 | `b754bcc` | B6 硬化文档同步：路由 140→143（activity、skills versions/restore）；重放改走 executor、证据轮换实现（签名失效警示）、审计覆盖、graph after_id、Dashboard hourly、stdio/workspace 硬化、0016 部分唯一索引；OpenAPI 1.1.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
 | 2026-10-22 | `5b52090` | B7 收口文档同步：路由 143→146（llm-records 详情/request/response）；0017 llm_exchanges；settings 热生效、rotate 重签、immutable 加固、sync 恢复/保留、通知 SSRF/掩码、skills meta 回滚、workspace advisory lock；OpenAPI 1.2.0/README/data-model/runtime/evidence 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
 | 2026-10-22 | 本次提交 | B8 🟡 清理（含 MCP stdio 瞬时启动错误重试与测试稳定性）：0018 notification_events（推送去重）、0019 审计 action 扩展；通知凭据加密/事件推送、审计 create/rotate、全租户重签、启动维护（LLM 保留/sync pending）、Agents 接入 Planner/Worker、graph 过滤下推、skills 保留配置、MCP Windows CI；文档增加「已知设计限制」；OpenAPI 1.2.1/README/data-model/runtime/evidence/configuration 同步 | §1、§3、§4、§5、§6、§7、§8、§9、§10、§11、§14 |
+| 2026-10-23 | 本次提交 | 控制台改为侧栏多页：客户端路由 + 静态导出回退；浅色纯白、深色纯黑、黑白主按钮；接入概览到设置的已有接口；登记规划诊断事件 | §2、§8、§9、§14 |
+| 2026-10-23 | 本次提交 | 控制台补齐已有写接口按钮：企业/资产/发现/渠道/MCP/技能/同步/策略修改，技能文件删除，任务流量清空，证据审计与导出，发现/流量/命令/模型记录/资产/作战图/活动的游标加载更多。对话与模型配置仍无接口 | §9、§14 |
